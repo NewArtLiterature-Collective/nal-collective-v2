@@ -1,0 +1,45 @@
+import { useState } from 'react';
+import { supabase } from '../supabaseClient';
+
+export function usePayment() {
+  const [payLoading, setPayLoading] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(null);
+
+  const handlePayment = async (planType) => {
+    setPayLoading(true);
+    setLoadingPlan(planType);
+    try {
+      const apiUrl = import.meta.env.VITE_API_BASE_URL;
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+            
+      if (!authSession?.user) return alert("请先登录");
+
+      const response = await fetch(`${apiUrl}/api/v1/payment/create-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authSession.access_token}`
+        },
+        body: JSON.stringify({
+          user_id: authSession.user.id,
+          user_email: authSession.user.email,
+          plan: planType 
+        })
+      });
+
+      const data = await response.json();
+      if (data.url) {
+        window.location.href = data.url; 
+      } else {
+        throw new Error("未能获取支付链接");
+      }
+    } catch (err) {
+      alert("支付网关连接失败: " + err.message);
+    } finally {
+      setPayLoading(false);
+      setLoadingPlan(null);
+    }
+  };
+
+  return { payLoading, loadingPlan, handlePayment };
+}
