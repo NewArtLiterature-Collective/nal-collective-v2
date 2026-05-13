@@ -6,4 +6,5 @@ pydantic-settings
 supabase
 google-generativeai
 python-dotenv
+python-docx
 stripe
