@@ -35,46 +35,49 @@ async def create_payment_session(request: Request):
 # 真实完整路径将会是: POST /api/v1/payment/webhook
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
-    # 1. 绝对安全地获取 Body 和 签名头部 (规避 Header 依赖注入的潜藏 Bug)
     payload = await request.body()
-    stripe_signature = request.headers.get("stripe-signature")
+    # 强制直接从 Headers 获取，不再依赖任何复杂的注入
+    sig_header = request.headers.get("stripe-signature")
     
-    if not stripe_signature:
-        print("⚠️ Webhook 拦截：Stripe 签名头部丢失")
-        return {"status": "error", "message": "Missing signature"}
-        
     try:
-        # 2. 验证这封“信”确实是 Stripe 寄来的
         event = stripe.Webhook.construct_event(
-            payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET
+            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
         )
         
-        # 3. 判断事件类型：用户是否支付成功？
-        # 3. 判断事件类型：用户是否支付成功？
         if event['type'] == 'checkout.session.completed':
-            session = event['data']['object']
+            # 1. 核心：拿到原始 Session 对象
+            session_obj = event['data']['object']
             
-            # 🚨 破解 Stripe 对象的特殊机制：
-            # 不要用 session.get()，改用 in 关键字检查，并强制转为纯 Python 字典
-            raw_metadata = session['metadata'] if 'metadata' in session and session['metadata'] else {}
-            metadata = dict(raw_metadata)  # 变成普通字典后，就可以尽情使用 .get() 了！
+            # 2. 暴力破解：强制将整个 Stripe 对象转为标准字典
+            # 这样做可以彻底杀掉 StripeObject 的魔幻行为，变成纯粹的 Python 字典
+            session_dict = session_obj.to_dict()
             
+            # 3. 从纯字典里拿数据（这下绝对有 .get 方法了）
+            metadata = session_dict.get('metadata') or {}
             user_id = metadata.get('user_id')
-            plan_type = metadata.get('plan_type', 'contestant') 
+            plan_type = metadata.get('plan_type', 'contestant')
+            
+            # 调试打印：如果这里还拿不到，说明数据根本没传进 Stripe
+            print(f"🔍 调试：Session 字典内容: {session_dict}")
             
             if not user_id:
-                print("⚠️ Webhook 警告：账单中没有 user_id，无法执行数据库充值！")
+                print("⚠️ Webhook 警告：字典中缺失 user_id")
                 return {"status": "ignored"}
-                
-            print(f"💰 Webhook 收到成功支付指令，准备发货。UserID: {user_id}, 购买类型: {plan_type}")
+
+            print(f"💰 成功识别支付！UserID: {user_id}, Plan: {plan_type}")
             
-            # 执行数据库升级
+            # 执行发货
             UserService.upgrade_user_to_pro(user_id, plan_type)
-            print(f"✅ UserID: {user_id} 权限（{plan_type}）充值写入数据库成功！")
-                
-        # 必须返回 200 让 Stripe 知道你收到了
+            print(f"✅ 数据库写入成功")
+
         return {"status": "success"}
 
+    except Exception as e:
+        # 别只看报错名，打印出到底在哪一行
+        import traceback
+        print("🚨 Webhook 终极崩溃追踪：")
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
     except stripe.error.SignatureVerificationError:
         print("🚨 Stripe 签名验证失败！可能是你的 STRIPE_WEBHOOK_SECRET 填错了。")
         raise HTTPException(status_code=400, detail="Invalid signature")
