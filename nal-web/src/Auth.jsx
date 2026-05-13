@@ -1,3 +1,4 @@
+// Auth.jsx 修改版
 import React, { useState } from 'react';
 import { supabase } from './supabaseClient';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -11,7 +12,7 @@ export default function Auth() {
   const [authMode, setAuthMode] = useState('login'); // 'login', 'signup', 'reset'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState(''); // 🚨 新增：确认密码
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -23,7 +24,7 @@ export default function Auth() {
     setErrorMsg('');
     setSuccessMsg('');
 
-    // 🚨 逻辑：注册时的双重密码校验
+    // 注册时的双重密码校验
     if (authMode === 'signup' && password !== confirmPassword) {
       setErrorMsg('两次输入的密码不一致，请重新检查');
       setLoading(false);
@@ -37,7 +38,11 @@ export default function Auth() {
       } else if (authMode === 'signup') {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接。');
+        
+        // 修改点 1: 成功注册后清空密码，让用户在登录时重新输入
+        setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
+        setPassword('');
+        setConfirmPassword('');
       } else if (authMode === 'reset') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${window.location.origin}/login`,
@@ -46,7 +51,12 @@ export default function Auth() {
         setSuccessMsg('📧 重置邮件已发送！请检查您的收件箱。');
       }
     } catch (error) {
-      setErrorMsg(error.message || '操作失败，请重试');
+      // 修改点 2: 捕获未注册用户的错误并返回自定义提示
+      if (error.message.includes("Invalid login credentials")) {
+        setErrorMsg('未注册用户，请先注册');
+      } else {
+        setErrorMsg(error.message || '操作失败，请重试');
+      }
     } finally {
       setLoading(false);
     }
@@ -86,7 +96,6 @@ export default function Auth() {
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={styles.input} placeholder="至少 6 位字符" required />
               </div>
 
-              {/* 🚨 注册模式下的二次确认框 */}
               {authMode === 'signup' && (
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>确认密码</label>
@@ -105,7 +114,16 @@ export default function Auth() {
         </form>
 
         <div style={styles.footer}>
-          <button onClick={() => { setAuthMode(authMode === 'login' ? 'signup' : 'login'); setErrorMsg(''); }} style={styles.switchBtn}>
+          <button 
+            onClick={() => { 
+              // 修改点 3: 切换注册/登录模式时，同步清空密码字段
+              setAuthMode(authMode === 'login' ? 'signup' : 'login'); 
+              setErrorMsg(''); 
+              setPassword('');
+              setConfirmPassword('');
+            }} 
+            style={styles.switchBtn}
+          >
             {authMode === 'login' ? '还没有账号？免费注册' : '已有账号？直接登录'}
           </button>
         </div>
