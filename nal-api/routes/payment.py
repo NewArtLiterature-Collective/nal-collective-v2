@@ -13,49 +13,39 @@ async def create_checkout_session_route(request: Request):
         data = await request.json()
         user_id = data.get('user_id')
         user_email = data.get('user_email')
-        plan = data.get('plan', 'contestant')
+        plan = data.get('plan', 'contestant') 
 
-        if not user_id:
-            raise ValueError("缺少 user_id 参数")
-
-        # 🚨 拦截逻辑增强版
+        # 🚨 核心逻辑：加油包 (addon) 购买门槛检查
         if plan == "addon":
-            print(f"🛠️ 正在检查用户 {user_id} 的余额...")
             user_res = UserService.get_user_by_id(user_id)
-            
-            # 兼容性提取 Meta
             meta = {}
-            if user_res:
-                # 尝试从不同层级提取元数据
-                if hasattr(user_res, 'user') and user_res.user:
-                    meta = user_res.user.user_metadata or {}
-                elif isinstance(user_res, dict):
-                    meta = user_res.get('user_metadata', {})
+            if user_res and hasattr(user_res, 'user'):
+                meta = user_res.user.user_metadata or {}
             
-            print(f"📊 当前用户元数据摘要: {list(meta.keys())}") # 调试用
+            # 1. 如果是 Pro，不执行拦截逻辑（因为前端已隐藏按钮，这里做后台保底）
+            if meta.get("role") == "pro":
+                return {"url": PaymentService.create_checkout_session(user_id, user_email, plan)}
 
-            # 统计资源
+            # 2. 资源耗尽检查：基础 Flash (注册默认 5 次) + 三项高级资源
+            f0 = int(meta.get("flash_left", 5)) # 默认为 5，因为注册即送
             r1 = int(meta.get("guide_pro") or 0)
             r2 = int(meta.get("text_pro") or 0)
             r3 = int(meta.get("illustration_pro") or 0)
-            remaining = r1 + r2 + r3
             
-            print(f"💎 剩余资源统计: Guide:{r1}, Text:{r2}, Illus:{r3}, Total:{remaining}")
-
-            if remaining > 0:
-                print(f"🚫 拦截成功：资源未耗尽")
+            total = f0 + r1 + r2 + r3
+            
+            # 只要还有资源，就不允许进入支付页面
+            if total > 0:
                 return JSONResponse(
                     status_code=400,
-                    content={"detail": f"您还有 {remaining} 次高级额度，请用完再买。"}
+                    content={"detail": f"您还有 {total} 次资源未用完，请耗尽后再购买加油包。"}
                 )
 
+        # 正常创建支付链接
         url = PaymentService.create_checkout_session(user_id, user_email, plan)
         return {"url": url}
-
     except Exception as e:
-        print(f"❌ 支付会话异常: {str(e)}")
-        return JSONResponse(status_code=500, content={"detail": str(e)})
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
