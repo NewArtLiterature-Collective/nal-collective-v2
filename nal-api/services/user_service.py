@@ -25,102 +25,80 @@ class UserService:
             print(f"❌ 获取用户失败: {e}")
             return None
 
+   class UserService:
     @staticmethod
     def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
-        """
-        支付成功后的发货逻辑
-        1. plan == 'addon' (加油包)：不修改 role，仅增加资源。
-        2. plan == 'contestant' (参赛费)：修改 role 为 contestant，增加初始资源。
-        3. plan == 'pro' (专业版)：修改 role 为 pro，赋予无限资源。
-        """
         try:
             user_res = UserService.get_user_by_id(user_id)
-            if not user_res: return
-            
             meta = user_res.user.user_metadata or {}
             
-            # 🚨 模式 1：专业版 (Pro)
-            if plan == "pro":
-                meta.update({
-                    "is_paid": True,
-                    "role": "pro",
-                    "flash_left": 9999,
-                    "guide_pro": 9999,
-                    "text_pro": 9999,
-                    "illustration_pro": 9999
-                })
-            
-            # 🚨 模式 2：加油包 (addon)
-            elif plan == "addon":
+            # 🚨 逻辑 A：购买加油包 (addon)
+            if plan == "addon":
+                # 记录标记：用于后续 apply_free_contestant 的防刷
+                meta["has_bought_booster"] = True 
                 meta["is_paid"] = True
-                meta["has_bought_booster"] = True # 标记买过加油包
                 
-                # 💡 核心：这里绝对不写 meta["role"] = ...
-                # 确保普通用户买完后依然没有 role，实现“购买加油包不获得参赛资格”
+                # 💡 关键：这里绝不修改 meta["role"]
+                # 普通用户买完后 role 依然是 None，保持其“无参赛资格”状态
                 
-                # 增加额度 (使用 .get(..., 0) 确保不会因为 None + 5 崩溃)
+                # 增加 5 次全项资源
                 meta["flash_left"] = (meta.get("flash_left") or 0) + 5
                 meta["guide_pro"] = (meta.get("guide_pro") or 0) + 5
                 meta["text_pro"] = (meta.get("text_pro") or 0) + 5
                 meta["illustration_pro"] = (meta.get("illustration_pro") or 0) + 5
 
-            # 🚨 模式 3：参赛资格 (contestant)
+            # 🚨 逻辑 B：购买参赛费 (contestant)
             elif plan == "contestant":
-                meta.update({
-                    "is_paid": True,
-                    "role": "contestant",
-                    "flash_left": (meta.get("flash_left") or 0) + 5,
-                    "guide_pro": (meta.get("guide_pro") or 0) + 5,
-                    "text_pro": (meta.get("text_pro") or 0) + 5,
-                    "illustration_pro": (meta.get("illustration_pro") or 0) + 5
-                })
-
-            # 统一保存更新
-            supabase_admin.auth.admin.update_user_by_id(
-                user_id, 
-                attributes={'user_metadata': meta}
-            )
-            print(f"✅ 支付处理成功：用户 {user_id} 获得 {plan} 权益。")
-        except Exception as e:
-            print(f"❌ 数据库写入失败: {e}")
-            raise e
-
-    @staticmethod
-    def apply_free_contestant(user_id: str):
-        """
-        处理前端“免费报名参赛”逻辑
-        解决：买过加油包的用户点击报名，不再获得额外赠送的 5 次额度
-        """
-        try:
-            user_res = UserService.get_user_by_id(user_id)
-            if not user_res: return False, "用户不存在"
-            
-            meta = user_res.user.user_metadata or {}
-            
-            # 如果已经是 Pro 或 参赛者，跳过
-            if meta.get("role") in ["pro", "contestant"]:
-                return True, "您已具备相应资格"
-                
-            # 1. 给予“参赛者”身份
-            meta["role"] = "contestant"
-            
-            # 2. 💡 核心防刷：检查是否买过加油包
-            if meta.get("has_bought_booster") == True:
-                # 买过包的人：只给名分，不给钱（额度）
-                print(f"⚠️ 用户 {user_id} 已购加油包，点击报名不重复赠送额度。")
-            else:
-                # 纯新用户：赠送初始 5 次额度
+                meta["role"] = "contestant" # 赋予参赛身份
+                meta["is_paid"] = True
+                # 增加配套资源
+                meta["flash_left"] = (meta.get("flash_left") or 0) + 5
                 meta["guide_pro"] = (meta.get("guide_pro") or 0) + 5
                 meta["text_pro"] = (meta.get("text_pro") or 0) + 5
                 meta["illustration_pro"] = (meta.get("illustration_pro") or 0) + 5
 
+            # 🚨 逻辑 C：升级专业版 (pro) —— 保持原有逻辑不动
+            elif plan == "pro":
+                meta["role"] = "pro"
+                meta["is_paid"] = True
+                # 赋予无限或高额权限
+                meta["flash_left"] = 9999
+                meta["guide_pro"] = 9999
+                meta["text_pro"] = 9999
+                meta["illustration_pro"] = 9999
+
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
             )
+        except Exception as e:
+            raise e
+
+    @staticmethod
+    def apply_free_contestant(user_id: str):
+        try:
+            user_res = UserService.get_user_by_id(user_id)
+            meta = user_res.user.user_metadata or {}
+            
+            if meta.get("role") in ["pro", "contestant"]:
+                return True, "已具备资格"
+                
+            # 1. 改变身份为参赛者
+            meta["role"] = "contestant"
+            
+            # 2. 检查是否通过 addon 提前领过资源了
+            if meta.get("has_bought_booster") == True:
+                # 仅改身份，不加额度
+                print(f"用户 {user_id} 已购包，报名不加额度")
+            else:
+                # 纯新号，赠送 5 次初始额度
+                meta["guide_pro"] = (meta.get("guide_pro") or 0) + 5
+                meta["text_pro"] = (meta.get("text_pro") or 0) + 5
+                meta["illustration_pro"] = (meta.get("illustration_pro") or 0) + 5
+
+            supabase_admin.auth.admin.update_user_by_id(user_id, attributes={'user_metadata': meta})
             return True, "报名成功"
         except Exception as e:
-            print(f"❌ 报名处理异常: {e}")
             raise e
 
     @staticmethod
