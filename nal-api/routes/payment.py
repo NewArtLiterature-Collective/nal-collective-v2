@@ -50,11 +50,15 @@ async def stripe_webhook(request: Request):
         )
         
         # 3. 判断事件类型：用户是否支付成功？
+        # 3. 判断事件类型：用户是否支付成功？
         if event['type'] == 'checkout.session.completed':
             session = event['data']['object']
             
-            # 绝对安全地提取 metadata，哪怕它完全是空的也不会崩溃
-            metadata = session.get('metadata') or {}
+            # 🚨 破解 Stripe 对象的特殊机制：
+            # 不要用 session.get()，改用 in 关键字检查，并强制转为纯 Python 字典
+            raw_metadata = session['metadata'] if 'metadata' in session and session['metadata'] else {}
+            metadata = dict(raw_metadata)  # 变成普通字典后，就可以尽情使用 .get() 了！
+            
             user_id = metadata.get('user_id')
             plan_type = metadata.get('plan_type', 'contestant') 
             
