@@ -23,7 +23,7 @@ export function usePayment() {
         body: JSON.stringify({
           user_id: authSession.user.id,
           user_email: authSession.user.email,
-          plan: plan_Type 
+          plan_type: planType 
         })
       });
 
