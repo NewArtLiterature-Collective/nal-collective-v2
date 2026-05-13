@@ -1,69 +1,68 @@
+# nal-api/routes/payment.py
+import stripe
 from fastapi import APIRouter, Request, Header, HTTPException
+from core.config import settings
 from services.payment_service import PaymentService
 from services.user_service import UserService
-import stripe
-import os
 
-router = APIRouter(prefix="/api/v1/payment", tags=["Payment"])
+# 初始化 Router，不需要写前缀
+router = APIRouter()
 
-# 🚨 补充：接收前端支付请求的路由
+# --- 接口 1: 创建支付会话 ---
+# 真实完整路径将会是: POST /api/v1/payment/create-session
 @router.post("/create-session")
-async def create_checkout_session_route(request: Request):
+async def create_payment_session(request: Request):
     try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        user_email = data.get('user_email')
-        plan = data.get('plan', 'contestant')  # 从前端接收是 'contestant' 还是 'addon'
-
+        # 解析前端传来的 json 数据
+        body = await request.json()
+        user_id = body.get("user_id")
+        user_email = body.get("user_email")
+        
         if not user_id:
-            raise ValueError("缺少 user_id 参数")
-
-        # 将 plan 传给 Service
-        url = PaymentService.create_checkout_session(user_id, user_email, plan)
-        return {"url": url}
+            raise HTTPException(status_code=400, detail="Missing user_id")
+            
+        checkout_url = PaymentService.create_checkout_session(user_id, user_email)
+        return {"url": checkout_url}
     except Exception as e:
-        print(f"❌ 创建支付会话失败: {str(e)}")
+        print(f"🚨 创建支付会话失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# --- 接口 2: 处理 Stripe 支付成功回调 (Webhook) ---
+# 真实完整路径将会是: POST /api/v1/payment/webhook
 @router.post("/webhook")
-async def stripe_webhook(request: Request):
-    payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
+async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
+    # ⚠️ Webhook 必须读取 raw body (字节流) 来验证签名，不能用 json()
+    payload = await request.body() 
     
     try:
+        # 验证这封“信”确实是 Stripe 寄来的
         event = stripe.Webhook.construct_event(
-            payload, sig_header, os.getenv("STRIPE_WEBHOOK_SECRET")
+            payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET
         )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Webhook 签名验证失败: {e}")
-
-    if event['type'] == 'checkout.session.completed':
-        try:
+        
+        # 判断事件类型：用户是否支付成功？
+        if event['type'] == 'checkout.session.completed':
             session = event['data']['object']
             
-            metadata = getattr(session, 'metadata', None)
-            
-            if isinstance(metadata, dict):
-                user_id = metadata.get('user_id')
-                plan = metadata.get('plan', 'contestant') # 🚨 修复 3：提取商品类型
-            else:
-                user_id = getattr(metadata, 'user_id', None)
-                plan = getattr(metadata, 'plan', 'contestant')
-            
-            print(f"🔍 提取到的 User ID: {user_id}, 购买类别: {plan}")
-
-            if user_id:
-                print("⏳ 准备呼叫 UserService 修改数据库...")
-                # 🚨 修复 3：把 plan 传给发货部门，告诉他们该发什么货！
-                UserService.upgrade_user_to_pro(user_id, plan)
-                print(f"✅ Webhook 成功：用户 {user_id} 订单 ({plan}) 已处理")
-            else:
-                print("⚠️ Webhook 警告：订单的 Metadata 中未找到 user_id")
-
-        except Exception as inner_err:
-            import traceback
-            print(f"❌ 致命错误：处理 Webhook 时崩溃:\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(inner_err))
-            
-    return {"status": "success"}
+            # 从 metadata 中提取你传递的 user_id
+            try:
+                user_id = session['metadata']['user_id']
+                print(f"💰 Webhook 收到成功支付指令，UserID: {user_id}")
+                
+                # 升级数据库中的用户权限
+                # 注意：如果你的 upgrade_user_to_pro 被定义成了 async def，这里请加上 await
+                UserService.upgrade_user_to_pro(user_id)
+                print(f"✅ UserID: {user_id} 权限已升级为 Pro/参赛者")
+                
+            except KeyError:
+                print("⚠️ Webhook 错误：Metadata 中缺少 user_id 字段，无法更新数据库")
+                
+        # 必须返回 200/success 让 Stripe 知道你收到了，否则它会一直重发
+        return {"status": "success"}
+        
+    except stripe.error.SignatureVerificationError as e:
+        print("🚨 Webhook 签名验证失败！可能是 SECRET 不对。")
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        print(f"🚨 Webhook 内部处理崩溃: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
