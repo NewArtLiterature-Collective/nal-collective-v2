@@ -37,7 +37,7 @@ class LiteraryLLMService:
         
         try:
             # 保留 V1 的高创造力配置
-           res = await model.generate_content_async(
+            res = await model.generate_content_async(
                 user_prompt, 
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.7,
