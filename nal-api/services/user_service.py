@@ -25,40 +25,91 @@ class UserService:
     @staticmethod
     def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
         """
-        支付成功后的发货逻辑：为用户打上参赛标签，并充值 Pro 额度
+        支付成功后的发货逻辑：严格区分 Pro、参赛费 和 加油包
         """
         try:
             # 1. 获取用户当前的元数据
             user_res = supabase_admin.auth.admin.get_user_by_id(user_id)
             meta = user_res.user.user_metadata or {}
             
-            # 🚨 完善专业版：如果是购买 Pro
+            # 🚨 模式 A：购买 Pro 会员
             if plan == "pro":
                 meta["is_paid"] = True
                 meta["role"] = "pro"
-                meta["flash_left"] = 9999  # Pro 其实不扣费，给个大数字让前端显示好看
+                meta["flash_left"] = 9999  # Pro 不扣费，给个大数字让前端显示好看
             
-            #🚨 2. 逻辑分流：只有购买的是“参赛资格 (contestant)”，才改变用户身份
+            # 🚨 模式 B：购买“加油包 (booster)” (修复第 4 点)
+            elif plan == "booster":
+                meta["is_paid"] = True
+                # 核心防刷标记：打上终身买过加油包的烙印，【绝不改变 role 字段】！
+                meta["has_bought_booster"] = True 
+                
+                # 叠加购买的额度
+                meta["flash_left"] = meta.get("flash_left", 5) + 5
+                meta["guide_pro"] = meta.get("guide_pro", 0) + 5
+                meta["text_pro"] = meta.get("text_pro", 0) + 5
+                meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
+
+            # 🚨 模式 C：购买“参赛资格 (contestant)”
             elif plan == "contestant":
                 meta["is_paid"] = True
                 meta["role"] = "contestant"
-            
-            # 🚨 3. 无论买的是报名费还是加油包，都无脑叠加 5 次各项高级额度
-            meta["flash_left"] = meta.get("flash_left", 5) + 5
-            meta["guide_pro"] = meta.get("guide_pro", 0) + 5
-            meta["text_pro"] = meta.get("text_pro", 0) + 5
-            meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
+                
+                # 叠加报名费里包含的初始额度
+                meta["flash_left"] = meta.get("flash_left", 5) + 5
+                meta["guide_pro"] = meta.get("guide_pro", 0) + 5
+                meta["text_pro"] = meta.get("text_pro", 0) + 5
+                meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
 
             # 4. 强制更新写回 Supabase
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
             )
-            print(f"✅ 数据库操作成功：用户 {user_id} 已升级为（{plan}) 并到账额度！")
+            print(f"✅ 数据库操作成功：用户 {user_id} 已处理支付（{plan}) 并到账额度！")
         except Exception as e:
             print(f"❌ 数据库写入失败: {e}")
             raise e
 
+    @staticmethod
+    def apply_free_contestant(user_id: str):
+        """
+        🚨 修复第 5 点：前端点击免费“报名参赛”时的专属处理接口
+        （如果是免费点击报名，请在路由中调用这个函数）
+        """
+        try:
+            user_res = supabase_admin.auth.admin.get_user_by_id(user_id)
+            meta = user_res.user.user_metadata or {}
+            
+            if meta.get("role") in ["pro", "contestant"]:
+                return False, "您已具备高级或参赛资格，无需重复报名。"
+                
+            # 给予参赛者名分
+            meta["role"] = "contestant"
+            
+            # 💡 核心防刷逻辑：检查是否买过加油包
+            if meta.get("has_bought_booster") == True:
+                # 买过加油包：只改名分，绝不白送那 5 次免费额度
+                print(f"⚠️ 用户 {user_id} 买过加油包，本次免费报名不赠送额度。")
+            else:
+                # 纯新用户报名：白送 5 次初始高级额度
+                meta["guide_pro"] = meta.get("guide_pro", 0) + 5
+                meta["text_pro"] = meta.get("text_pro", 0) + 5
+                meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
+
+            supabase_admin.auth.admin.update_user_by_id(
+                user_id, 
+                attributes={'user_metadata': meta}
+            )
+            return True, "报名成功"
+        except Exception as e:
+            print(f"❌ 免费报名处理失败: {e}")
+            raise e
+
+    @staticmethod
+    def deduct_user_credit(user_id: str, task_type: str, used_pro: bool):
+        # ... [保留你原有的 deduct_user_credit 代码完全不变] ...
+        pass
     @staticmethod
     def deduct_user_credit(user_id: str, task_type: str, used_pro: bool):
         """
