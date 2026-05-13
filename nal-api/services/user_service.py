@@ -25,52 +25,91 @@ class UserService:
     @staticmethod
     def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
         """
-        支付成功后的发货逻辑：严格区分 Pro、参赛费 和 加油包
+        支付成功后的发货逻辑：严格区分【专业版】、【参赛费】和【加油包】
         """
         try:
             # 1. 获取用户当前的元数据
             user_res = supabase_admin.auth.admin.get_user_by_id(user_id)
             meta = user_res.user.user_metadata or {}
             
-            # 🚨 模式 A：购买 Pro 会员
+            # 🚨 模式 1：购买专业版 (Pro)
             if plan == "pro":
                 meta["is_paid"] = True
                 meta["role"] = "pro"
-                meta["flash_left"] = 9999  # Pro 不扣费，给个大数字让前端显示好看
+                meta["flash_left"] = 9999  # Pro 显示无限额度
+                meta["guide_pro"] = 9999
+                meta["text_pro"] = 9999
+                meta["illustration_pro"] = 9999
             
-            # 🚨 模式 B：购买“加油包 (booster)” (修复第 4 点)
+            # 🚨 模式 2：购买“加油包 (booster)” (修复第 4 点：不改身份，不给参赛资格)
             elif plan == "booster":
                 meta["is_paid"] = True
-                # 核心防刷标记：打上终身买过加油包的烙印，【绝不改变 role 字段】！
+                # 记录“买过加油包”的永久标记，但不修改 role
                 meta["has_bought_booster"] = True 
                 
-                # 叠加购买的额度
-                meta["flash_left"] = meta.get("flash_left", 5) + 5
+                # 仅增加加油包对应的额度（例如各加 5 次）
+                meta["flash_left"] = meta.get("flash_left", 0) + 5
                 meta["guide_pro"] = meta.get("guide_pro", 0) + 5
                 meta["text_pro"] = meta.get("text_pro", 0) + 5
                 meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
 
-            # 🚨 模式 C：购买“参赛资格 (contestant)”
+            # 🚨 模式 3：购买“参赛资格 (contestant)”
             elif plan == "contestant":
                 meta["is_paid"] = True
                 meta["role"] = "contestant"
                 
-                # 叠加报名费里包含的初始额度
-                meta["flash_left"] = meta.get("flash_left", 5) + 5
+                # 增加报名费包含的初始额度
+                meta["flash_left"] = meta.get("flash_left", 0) + 5
                 meta["guide_pro"] = meta.get("guide_pro", 0) + 5
                 meta["text_pro"] = meta.get("text_pro", 0) + 5
                 meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
 
-            # 4. 强制更新写回 Supabase
+            # 保存更新
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
             )
-            print(f"✅ 数据库操作成功：用户 {user_id} 已处理支付（{plan}) 并到账额度！")
+            print(f"✅ 支付处理成功：用户 {user_id} 获得 {plan} 对应权益。")
         except Exception as e:
             print(f"❌ 数据库写入失败: {e}")
             raise e
 
+    @staticmethod
+    def apply_free_contestant(user_id: str):
+        """
+        🚨 核心修复：针对点击前端“报名参赛”按钮的逻辑
+        解决“买过加油包的用户点击报名，不再获得任何额度”的需求
+        """
+        try:
+            user_res = supabase_admin.auth.admin.get_user_by_id(user_id)
+            meta = user_res.user.user_metadata or {}
+            
+            # 如果已经是 Pro 或 参赛者，直接返回
+            if meta.get("role") in ["pro", "contestant"]:
+                return True, "您已具备相应资格"
+                
+            # 1. 无论如何，都给用户“参赛者”的身份
+            meta["role"] = "contestant"
+            
+            # 2. 💡 关键拦截逻辑：检查是否买过加油包 (has_bought_booster)
+            if meta.get("has_bought_booster") == True:
+                # 如果买过加油包，直接改身份，不给任何免费赠送额度
+                print(f"⚠️ 用户 {user_id} 买过加油包，点击报名不重复赠送额度。")
+            else:
+                # 如果是纯新用户第一次点击报名，赠送初始参赛额度
+                meta["guide_pro"] = meta.get("guide_pro", 0) + 5
+                meta["text_pro"] = meta.get("text_pro", 0) + 5
+                meta["illustration_pro"] = meta.get("illustration_pro", 0) + 5
+
+            # 写回数据库
+            supabase_admin.auth.admin.update_user_by_id(
+                user_id, 
+                attributes={'user_metadata': meta}
+            )
+            return True, "报名成功"
+        except Exception as e:
+            print(f"❌ 报名处理异常: {e}")
+            raise e
     @staticmethod
     def apply_free_contestant(user_id: str):
         """
