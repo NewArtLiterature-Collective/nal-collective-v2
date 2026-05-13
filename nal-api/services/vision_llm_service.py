@@ -126,7 +126,7 @@ class VisionLLMService:
                 system_instruction=system_instruction
             )
             
-            res = model.generate_content(
+            res = await model.generate_content(
                 contents,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1, # 极低温度，保证数学算式和打分的严谨性
