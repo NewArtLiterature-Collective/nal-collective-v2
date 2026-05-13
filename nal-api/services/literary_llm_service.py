@@ -1,44 +1,42 @@
 # nal-api/services/literary_llm_service.py
 import json
-import re
 import google.generativeai as genai
 from fastapi import HTTPException
 
 class LiteraryLLMService:
-    # --- 1. 模型引擎锁定 (完美还原 V1 设定) ---
-    MODEL_EVAL = "gemini-3.1-pro-preview" 
+    # 预读特征提取专用模型 (强制使用 2.5-flash，保证极速响应且不浪费 Pro 额度)
     MODEL_ADAPTIVE = "gemini-2.5-flash"
-    MODEL_CREATIVE = "gemini-2.5-flash"
 
     @classmethod
-    async def generate_creative_guide(cls, user_prompt: str, mentor_desc: str, focus_dimensions: str) -> str:
+    async def generate_creative_guide(cls, user_prompt: str, mentor_desc: str, focus_dimensions: str, snippet_rule: str, target_model: str) -> str:
         """
-        🚀 创作伴侣模块 (原 V1 的 Tab 1)
+        🚀 创作伴侣模块 (完全兼容计费墙与动态降级)
         """
         expert_standard = f"""
         【核心指导思想】：{mentor_desc}
         【重点发力维度】：你的大纲和试写必须极力展现以下学术特质：{focus_dimensions}。
         """
 
-        # 完全保留了原版强迫切分和字数的指令
+        # 动态注入计费系统传来的字数拦截规则！
         creative_sys_inst = f"""你现在是儿童文学领域的金牌创作指导。
-        任务：协助作者构思并实打实撰写长片段。
+        任务：协助作者构思并提供创作指导。
         标准：{expert_standard}
+        
+        {snippet_rule}
 
         【输出格式要求】
         1. 前半部分：包含【核心立意升华】、【人物弧光设定】、【情节大纲建议】。
-        2. 中间必须插入一行：===片段分割线===
-        3. 后半部分：【高光片段试写】。
-
-        注意：试写片段必须达到 600-800 字，要求极强的画面感和文学性，绝不准敷衍！"""
+        2. 如果权限允许试写，中间必须插入一行：===片段分割线===
+        3. 后半部分：请严格根据上方【权限拦截】或【权限特供】的要求，决定是否输出试写片段。如果允许输出，必须保证极强的画面感和文学性。
+        """
 
         model = genai.GenerativeModel(
-            model_name=cls.MODEL_CREATIVE, 
+            model_name=target_model, 
             system_instruction=creative_sys_inst
         )
         
         try:
-            # 还原 V1 的生成配置：高温度、大 Tokens
+            # 保留 V1 的高创造力配置
             res = model.generate_content(
                 user_prompt, 
                 generation_config=genai.types.GenerationConfig(
@@ -50,11 +48,12 @@ class LiteraryLLMService:
             if res.candidates and res.candidates[0].content.parts:
                 return res.text
             else:
-                reason = res.candidates[0].finish_reason if res.candidates else "未知安全拦截"
-                raise ValueError(f"模型未生成内容，原因: {reason}")
+                reason = res.candidates[0].finish_reason if res.candidates else "未知"
+                raise ValueError(f"模型未生成内容，安全拦截原因: {reason}")
         except Exception as e:
             print(f"🚨 创作引擎调用异常: {e}")
             raise HTTPException(status_code=500, detail=str(e))
+
 
     @classmethod
     async def _get_adaptive_instruction(cls, current_text: str, base_weights: dict, user_note: str = "") -> str:
@@ -66,21 +65,21 @@ class LiteraryLLMService:
         必须仅输出纯 JSON 格式：{"fantasy": 0.5, "reality": 0.5, "character": 0.5}"""
 
         try:
+            # 预读特征提取始终使用轻量级模型
             feature_model = genai.GenerativeModel(cls.MODEL_ADAPTIVE) 
-            # 还原 V1 的特征提取配置：极低温度，强迫 JSON 输出
             f_res = feature_model.generate_content(
                 f"{sense_prompt}\n内容：{current_text[:2000]}", 
                 generation_config=genai.types.GenerationConfig(
                     response_mime_type="application/json",
-                    temperature=0.1
+                    temperature=0.1 # 极低温度确保 JSON 结构稳定
                 )
             )
             features = json.loads(f_res.text)
         except Exception as e:
-            print(f"⚠️ 预读引擎自动降级: {e}")
+            print(f"⚠️ 预读引擎自动降级 (解析失败): {e}")
             features = {"fantasy": 0.5, "reality": 0.5, "character": 0.5}
 
-        # 映射与调权逻辑 (完全复用 V1 算法)
+        # --- 语义指纹感应矩阵 (完美还原 V1) ---
         adjusted_weights = base_weights.copy()
         sensitivity = 15
         mapping = {
@@ -97,6 +96,7 @@ class LiteraryLLMService:
             if any(k in dim for k in mapping["character"]):
                 adjusted_weights[dim] = max(1, adjusted_weights[dim] + (features.get('character', 0.5) - 0.5) * sensitivity)
 
+        # 人工干预偏置
         intervention_log = ""
         if user_note:
             for dim in adjusted_weights.keys():
@@ -104,6 +104,7 @@ class LiteraryLLMService:
                     adjusted_weights[dim] += 25
                     intervention_log += f"【已根据备注强化‘{dim}’】 "
 
+        # 归一化
         total = sum(adjusted_weights.values())
         final_weights = {k: round((v/total)*100, 1) for k, v in adjusted_weights.items()}
         weight_desc = "\n".join([f"- {k}: {v}%" for k, v in final_weights.items()])
@@ -118,18 +119,19 @@ class LiteraryLLMService:
         ---
         请按此分配执行评审。"""
 
+
     @classmethod
-    async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str = "", is_open_test: bool = False) -> str:
+    async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str) -> str:
         """
-        ⚖️ 深度学术评审系统 (原 V1 的 Tab 2)
+        ⚖️ 深度学术评审系统 (由计费网关传递具体使用的算力模型)
         """
-        # 1. 动态生成高分示范模板
+        # 1. 动态生成高分示范模板 (打破 AI 填空瘫痪)
         example_dims = ""
         for k, v in base_weights.items():
             example_score = int(v * 0.8)
-            example_dims += f"* **{k}**：{example_score}/{v}分 - 这里的描写非常生动...\n"
+            example_dims += f"* **{k}**：{example_score}/{v}分 - 这里的描写非常生动，完美契合了该维度的要求...\n"
 
-        # 2. 拼接核心强约束指令
+        # 2. 拼接核心强约束指令 (还原 V1 犀利风格)
         eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。你的评审风格以【犀利、冷峻、见血】著称。
         当前执行的评审体系：【{selected_model}】
         这四个维度的【最高满分】分别是：{base_weights}
@@ -150,34 +152,38 @@ class LiteraryLLMService:
 
         【强制输出规范】
         请直接输出你的最终评审报告，严格使用下方的排版格式。
+        （👇 注意：下方只是一个格式范例，请将分数和评语替换为你对本文的【真实评估结果】！）
+
         ### 📊 综合学术评分：85/100
+
         ### 💡 逻辑与原创性审查
-        ...
+        * **事实与逻辑排查**：逻辑严密，无明显硬伤。（或者指出具体漏洞）
+        * **原创性评估**：8/10分。设定新颖，视角独特。
+
         ### 🧮 维度解析与单项得分
+        （注意：这四项的实际得分相加，必须等于上方的综合评分！）
         {example_dims}
+        
         ### 📝 核心修改建议
-        ...
+        1. 建议在结尾处增加...
+        2. 建议削弱某些冗余的对话...
         """
 
         # 3. 运行自适应调权
         adaptive_inst = await cls._get_adaptive_instruction(raw_text, base_weights, user_note)
         
-        # 4. 合并所有 System Instruction
+        # 4. 合并所有指令：特定体系指令 + 自适应分配权重 + 严格防呆格式
         combined_instruction = model_system_instruction + "\n\n" + adaptive_inst + "\n\n" + eval_sys_inst
-
-        # 5. 降级逻辑判定
-        current_engine = cls.MODEL_ADAPTIVE if is_open_test else cls.MODEL_EVAL
         
-        # 6. 执行最终生成
         try:
             eval_model = genai.GenerativeModel(
-                model_name=current_engine, 
+                model_name=target_model, # 使用鉴权层传来的模型 (如 3.1-pro)
                 system_instruction=combined_instruction
             )
             
             prompt = f"【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！"
             
-            # 还原 V1 的评价参数：温度 0.4
+            # 保留 V1 中评价任务最稳健的 temperature
             res = eval_model.generate_content(
                 prompt, 
                 generation_config=genai.types.GenerationConfig(temperature=0.4)
