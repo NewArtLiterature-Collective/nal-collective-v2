@@ -37,7 +37,7 @@ class LiteraryLLMService:
         
         try:
             # 保留 V1 的高创造力配置
-            res = model.generate_content(
+           res = await model.generate_content(
                 user_prompt, 
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.7,
@@ -67,7 +67,7 @@ class LiteraryLLMService:
         try:
             # 预读特征提取始终使用轻量级模型
             feature_model = genai.GenerativeModel(cls.MODEL_ADAPTIVE) 
-            f_res = feature_model.generate_content(
+            f_res = await feature_model.generate_content(
                 f"{sense_prompt}\n内容：{current_text[:2000]}", 
                 generation_config=genai.types.GenerationConfig(
                     response_mime_type="application/json",
@@ -184,7 +184,7 @@ class LiteraryLLMService:
             prompt = f"【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！"
             
             # 保留 V1 中评价任务最稳健的 temperature
-            res = eval_model.generate_content(
+            res = await eval_model.generate_content(
                 prompt, 
                 generation_config=genai.types.GenerationConfig(temperature=0.4)
             )
