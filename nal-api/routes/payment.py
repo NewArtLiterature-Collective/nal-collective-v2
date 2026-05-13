@@ -18,14 +18,35 @@ async def create_checkout_session_route(request: Request):
 
         if not user_id:
             raise ValueError("缺少 user_id 参数")
-
+        # 🚨 新增：加油包 (addon) 购买门槛检查
+        if plan == "addon":
+            # 获取用户当前数据
+            user_data = UserService.get_user_by_id(user_id)
+            # 注意：根据你的 UserService 返回结构，通常是 user_data.user.user_metadata
+            meta = user_data.user.user_metadata if user_data and hasattr(user_data, 'user') else {}
+            
+            # 统计剩余的高级资源次数
+            remaining_credits = (
+                (meta.get("guide_pro") or 0) +
+                (meta.get("text_pro") or 0) +
+                (meta.get("illustration_pro") or 0)
+            )
+            
+            # 如果还有剩余资源，直接拦截，返回 400 错误
+            if remaining_credits > 0:
+                print(f"🚫 拦截购买：用户 {user_id} 尚有 {remaining_credits} 次资源")
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"您还有 {remaining_credits} 次高级额度未用完，请耗尽后再购买。"}
+                )
+        
         # 将 plan 传给 Service
         url = PaymentService.create_checkout_session(user_id, user_email, plan)
         return {"url": url}
+ 
     except Exception as e:
         print(f"❌ 创建支付会话失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
