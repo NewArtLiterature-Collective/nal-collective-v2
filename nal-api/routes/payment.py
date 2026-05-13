@@ -66,7 +66,11 @@ async def stripe_webhook(request: Request):
             print(f"✅ 权益发放成功")
 
         return {"status": "success"}
-    except Exception:
+   except Exception as e:
         import traceback
+        # 1. 在日志里打印出具体哪里错了，方便我们“抓鬼”
+        print("🚨 Webhook 运行异常详细追踪：")
         traceback.print_exc()
-        return JSONResponse(status_code=400, content={"message": "webhook error"})        raise HTTPException(status_code=400, detail=str(e))
+        
+        # 2. 只保留这一行返回，删掉后面跟着的那半截 raise ...
+        return JSONResponse(status_code=400, content={"message": f"webhook error: {str(e)}"})
