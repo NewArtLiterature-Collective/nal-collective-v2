@@ -41,8 +41,8 @@ class UserService:
                 meta["text_pro"] = 9999
                 meta["illustration_pro"] = 9999
             
-            # 🚨 模式 2：购买“加油包 (booster)” (修复第 4 点：不改身份，不给参赛资格)
-            elif plan == "booster":
+            # 🚨 模式 2：购买“加油包 (addon)” (修复第 4 点：不改身份，不给参赛资格)
+            elif plan == "addon":
                 meta["is_paid"] = True
                 # 记录“买过加油包”的永久标记，但不修改 role
                 meta["has_bought_booster"] = True 
