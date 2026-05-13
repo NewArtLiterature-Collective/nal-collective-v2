@@ -5,6 +5,8 @@ pydantic
 pydantic-settings
 supabase
 google-generativeai
+google-genai
 python-dotenv
 python-docx
 stripe
+python-multipart
