@@ -26,7 +26,7 @@ def health_check():
     return {"status": "ok", "message": "NAL API Server is running"}
 
 # 修改 main.py 这一行
-app.include_router(payment.router, prefix="/api/v1/payment")
+app.include_router(payment.router, prefix="/api/v1/payment", tags=["Payment"])
 
 # 初始化 Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -53,7 +53,7 @@ async def create_payment_session(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Webhook 接口：处理支付成功回调 ---
-@app.post("/api/v1/payment/webhook")
+#@app.post("/api/v1/payment/webhook")
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
     payload = await request.body()
     try:
