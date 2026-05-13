@@ -19,13 +19,13 @@ async def create_payment_session(request: Request):
         body = await request.json()
         user_id = body.get("user_id")
         user_email = body.get("user_email")
-        plan_type = body.get("plan_type") # 👈 前端需要把用户买的是什么传过来 (booster / pro / contestant)
+        plan = body.get("plan") # 👈 前端需要把用户买的是什么传过来 (booster / pro / contestant)
         
-        if not user_id or not plan_type:
-            raise HTTPException(status_code=400, detail="Missing user_id or plan_type")
+        if not user_id or not plan:
+            raise HTTPException(status_code=400, detail="Missing user_id or plan")
             
-       # 把 plan_type 也传给你的服务
-        checkout_url = PaymentService.create_checkout_session(user_id, user_email, plan_type)
+       # 把 plan 也传给你的服务
+        checkout_url = PaymentService.create_checkout_session(user_id, user_email, plan)
         return {"url": checkout_url}
     except Exception as e:
         print(f"🚨 创建支付会话失败: {str(e)}")
@@ -52,7 +52,7 @@ async def stripe_webhook(request: Request):
             user_id = metadata.get('user_id')
             
             # 💡 既然你说了“支付行为就是明确的”，那我们直接从订单里看付了多少钱
-            # 而不是非要依赖前端传过来的 plan_type
+            # 而不是非要依赖前端传过来的 plan
             amount_total = session.get('amount_total', 0) / 100  # 转为元
             
             if not user_id:
