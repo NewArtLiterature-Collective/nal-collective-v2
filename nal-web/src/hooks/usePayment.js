@@ -28,6 +28,15 @@ export function usePayment() {
       });
 
       const data = await response.json();
+      
+      if (!response.ok) {
+        // 这里拿到的就是后端返回的 {"detail": "您还有 X 次..."}
+        const errorMsg = data.detail || "获取支付链接失败";
+        alert(errorMsg); // 👈 这样用户就能看到具体的拦截原因了
+        setPayLoading(false);
+        return; // 🛑 终止，不执行后面的跳转
+      }
+      
       if (data.url) {
         window.location.href = data.url; 
       } else {
