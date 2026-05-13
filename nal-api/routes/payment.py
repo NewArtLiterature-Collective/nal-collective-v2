@@ -1,39 +1,32 @@
-# nal-api/routes/payment.py
-import traceback  # 🚨 确保在文件顶部加上这行导入
-import stripe
 from fastapi import APIRouter, Request, Header, HTTPException
-from core.config import settings
 from services.payment_service import PaymentService
 from services.user_service import UserService
-
+import stripe
+import os
 
 # 初始化 Router，不需要写前缀
 router = APIRouter()
 
-# --- 接口 1: 创建支付会话 ---
-# 真实完整路径将会是: POST /api/v1/payment/create-session
+# 🚨 补充：接收前端支付请求的路由
 @router.post("/create-session")
-async def create_payment_session(request: Request):
+async def create_checkout_session_route(request: Request):
     try:
-        # 解析前端传来的 json 数据
-        body = await request.json()
-        user_id = body.get("user_id")
-        user_email = body.get("user_email")
-        plan = body.get("plan") # 👈 前端需要把用户买的是什么传过来 (booster / pro / contestant)
-        
-        if not user_id or not plan:
-            raise HTTPException(status_code=400, detail="Missing user_id or plan")
-            
-       # 把 plan 也传给你的服务
-        checkout_url = PaymentService.create_checkout_session(user_id, user_email, plan)
-        return {"url": checkout_url}
+        data = await request.json()
+        user_id = data.get('user_id')
+        user_email = data.get('user_email')
+        plan = data.get('plan', 'contestant')  # 从前端接收是 'contestant' 还是 'addon'
+
+        if not user_id:
+            raise ValueError("缺少 user_id 参数")
+
+        # 将 plan 传给 Service
+        url = PaymentService.create_checkout_session(user_id, user_email, plan)
+        return {"url": url}
     except Exception as e:
-        print(f"🚨 创建支付会话失败: {str(e)}")
+        print(f"❌ 创建支付会话失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- 接口 2: 处理 Stripe 支付成功回调 (Webhook) ---
-# 真实完整路径将会是: POST /api/v1/payment/webhook
-# routes/payment.py
+
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
@@ -41,36 +34,37 @@ async def stripe_webhook(request: Request):
     
     try:
         event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            payload, sig_header, os.getenv("STRIPE_WEBHOOK_SECRET")
         )
-        
-        if event['type'] == 'checkout.session.completed':
-            # 🚀 方案：强制转字典，杜绝一切 Python 3.14 的对象兼容问题
-            session = event['data']['object'].to_dict() 
-            
-            metadata = session.get('metadata') or {}
-            user_id = metadata.get('user_id')
-            
-            # 💡 既然你说了“支付行为就是明确的”，那我们直接从订单里看付了多少钱
-            # 而不是非要依赖前端传过来的 plan
-            amount_total = session.get('amount_total', 0) / 100  # 转为元
-            
-            if not user_id:
-                return {"status": "ignored"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook 签名验证失败: {e}")
 
-            print(f"💰 收到支付：{amount_total}元，UserID: {user_id}")
-
-            # 🚀 核心逻辑交给 UserService，它会根据“钱”和“人”来判断
-            UserService.handle_payment_fulfillment(user_id, amount_total)
+    if event['type'] == 'checkout.session.completed':
+        try:
+            session = event['data']['object']
             
-            print(f"✅ 权益发放成功")
+            metadata = getattr(session, 'metadata', None)
+            
+            if isinstance(metadata, dict):
+                user_id = metadata.get('user_id')
+                plan = metadata.get('plan', 'contestant') # 🚨 修复 3：提取商品类型
+            else:
+                user_id = getattr(metadata, 'user_id', None)
+                plan = getattr(metadata, 'plan', 'contestant')
+            
+            print(f"🔍 提取到的 User ID: {user_id}, 购买类别: {plan}")
 
-        return {"status": "success"}
-   except Exception as e:
-        import traceback
-        # 1. 在日志里打印出具体哪里错了，方便我们“抓鬼”
-        print("🚨 Webhook 运行异常详细追踪：")
-        traceback.print_exc()
-        
-        # 2. 只保留这一行返回，删掉后面跟着的那半截 raise ...
-        return JSONResponse(status_code=400, content={"message": f"webhook error: {str(e)}"})
+            if user_id:
+                print("⏳ 准备呼叫 UserService 修改数据库...")
+                # 🚨 修复 3：把 plan 传给发货部门，告诉他们该发什么货！
+                UserService.upgrade_user_to_pro(user_id, plan)
+                print(f"✅ Webhook 成功：用户 {user_id} 订单 ({plan}) 已处理")
+            else:
+                print("⚠️ Webhook 警告：订单的 Metadata 中未找到 user_id")
+
+        except Exception as inner_err:
+            import traceback
+            print(f"❌ 致命错误：处理 Webhook 时崩溃:\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(inner_err))
+            
+    return {"status": "success"}
