@@ -33,10 +33,10 @@ async def create_payment_session(request: Request):
 
 # --- 接口 2: 处理 Stripe 支付成功回调 (Webhook) ---
 # 真实完整路径将会是: POST /api/v1/payment/webhook
+# routes/payment.py
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
-    # 强制直接从 Headers 获取，不再依赖任何复杂的注入
     sig_header = request.headers.get("stripe-signature")
     
     try:
@@ -45,45 +45,28 @@ async def stripe_webhook(request: Request):
         )
         
         if event['type'] == 'checkout.session.completed':
-            # 1. 核心：拿到原始 Session 对象
-            session_obj = event['data']['object']
+            # 🚀 方案：强制转字典，杜绝一切 Python 3.14 的对象兼容问题
+            session = event['data']['object'].to_dict() 
             
-            # 2. 暴力破解：强制将整个 Stripe 对象转为标准字典
-            # 这样做可以彻底杀掉 StripeObject 的魔幻行为，变成纯粹的 Python 字典
-            session_dict = session_obj.to_dict()
-            
-            # 3. 从纯字典里拿数据（这下绝对有 .get 方法了）
-            metadata = session_dict.get('metadata') or {}
+            metadata = session.get('metadata') or {}
             user_id = metadata.get('user_id')
-            plan_type = metadata.get('plan_type', 'contestant')
             
-            # 调试打印：如果这里还拿不到，说明数据根本没传进 Stripe
-            print(f"🔍 调试：Session 字典内容: {session_dict}")
+            # 💡 既然你说了“支付行为就是明确的”，那我们直接从订单里看付了多少钱
+            # 而不是非要依赖前端传过来的 plan_type
+            amount_total = session.get('amount_total', 0) / 100  # 转为元
             
             if not user_id:
-                print("⚠️ Webhook 警告：字典中缺失 user_id")
                 return {"status": "ignored"}
 
-            print(f"💰 成功识别支付！UserID: {user_id}, Plan: {plan_type}")
+            print(f"💰 收到支付：{amount_total}元，UserID: {user_id}")
+
+            # 🚀 核心逻辑交给 UserService，它会根据“钱”和“人”来判断
+            UserService.handle_payment_fulfillment(user_id, amount_total)
             
-            # 执行发货
-            UserService.upgrade_user_to_pro(user_id, plan_type)
-            print(f"✅ 数据库写入成功")
+            print(f"✅ 权益发放成功")
 
         return {"status": "success"}
-
-    except Exception as e:
-        # 别只看报错名，打印出到底在哪一行
+    except Exception:
         import traceback
-        print("🚨 Webhook 终极崩溃追踪：")
         traceback.print_exc()
-        raise HTTPException(status_code=400, detail=str(e))
-    except stripe.error.SignatureVerificationError:
-        print("🚨 Stripe 签名验证失败！可能是你的 STRIPE_WEBHOOK_SECRET 填错了。")
-        raise HTTPException(status_code=400, detail="Invalid signature")
-        
-    except Exception as e:
-        # 🚨 终极杀手锏：如果再崩溃，打印出完整的代码行数和报错调用栈！
-        print("🚨 Webhook 出现了未知的严重崩溃，详细追踪信息如下：")
-        traceback.print_exc() 
-        raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse(status_code=400, content={"message": "webhook error"})        raise HTTPException(status_code=400, detail=str(e))
