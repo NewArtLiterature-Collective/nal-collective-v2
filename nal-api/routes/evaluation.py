@@ -12,7 +12,7 @@ from services.user_service import supabase_admin
 from services.literary_llm_service import LiteraryLLMService
 from services.vision_llm_service import VisionLLMService
 
-router = APIRouter(prefix="/api/v1/evaluate", tags=["Evaluation"])
+router = APIRouter()
 
 @router.post("/process")
 async def process_evaluation(
