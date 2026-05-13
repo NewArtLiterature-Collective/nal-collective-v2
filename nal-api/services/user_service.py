@@ -25,7 +25,6 @@ class UserService:
             print(f"❌ 获取用户失败: {e}")
             return None
 
-   class UserService:
     @staticmethod
     def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
         try:
