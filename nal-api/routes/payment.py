@@ -17,11 +17,13 @@ async def create_payment_session(request: Request):
         body = await request.json()
         user_id = body.get("user_id")
         user_email = body.get("user_email")
+        plan_type = body.get("plan_type") # 👈 前端需要把用户买的是什么传过来 (booster / pro / contestant)
         
-        if not user_id:
-            raise HTTPException(status_code=400, detail="Missing user_id")
+        if not user_id or not plan_type:
+            raise HTTPException(status_code=400, detail="Missing user_id or plan_type")
             
-        checkout_url = PaymentService.create_checkout_session(user_id, user_email)
+       # 把 plan_type 也传给你的服务
+        checkout_url = PaymentService.create_checkout_session(user_id, user_email, plan_type)
         return {"url": checkout_url}
     except Exception as e:
         print(f"🚨 创建支付会话失败: {str(e)}")
@@ -44,18 +46,20 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
         if event['type'] == 'checkout.session.completed':
             session = event['data']['object']
             
-            # 从 metadata 中提取你传递的 user_id
             try:
+                # 🚨 核心修改：不仅要拿 user_id，还要拿 plan_type
                 user_id = session['metadata']['user_id']
-                print(f"💰 Webhook 收到成功支付指令，UserID: {user_id}")
+                # 获取计划类型，如果万一没传，兜底认为是 'contestant'
+                plan_type = session['metadata'].get('plan_type', 'contestant') 
                 
-                # 升级数据库中的用户权限
-                # 注意：如果你的 upgrade_user_to_pro 被定义成了 async def，这里请加上 await
-                UserService.upgrade_user_to_pro(user_id)
-                print(f"✅ UserID: {user_id} 权限已升级为 Pro/参赛者")
+                print(f"💰 Webhook 收到成功支付指令，UserID: {user_id}, 购买类型: {plan_type}")
+                
+                # 🚨 将两个参数一起传给我们的 UserService
+                UserService.upgrade_user_to_pro(user_id, plan_type)
+                print(f"✅ UserID: {user_id} 权限（{plan_type}）升级成功")
                 
             except KeyError:
-                print("⚠️ Webhook 错误：Metadata 中缺少 user_id 字段，无法更新数据库")
+                print("⚠️ Webhook 错误：Metadata 中缺少字段，无法更新数据库")
                 
         # 必须返回 200/success 让 Stripe 知道你收到了，否则它会一直重发
         return {"status": "success"}
