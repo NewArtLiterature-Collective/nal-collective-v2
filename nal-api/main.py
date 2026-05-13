@@ -25,7 +25,8 @@ app.include_router(evaluation_router)
 def health_check():
     return {"status": "ok", "message": "NAL API Server is running"}
 
-app.include_router(payment.router)
+# 修改 main.py 这一行
+app.include_router(payment.router, prefix="/api/v1/payment")
 
 # 初始化 Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
