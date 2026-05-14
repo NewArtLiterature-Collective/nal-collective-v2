@@ -2,7 +2,7 @@
 import numpy as np
 import asyncio
 from services.user_service import supabase_admin
-from services.literary_llm_service import LiteraryLLMService
+from services.literary_llm_service import contest_LiteraryLLMService
 
 async def contest_pipeline(submission_id: str):
     """
