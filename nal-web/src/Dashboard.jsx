@@ -17,7 +17,10 @@ export default function Dashboard({ session }) {
   const [contestText, setContestText] = useState('');
   const [contestImages, setContestImages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // 评审进度相关
   const [userSubmissions, setUserSubmissions] = useState([]); 
+  const [isRefreshing, setIsRefreshing] = useState(false); // 🚨 新增：刷新状态动画
 
   // 专家模型与引擎配置
   const [models, setModels] = useState([]);
@@ -49,15 +52,18 @@ export default function Dashboard({ session }) {
 
   // --- 2. 初始化与监听逻辑 ---
 
+  // 🚨 增强：拉取逻辑增加 error_msg
   const fetchUserSubmissions = useCallback(async () => {
     if (!isEligibleForContest) return;
+    setIsRefreshing(true);
     const { data } = await supabase
       .from('contest_submissions')
-      .select('id, status, created_at, ai_total_score')
+      .select('id, status, created_at, ai_total_score, error_msg') // 🚨 增加了 error_msg
       .eq('user_id', session.user.id)
       .order('created_at', { ascending: false });
     
     if (data) setUserSubmissions(data);
+    setTimeout(() => setIsRefreshing(false), 500); 
   }, [session.user.id, isEligibleForContest]);
 
   const refreshUserMetadata = async () => {
@@ -76,6 +82,16 @@ export default function Dashboard({ session }) {
     refreshUserMetadata();
     fetchUserSubmissions(); 
     
+    // 🚨 核心增强：开启 Supabase 实时订阅
+    // 当后端 Agent 更新数据库时，前端会自动感知并刷新列表
+    const submissionSubscription = supabase
+      .channel('contest_changes')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'contest_submissions', filter: `user_id=eq.${session.user.id}` }, 
+        () => fetchUserSubmissions()
+      )
+      .subscribe();
+
     const params = new URLSearchParams(window.location.search);
     const intent = params.get('intent');
     if (intent === 'pro' && !isPro) {
@@ -95,7 +111,11 @@ export default function Dashboard({ session }) {
       }
     };
     fetchModels();
-  }, [userRole, isPro, fetchUserSubmissions]);
+
+    return () => {
+      supabase.removeChannel(submissionSubscription); // 🚨 组件卸载时销毁订阅
+    };
+  }, [userRole, isPro, fetchUserSubmissions, session.user.id]);
 
   // --- 3. 业务处理函数 ---
 
@@ -145,7 +165,7 @@ export default function Dashboard({ session }) {
       });
       if (dbError) throw dbError;
 
-      alert("🎉 提交成功！评审正在进行中。");
+      alert("🎉 提交成功！评审已自动启动，请在右侧追踪实时进度。");
       setContestText('');
       setContestImages([]);
       fetchUserSubmissions(); 
@@ -175,8 +195,8 @@ export default function Dashboard({ session }) {
         <div style={styles.overlay}>
           <div style={styles.paymentModal}>
             <div style={styles.spinner}></div>
-            <h3 style={{ margin: '20px 0 10px 0', color: '#111827' }}>正在为您连接安全支付网关...</h3>
-            <button onClick={() => setPayLoading(false)} style={styles.cancelPayBtn}>取消并返回</button>
+            <h3 style={{ margin: '20px 0 10px 0', color: '#111827' }}>正在连接支付网关...</h3>
+            <button onClick={() => setPayLoading(false)} style={styles.cancelPayBtn}>返回</button>
           </div>
         </div>
       )}
@@ -199,11 +219,11 @@ export default function Dashboard({ session }) {
             <div style={styles.upgradeBox}>
               <h4 style={styles.upgradeTitle}>NAL“童心”征文大赛</h4>
               {!isContestant ? (
-                <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名 (￥10)</button>
+                <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
               ) : (
                 <div style={{color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold'}}>✅ 已获参赛资格</div>
               )}
-              <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员 (¥500/年)</button>
+              <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
             </div>
           )}
           <div style={styles.userSection}>
@@ -225,10 +245,8 @@ export default function Dashboard({ session }) {
 
         <div style={styles.content}>
           {activeTab === 'contest' ? (
-            /* 🚨 修正后的分栏布局：使用 Flex Row */
             <div style={{ display: 'flex', flexDirection: 'row', gap: '25px', alignItems: 'flex-start' }}>
-              
-              {/* 左侧：表单 (占用 2 倍空间) */}
+              {/* 左侧：表单 */}
               <div style={{...styles.reportBox, flex: 2, margin: 0 }}>
                 <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 <div style={styles.uploadArea}>
@@ -248,26 +266,47 @@ export default function Dashboard({ session }) {
                 </button>
               </div>
 
-              {/* 右侧：进度列表 (占用 1 倍空间) */}
-              <div style={{...styles.reportBox, flex: 1, margin: 0, backgroundColor: '#f8fafc', minWidth: '280px' }}>
-                <h4 style={{marginTop: 0, color: '#334155', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px'}}>📊 我的评审进度</h4>
+              {/* 右侧：进度列表 (增强 UI) */}
+              <div style={{...styles.reportBox, flex: 1, margin: 0, backgroundColor: '#f8fafc', minWidth: '300px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                  <h4 style={{ margin: 0, color: '#334155' }}>📊 评审实时进度</h4>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', animation: 'pulse 2s infinite' }}></div>
+                </div>
+
                 {userSubmissions.length === 0 ? (
                   <p style={{fontSize: '13px', color: '#94a3b8', textAlign: 'center', padding: '20px 0'}}>暂无提交记录</p>
                 ) : (
                   <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                     {userSubmissions.map(sub => (
-                      <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
+                      <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'}}>
                         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
                           <span style={{fontSize: '11px', color: '#64748b'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
                           {renderStatusBadge(sub.status)}
                         </div>
-                        <div style={{fontSize: '12px', fontWeight: 'bold', color: '#1e293b'}}>ID: {sub.id.substring(0,8)}...</div>
-                        {sub.ai_total_score && <div style={{fontSize: '11px', color: '#10b981', marginTop: '4px'}}>得分: {sub.ai_total_score.toFixed(1)}</div>}
+                        <div style={{fontSize: '12px', fontWeight: 'bold', color: '#1e293b', fontFamily: 'monospace'}}>ID: {sub.id.substring(0,8)}...</div>
+                        
+                        {/* 🚨 优化显示：成功才显示分数，失败显示原因 */}
+                        {sub.status === 'success' && sub.ai_total_score > 0 && (
+                          <div style={{fontSize: '13px', color: '#10b981', marginTop: '6px', fontWeight: 'bold'}}>综合评分: {sub.ai_total_score.toFixed(1)}</div>
+                        )}
+                        {sub.status === 'invalid' && sub.error_msg && (
+                          <div style={{fontSize: '11px', color: '#ef4444', marginTop: '6px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
-                <button onClick={fetchUserSubmissions} style={{marginTop: '20px', width: '100%', padding: '8px', background: 'none', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b'}}>🔄 刷新进度</button>
+                
+                <button 
+                  onClick={fetchUserSubmissions} 
+                  disabled={isRefreshing}
+                  style={{marginTop: '20px', width: '100%', padding: '8px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b'}}
+                >
+                  {isRefreshing ? "正在同步..." : "🔄 刷新列表"}
+                </button>
+                <p style={{ fontSize: '10px', color: '#94a3b8', marginTop: '10px', textAlign: 'center' }}>
+                  Agent 自动评审中，状态将实时更新
+                </p>
               </div>
             </div>
           ) : (
@@ -297,6 +336,15 @@ export default function Dashboard({ session }) {
           </div>
         )}
       </main>
+      
+      {/* 🚨 注入实时同步的呼吸灯动画 */}
+      <style>{`
+        @keyframes pulse {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.2); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
     </div>
   );
 }
