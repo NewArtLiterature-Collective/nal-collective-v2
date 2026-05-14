@@ -38,13 +38,13 @@ class UserService:
                 # 🚨 核心控制：绝对不写 meta["role"] = ...
                 # 这保证了普通用户买完包后，role 依然为空，【不能获得参赛资格】
                 
-                # 发放 5 次专属额度（根据表格，基础和高级都给5次）
-                meta["flash_left"] = (meta.get("flash_left") or 0) + 5
-                meta["guide_pro"] = (meta.get("guide_pro") or 0) + 5
-                meta["text_pro"] = (meta.get("text_pro") or 0) + 5
-                meta["illustration_pro"] = (meta.get("illustration_pro") or 0) + 5
+                # 💡 资源调整：2次 Flash + 3次 共享Pro
+                meta["flash_left"] = (meta.get("flash_left") or 0) + 2
                 
-                print(f"📦 用户 {user_id} 获得加油包物资，身份保持不变。")
+                # 使用 pro_credits 作为共享池，完美实现“一共 3 次”
+                meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
+                
+                print(f"📦 用户 {user_id} 获得加油包：+2 Flash, +3 Pro共享额度。")
 
             # 🏆 逻辑 2：参赛费 (contestant) - 10元
             elif plan == "contestant":
