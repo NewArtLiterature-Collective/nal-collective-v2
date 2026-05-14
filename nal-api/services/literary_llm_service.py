@@ -186,7 +186,7 @@ class LiteraryLLMService:
             # 保留 V1 中评价任务最稳健的 temperature
             res = await eval_model.generate_content_async(
                 prompt, 
-                generation_config=genai.types.GenerationConfig(temperature=0.4)
+                generation_config=genai.types.GenerationConfig(temperature=0.05)
             )
             
             if res.candidates and res.candidates[0].content.parts:
