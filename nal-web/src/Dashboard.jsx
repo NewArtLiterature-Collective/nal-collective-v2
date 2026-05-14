@@ -27,7 +27,6 @@ export default function Dashboard({ session }) {
 
   // 专家模型与引擎配置
   const [models, setModels] = useState([]);
-  const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
 
   // 用户身份与权限逻辑
