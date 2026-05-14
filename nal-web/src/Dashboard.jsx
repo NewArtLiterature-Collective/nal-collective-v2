@@ -20,8 +20,21 @@ export default function Dashboard({ session }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
 
-  // 用户身份与权限逻辑
-  const [userMetadata, setUserMetadata] = useState(session.user.user_metadata || {});
+  // 🚨 用户身份与权限逻辑 (包含前端时间拦截器预判到期)
+  const [rawUserMetadata, setRawUserMetadata] = useState(session.user.user_metadata || {});
+  
+  // 复制一份进行安全校验
+  let userMetadata = { ...rawUserMetadata };
+  if (userMetadata.role === 'pro' && userMetadata.expiry_date) {
+    const now = new Date();
+    const expiry = new Date(userMetadata.expiry_date);
+    if (now > expiry) {
+      console.log("前端检测到 Pro 已过期，执行视觉降级");
+      userMetadata.role = null; 
+      userMetadata.is_paid = false;
+    }
+  }
+
   const userRole = userMetadata.role || (userMetadata.is_paid ? 'contestant' : 'free');
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
@@ -30,7 +43,7 @@ export default function Dashboard({ session }) {
   const isEligibleForContest = isContestant || isPro;
 
   // 算力额度管理
-  const [usage, setUsage] = useState({ flash: 0, guide_pro: 0, text_pro: 0, illustration_pro: 0 });
+  const [usage, setUsage] = useState({ flash: 0, pro_credits: 0 });
 
   // 引入支付与评审逻辑 Hooks
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
@@ -38,19 +51,16 @@ export default function Dashboard({ session }) {
 
   // --- 2. 初始化与监听逻辑 ---
   const refreshUserMetadata = async () => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) {
-    const meta = user.user_metadata || {};
-    setUserMetadata(meta);
-    setUsage({
-      flash: meta.flash_left !== undefined ? meta.flash_left : 5,
-      guide_pro: meta.guide_pro || 0,
-      text_pro: meta.text_pro || 0,
-      illustration_pro: meta.illustration_pro || 0,
-      pro_credits: meta.pro_credits || 0  // 🚨 新增：从元数据中读取共享池额度
-    });
-  }
-};
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const meta = user.user_metadata || {};
+      setRawUserMetadata(meta);
+      setUsage({
+        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
+        pro_credits: meta.pro_credits || 0  // 统一使用共享池额度
+      });
+    }
+  };
 
   useEffect(() => {
     refreshUserMetadata();
@@ -169,7 +179,7 @@ export default function Dashboard({ session }) {
 
   return (
     <div style={styles.dashboard}>
-      {/* 🚨 积木：支付处理中遮罩层 (含取消按钮) */}
+      {/* 🚨 积木：支付处理中遮罩层 */}
       {payLoading && (
         <div style={styles.overlay}>
           <div style={styles.paymentModal}>
@@ -181,7 +191,6 @@ export default function Dashboard({ session }) {
             <button 
               onClick={() => {
                 if(setPayLoading) setPayLoading(false);
-                // 清理 URL，防止再次触发
                 window.history.replaceState({}, document.title, window.location.pathname);
               }} 
               style={styles.cancelPayBtn}
@@ -227,14 +236,28 @@ export default function Dashboard({ session }) {
               <button onClick={() => handlePayment('addon')} disabled={payLoading} style={styles.addonBtn}>
                  🔋 购买加油包 (￥20)
               </button>
+              {/* 🚨 价格改为 500元 */}
               <button onClick={() => handlePayment('pro')} disabled={payLoading} style={styles.proBtn}>
-                ✨ 升级专业会员 (¥500/年)
+                 ✨ 升级专业会员 (¥500/年)
               </button>
             </div>
           )}
 
           <div style={styles.userSection}>
-            {isPro ? <div style={styles.proBadge}>✨ NAL 专业会员</div> : <div style={styles.freeBadge}>☕ 普通用户</div>}
+            {isPro ? (
+              <>
+                <div style={styles.proBadge}>✨ NAL 专业会员</div>
+                {/* 🚨 显示过期时间 */}
+                {userMetadata.expiry_date && (
+                  <div style={{fontSize: '11px', color: '#9ca3af', textAlign: 'center', marginBottom: '10px'}}>
+                    有效期至：{new Date(userMetadata.expiry_date).toLocaleDateString()}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={styles.freeBadge}>☕ 普通用户</div>
+            )}
+            
             <div style={isEligibleForContest ? styles.contestBadge : styles.pendingBadge}>
                {isEligibleForContest ? "🏆 已获参赛资格" : "📝 未报名 · 童心大赛"}
             </div>
@@ -246,7 +269,7 @@ export default function Dashboard({ session }) {
 
       {/* 主面板 */}
       <main style={styles.main}>
-        {/* 顶部状态栏：找回的遗漏部分 */}
+        {/* 顶部状态栏 */}
         {activeTab !== 'contest' && (
           <div style={styles.header}>
             <div style={styles.selectorGroup}>
@@ -273,25 +296,34 @@ export default function Dashboard({ session }) {
                   <span style={styles.statusLabel}>引擎</span>
                   <span style={styles.statusValue}>{engineName}</span>
                </div>
-               {/* 1. 显示基础 Flash 额度 */}
+               
+               {/* 🚨 1. 显示基础 Flash 额度 (Pro 显示无限) */}
                {!isPro && (
                  <div style={styles.statusItem}>
                     <span style={styles.statusLabel}>Flash 剩余</span>
-                    <span style={usage.flash > 0 ? styles.statusValue : styles.statusEmpty}>{usage.flash}</span>
+                    <span style={usage.flash > 0 ? styles.statusValue : styles.statusEmpty}>
+                      {usage.flash >= 9999 ? "无限" : usage.flash}
+                    </span>
                  </div>
                )}
-               {/* 🚨 2. 插入位置：显示通用高级 Pro 额度 (加油包资源) */}
-               {usage.pro_credits > 0 && (
+               
+               {/* 🚨 2. 显示通用高级 Pro 额度 (Pro 显示无限) */}
+               {(usage.pro_credits > 0 || isPro) && (
                  <div style={styles.statusItem}>
-                    <span style={styles.statusLabel}>通用高级 Pro 额度</span>
-                    <span style={{...styles.statusValue, color: '#10b981'}}>{usage.pro_credits}</span>
+                    <span style={styles.statusLabel}>高级 Pro 额度</span>
+                    <span style={{...styles.statusValue, color: '#10b981'}}>
+                      {isPro ? "无限" : usage.pro_credits}
+                    </span>
                  </div>
                )}
-               {/* 3. 原有的专项奖励额度 (报名送的) */}
-               {isContestant && usage[`${activeTab}_pro`] > 0 && (
+
+               {/* 🚨 3. 显示每日熔断 3.1 剩余次数 (仅限 Pro) */}
+               {isPro && (
                  <div style={styles.statusItem}>
-                    <span style={styles.statusLabel}>高级奖励额度</span>
-                    <span style={{...styles.statusValue, color: '#8b5cf6'}}>{usage[`${activeTab}_pro`]}</span>
+                    <span style={styles.statusLabel}>今日 3.1 剩余</span>
+                    <span style={{...styles.statusValue, color: '#8b5cf6'}}>
+                      {Math.max(0, 5 - (userMetadata.pro_daily_used || 0))} / 5
+                    </span>
                  </div>
                )}
             </div>
@@ -325,7 +357,7 @@ export default function Dashboard({ session }) {
               </button>
             </div>
           ) : (
-            /* B. 常规 AI 评审界面：找回的上传组件部分 */
+            /* B. 常规 AI 评审界面 */
             <>
               {activeTab === 'illustration' && (
                 <div style={styles.uploadArea}>
