@@ -6,6 +6,11 @@ import { useEvaluation } from './hooks/useEvaluation';
 
 export default function Dashboard({ session }) {
   const navigate = useNavigate(); // 🚨 初始化导航
+
+  // 🚨 【防火墙】如果 session 还没准备好，先不渲染核心内容，防止崩溃
+  if (!session || !session.user) {
+    return <div style={{ padding: '20px', textAlign: 'center' }}>正在同步工作台数据...</div>;
+  }
   
   // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
