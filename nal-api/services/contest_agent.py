@@ -76,3 +76,37 @@ async def update_status(sid, status, error=None):
         "status": status,
         "error_msg": error
     }).eq("id", sid).execute()
+
+async def main_worker():
+    """
+    长驻轮询器：每 10 秒扫描一次数据库中的 'pending' 作品
+    """
+    print("🏛️ NAL 专家评审 Agent 启动，正在监听待处理作品...")
+    
+    while True:
+        try:
+            # 1. 查找一个待处理的作品
+            # 我们只需要拉取 ID 即可，pipeline 内部会重新拉取完整数据
+            res = supabase_admin.table("contest_submissions") \
+                .select("id") \
+                .eq("status", "pending") \
+                .limit(1) \
+                .execute()
+
+            if res.data:
+                target_id = res.data[0]['id']
+                print(f"🔍 发现新投稿 {target_id}，启动流水线...")
+                
+                # 2. 执行你写的流水线
+                await contest_pipeline(target_id)
+            
+            # 3. 适当休息，避免给数据库造成太大压力
+            await asyncio.sleep(10)
+            
+        except Exception as e:
+            print(f"❌ 轮询异常: {e}")
+            await asyncio.sleep(30) # 报错后多歇一会
+
+if __name__ == "__main__":
+    # 启动异步事件循环
+    asyncio.run(main_worker())
