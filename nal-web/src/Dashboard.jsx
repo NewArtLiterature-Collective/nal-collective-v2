@@ -17,14 +17,14 @@ export default function Dashboard({ session }) {
   const [contestText, setContestText] = useState('');
   const [contestImages, setContestImages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [userSubmissions, setUserSubmissions] = useState([]); // 存储该用户的历史参赛记录
+  const [userSubmissions, setUserSubmissions] = useState([]); 
 
   // 专家模型与引擎配置
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
 
-  // 🚨 用户身份与权限逻辑
+  // 用户身份与权限逻辑
   const [rawUserMetadata, setRawUserMetadata] = useState(session.user.user_metadata || {});
   
   let userMetadata = { ...rawUserMetadata };
@@ -49,7 +49,6 @@ export default function Dashboard({ session }) {
 
   // --- 2. 初始化与监听逻辑 ---
 
-  // 🚨 获取用户的参赛作品状态
   const fetchUserSubmissions = useCallback(async () => {
     if (!isEligibleForContest) return;
     const { data } = await supabase
@@ -122,7 +121,7 @@ export default function Dashboard({ session }) {
   };
 
   const submitContestWork = async () => {
-    if (contestImages.length < 1 || contestImages.length > 2) return alert("请务必上传 1 到 2 幅插画！");
+    if (contestImages.length < 1 || contestImages.length > 2) return alert("请上传 1-2 幅插画！");
     if (contestText.trim().length < 500) return alert("参赛文字内容需接近 800 字。");
 
     setIsSubmitting(true);
@@ -157,7 +156,6 @@ export default function Dashboard({ session }) {
     }
   };
 
-  // 🚨 新增：状态标签渲染逻辑
   const renderStatusBadge = (status) => {
     const badges = {
       pending: { label: '⏳ 待校验', color: '#6b7280' },
@@ -169,23 +167,10 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '10px' }}>{b.label}</span>;
   };
 
-  // --- 4. 辅助文案渲染 ---
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
-  
-  const getUploadLimitDesc = () => {
-    if (isPro) return "支持最大 200MB 的 .docx 文档";
-    if (isContestant) return "支持最大 150KB 的 .docx 文档";
-    return "支持最大 50KB 的 .docx 文档";
-  };
-  const getImageLimitDesc = () => {
-    if (isPro) return "支持最多 50 张，单张最大 5MB";
-    if (isContestant) return "支持最多 5 张，单张最大 1.5MB";
-    return "支持最多 2 张，单张最大 1MB";
-  };
 
   return (
     <div style={styles.dashboard}>
-      {/* 支付遮罩层保持不变 */}
       {payLoading && (
         <div style={styles.overlay}>
           <div style={styles.paymentModal}>
@@ -229,7 +214,6 @@ export default function Dashboard({ session }) {
       </aside>
 
       <main style={styles.main}>
-        {/* 顶部状态栏保持不变 */}
         {activeTab !== 'contest' && (
           <div style={styles.header}>
             <div style={styles.statusRow}>
@@ -240,11 +224,12 @@ export default function Dashboard({ session }) {
         )}
 
         <div style={styles.content}>
-          {/* 🚨 关键修改点：参赛作品提交界面（左右分栏结构） */}
           {activeTab === 'contest' ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'flex-start' }}>
-              {/* 左侧：提交区域 */}
-              <div style={{...styles.reportBox, flex: 2, minWidth: '500px'}}>
+            /* 🚨 修正后的分栏布局：使用 Flex Row */
+            <div style={{ display: 'flex', flexDirection: 'row', gap: '25px', alignItems: 'flex-start' }}>
+              
+              {/* 左侧：表单 (占用 2 倍空间) */}
+              <div style={{...styles.reportBox, flex: 2, margin: 0 }}>
                 <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 <div style={styles.uploadArea}>
                   <input type="file" id="c-img" hidden multiple accept="image/*" onChange={(e) => setContestImages(Array.from(e.target.files).slice(0,2))} />
@@ -263,8 +248,8 @@ export default function Dashboard({ session }) {
                 </button>
               </div>
 
-              {/* 右侧：评审进度面板 */}
-              <div style={{...styles.reportBox, flex: 1, minWidth: '300px', backgroundColor: '#f8fafc'}}>
+              {/* 右侧：进度列表 (占用 1 倍空间) */}
+              <div style={{...styles.reportBox, flex: 1, margin: 0, backgroundColor: '#f8fafc', minWidth: '280px' }}>
                 <h4 style={{marginTop: 0, color: '#334155', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px'}}>📊 我的评审进度</h4>
                 {userSubmissions.length === 0 ? (
                   <p style={{fontSize: '13px', color: '#94a3b8', textAlign: 'center', padding: '20px 0'}}>暂无提交记录</p>
@@ -286,7 +271,6 @@ export default function Dashboard({ session }) {
               </div>
             </div>
           ) : (
-            /* 常规 AI 评审界面（保持不变） */
             <>
               {activeTab === 'illustration' && (
                 <div style={styles.uploadArea}>
@@ -317,7 +301,6 @@ export default function Dashboard({ session }) {
   );
 }
 
-// 样式表保持不变（已包含所有必要定义）
 const styles = {
   dashboard: { display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', fontFamily: 'system-ui' },
   overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', zIndex: 1000 },
@@ -338,9 +321,6 @@ const styles = {
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '40px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '15px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
-  selectorGroup: { display: 'flex', alignItems: 'center', gap: '10px' },
-  select: { padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' },
-  label: { fontSize: '14px', color: '#6b7280' },
   statusRow: { display: 'flex', gap: '30px' },
   statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
   statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
