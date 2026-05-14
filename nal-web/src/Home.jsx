@@ -6,12 +6,12 @@ export default function Home() {
 
   return (
     <div style={styles.container}>
-      {/* 1. 顶部导航栏 */}
+      {/* 🧱 积木 1：顶部导航栏 */}
       <nav style={styles.navbar}>
         <div style={styles.logo}>NAL Collective</div>
         <div style={styles.navLinks}>
           <span style={styles.navLink}>大赛动态</span>
-          {/* ✅ 修复：点击进入展厅 */}
+          {/* ✅ 展厅入口：保持简洁链接样式 */}
           <span 
             onClick={() => navigate('/gallery')} 
             style={{...styles.navLink, color: '#4f46e5', fontWeight: 'bold', cursor: 'pointer'}}
@@ -24,7 +24,7 @@ export default function Home() {
         </div>
       </nav>
   
-      {/* 2. 首屏视觉区 (Hero) */}
+      {/* 🧱 积木 2：首屏视觉区 (Hero) - 回归简洁，无额外按钮 */}
       <header style={styles.hero}>
         <h1 style={styles.heroTitle}>
           汇聚先进技术和人类智慧<br/>
@@ -33,24 +33,9 @@ export default function Home() {
         <p style={styles.heroSubtitle}>
           NewArtLiterature - Collective 新艺文社数字化平台
         </p>
-        {/* ✅ 修复：Hero 区的大按钮入口 */}
-        <div style={{ marginTop: '40px', display: 'flex', gap: '20px' }}>
-          <button 
-            onClick={() => navigate('/gallery')} 
-            style={styles.heroPrimaryBtn}
-          >
-            🏛️ 立即进入文学展厅
-          </button>
-          <button 
-            onClick={() => navigate('/login?intent=contestant')} 
-            style={styles.heroSecondaryBtn}
-          >
-            ✍️ 参与大赛投稿
-          </button>
-        </div>
       </header>
 
-      {/* 3. 核心价值区 (Features) - 完整保留 */}
+      {/* 🧱 积木 3：核心价值区 (Features) */}
       <section style={styles.section}>
         <h2 style={styles.sectionTitle}>突破传统，重塑童心叙事</h2>
         <div style={styles.grid}>
@@ -72,10 +57,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 4. 版本对比区 (Pricing) - 完整保留 */}
+      {/* 🧱 积木 4：版本对比区 (Pricing) */}
       <section style={{...styles.section, backgroundColor: '#f3f4f6'}}>
         <h2 style={styles.sectionTitle}>选择您的创作通行证</h2>
         <div style={styles.pricingGrid}>
+          {/* 普通用户卡片 */}
           <div style={styles.pricingCard}>
             <h3 style={styles.planName}>☕ 普通用户</h3>
             <div style={styles.planPrice}>免费体验</div>
@@ -89,6 +75,7 @@ export default function Home() {
             <button onClick={() => navigate('/login')} style={styles.planBtnFree}>立即注册</button>
           </div>
 
+          {/* 参赛选手卡片 */}
           <div style={{...styles.pricingCard, border: '2px solid #4f46e5', transform: 'scale(1.05)', zIndex: 10}}>
             <div style={styles.popularBadge}>2026 评审季推荐</div>
             <h3 style={styles.planName}>🏆 参赛选手</h3>
@@ -103,6 +90,7 @@ export default function Home() {
             <button onClick={() => navigate('/login?intent=contestant')} style={styles.planBtnContest}>立即报名参赛</button>
           </div>
 
+          {/* 专业会员卡片 */}
           <div style={{...styles.pricingCard, background: '#111827', color: 'white'}}>
             <h3 style={{...styles.planName, color: '#a78bfa'}}>✨ 专业会员</h3>
             <div style={styles.planPrice}>￥500 <span style={{...styles.priceUnit, color: '#9ca3af'}}>/ 年</span></div>
@@ -118,11 +106,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 5. 页脚 */}
+      {/* 🧱 积木 5：页脚 */}
       <footer style={styles.footer}>
-        <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'center', gap: '30px' }}>
-          <span onClick={() => navigate('/gallery')} style={{ cursor: 'pointer', fontSize: '14px' }}>作品展厅</span>
-        </div>
         <p>© 2026 NewArtLiterature Collective. All rights reserved.</p>
         <p style={{fontSize: '12px', marginTop: '8px', color: '#6b7280'}}>数字时代的文学审美与插画艺术先锋</p>
       </footer>
@@ -130,7 +115,6 @@ export default function Home() {
   );
 }
 
-// 样式对象 (包含所有必要样式)
 const styles = {
   container: { fontFamily: 'system-ui, sans-serif', color: '#111827', overflowX: 'hidden' },
   navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 50px', backgroundColor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, borderBottom: '1px solid #f3f4f6' },
@@ -141,8 +125,6 @@ const styles = {
   hero: { minHeight: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb', paddingTop: '60px', padding: '20px', textAlign: 'center' },
   heroTitle: { fontSize: '54px', fontWeight: '800', lineHeight: '1.2', marginBottom: '24px', maxWidth: '900px', background: 'linear-gradient(to right, #111827, #4f46e5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: '-1px' },
   heroSubtitle: { fontSize: '22px', color: '#6b7280', fontWeight: '500', letterSpacing: '1px' },
-  heroPrimaryBtn: { padding: '16px 32px', backgroundColor: '#111827', color: 'white', borderRadius: '12px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', boxShadow: '0 10px 20px rgba(0,0,0,0.1)' },
-  heroSecondaryBtn: { padding: '16px 32px', backgroundColor: 'transparent', color: '#4f46e5', borderRadius: '12px', border: '2px solid #4f46e5', fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' },
   section: { padding: '100px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: 'white' },
   sectionTitle: { fontSize: '36px', fontWeight: 'bold', marginBottom: '60px', textAlign: 'center' },
   grid: { display: 'flex', gap: '30px', maxWidth: '1200px', width: '100%', flexWrap: 'wrap', justifyContent: 'center' },
