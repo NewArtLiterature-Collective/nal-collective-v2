@@ -14,6 +14,7 @@ export default function Dashboard({ session }) {
   
   // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
+  const [rawUserMetadata, setRawUserMetadata] = useState(session?.user?.user_metadata || {});
   const [workText, setWorkText] = useState('');
   const [selectedImages, setSelectedImages] = useState([]);
   const [selectedDocx, setSelectedDocx] = useState(null); 
