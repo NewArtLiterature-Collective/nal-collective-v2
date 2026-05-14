@@ -228,7 +228,7 @@ export default function Dashboard({ session }) {
                  🔋 购买加油包 (￥20)
               </button>
               <button onClick={() => handlePayment('pro')} disabled={payLoading} style={styles.proBtn}>
-                ✨ 升级专业会员 (¥300/年)
+                ✨ 升级专业会员 (¥500/年)
               </button>
             </div>
           )}
