@@ -7,7 +7,7 @@ async def evaluator_agent(submission_id: str, text: str, images: list):
     """
     # 1. 调用 LiteraryLLMService 获取维度打分
     # 假设返回结果：{'fantasy': 95, 'reality': 20, 'character': 90, 'logic': 15}
-    results = await LiteraryLLMService.get_multi_dimensional_scores(text)
+    results = await ContestLiteraryService.get_multi_dimensional_scores(text)
     
     scores = results['scores']
     score_values = list(scores.values())
