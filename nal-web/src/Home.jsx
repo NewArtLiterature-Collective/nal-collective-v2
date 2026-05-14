@@ -88,7 +88,7 @@ export default function Home() {
           {/* 专业会员卡片 */}
           <div style={{...styles.pricingCard, background: '#111827', color: 'white'}}>
             <h3 style={{...styles.planName, color: '#a78bfa'}}>✨ 专业会员</h3>
-            <div style={styles.planPrice}>￥300 <span style={{...styles.priceUnit, color: '#9ca3af'}}>/ 年</span></div>
+            <div style={styles.planPrice}>￥500 <span style={{...styles.priceUnit, color: '#9ca3af'}}>/ 年</span></div>
             <ul style={{...styles.planFeatures, color: '#d1d5db'}}>
               <li>✓ <b>包含参赛资格及所有评审功能</b></li>
               <li>✓ 解锁 <b>文学专业旗舰算力</b></li>
