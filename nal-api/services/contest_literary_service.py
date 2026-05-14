@@ -3,7 +3,7 @@ import json
 from core.config import settings
 import google.generativeai as genai
 
-class LiteraryLLMService:
+class ContestLiteraryService:
     @staticmethod
     async def evaluate_contest_work(text: str, persona: str = "panoramic"):
         """
