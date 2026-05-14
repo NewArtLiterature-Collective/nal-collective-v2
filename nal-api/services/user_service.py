@@ -20,10 +20,10 @@ class UserService:
             print(f"❌ 获取用户失败: {e}")
             return None
 
-    @staticmethod
+  @staticmethod
     def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
         """
-        支付回调后的发货车间：严格执行“身份与物资分离”
+        支付回调后的发货车间
         """
         try:
             user_res = UserService.get_user_by_id(user_id)
@@ -31,47 +31,36 @@ class UserService:
                 return
             meta = user_res.user.user_metadata or {}
             
-            # 📦 逻辑 1：加油包 (addon) - 20元
+            # 📦 逻辑 1：加油包 (addon)
             if plan == "addon":
-                meta["has_bought_booster"] = True # 标记买过包，用于防刷
-                
-                # 🚨 核心控制：绝对不写 meta["role"] = ...
-                # 这保证了普通用户买完包后，role 依然为空，【不能获得参赛资格】
-                
-                # 💡 资源调整：2次 Flash + 3次 共享Pro
+                meta["has_bought_booster"] = True  # 👈 记录买过包
                 meta["flash_left"] = (meta.get("flash_left") or 0) + 2
-                
-                # 使用 pro_credits 作为共享池，完美实现“一共 3 次”
                 meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
-                
-                print(f"📦 用户 {user_id} 获得加油包：+2 Flash, +3 Pro共享额度。")
+                print(f"📦 用户 {user_id} 获得加油包：+2 Flash, +3 Pro。")
 
-            # 🏆 逻辑 2：参赛费 (contestant) - 10元
+            # 🏆 逻辑 2：参赛费 (contestant)
             elif plan == "contestant":
-                meta["role"] = "contestant" # 👈 只有这里才给参赛门票！
+                meta["role"] = "contestant" # 给予门票
                 meta["is_paid"] = True
                 
-                # 发放初始报名配套物资
-                meta["flash_left"] = (meta.get("flash_left") or 0) + 5
-                meta["guide_pro"] = (meta.get("guide_pro") or 0) + 5
-                meta["text_pro"] = (meta.get("text_pro") or 0) + 5
-                meta["illustration_pro"] = (meta.get("illustration_pro") or 0) + 5
-                
-                print(f"🏆 用户 {user_id} 获得参赛资格及初始物资。")
+                # 🚨 核心防叠加逻辑：只给没买过加油包的人发初始资源
+                if not meta.get("has_bought_booster"):
+                    meta["flash_left"] = (meta.get("flash_left") or 0) + 2
+                    meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
+                    print(f"🏆 用户 {user_id} 报名成功，获得资格及资源：+2 Flash, +3 Pro。")
+                else:
+                    print(f"🏆 用户 {user_id} 报名成功")
 
-            # ✨ 逻辑 3：专业版 (pro) - 300元
+            # ✨ 逻辑 3：专业版 (pro) —— 绝对不影响
             elif plan == "pro":
                 meta["role"] = "pro"
                 meta["is_paid"] = True
                 meta.update({
                     "flash_left": 9999,
-                    "guide_pro": 9999,
-                    "text_pro": 9999,
-                    "illustration_pro": 9999
+                    "pro_credits": 9999
                 })
-                print(f"✨ 用户 {user_id} 升级为专业版，获得无限物资。")
+                print(f"✨ 用户 {user_id} 升级为专业版，资源已拉满。")
 
-            # 统一将修改写回数据库
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
@@ -80,11 +69,11 @@ class UserService:
             print(f"❌ 数据库写入失败: {e}")
             raise e
 
-    @staticmethod
+   @staticmethod
     def apply_free_contestant(user_id: str):
         """
         处理前端“免费报名参赛”逻辑（防刷机制）
-        如果用户已经花 20 块钱买了包，然后再点免费报名，只给门票，不再白送额度。
+        如果用户已经花钱买了加油包，然后再点免费报名，只给门票，不再白送额度。
         """
         try:
             user_res = UserService.get_user_by_id(user_id)
@@ -98,12 +87,12 @@ class UserService:
             
             # 💡 防刷：检查是否买过加油包
             if meta.get("has_bought_booster"):
-                print(f"⚠️ 用户 {user_id} 已购加油包，本次只给参赛资格，不重复送额度。")
+                print(f"⚠️ 用户 {user_id} 报名成功。")
             else:
-                # 纯新用户报名，赠送 5 次额度
-                meta["guide_pro"] = (meta.get("guide_pro") or 0) + 5
-                meta["text_pro"] = (meta.get("text_pro") or 0) + 5
-                meta["illustration_pro"] = (meta.get("illustration_pro") or 0) + 5
+                # 🚨 核心修改：对齐最新的发货标准 (2次Flash, 3次共享Pro)
+                meta["flash_left"] = (meta.get("flash_left") or 0) + 2
+                meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
+                print(f"🏆 用户 {user_id} 报名成功，获得资格及资源：+2 Flash, +3 Pro。")
 
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
