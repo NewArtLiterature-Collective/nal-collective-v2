@@ -55,9 +55,14 @@ class UserService:
             elif plan == "pro":
                 meta["role"] = "pro"
                 meta["is_paid"] = True
+                # 设置有效期：从现在起 365 天
+                expiry_date = datetime.now() + timedelta(days=365)
+                meta["expiry_date"] = expiry_date.isoformat()
                 meta.update({
                     "flash_left": 9999,
-                    "pro_credits": 9999
+                    "pro_credits": 9999,
+                    "daily_pro_usage": 0,
+                    "last_usage_date": datetime.now().date().isoformat()
                 })
                 print(f"✨ 用户 {user_id} 升级为专业版，资源已拉满。")
 
