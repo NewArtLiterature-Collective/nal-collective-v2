@@ -10,7 +10,7 @@ class PaymentService:
             # 1. 动态配置商品信息 (10元 / 20元 / 300元)
             if plan == 'pro':
                 product_name = 'NAL 专业会员 (1年期)'
-                amount = 50000  # 300.00 CNY
+                amount = 50000  # 500.00 CNY
             elif plan == 'contestant':
                 product_name = 'NAL“童心”征文大赛 报名资格'
                 amount = 1000   # 10.00 CNY
