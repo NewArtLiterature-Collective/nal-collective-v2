@@ -38,18 +38,19 @@ export default function Dashboard({ session }) {
 
   // --- 2. 初始化与监听逻辑 ---
   const refreshUserMetadata = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const meta = user.user_metadata || {};
-      setUserMetadata(meta);
-      setUsage({
-        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
-        guide_pro: meta.guide_pro || 0,
-        text_pro: meta.text_pro || 0,
-        illustration_pro: meta.illustration_pro || 0
-      });
-    }
-  };
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    const meta = user.user_metadata || {};
+    setUserMetadata(meta);
+    setUsage({
+      flash: meta.flash_left !== undefined ? meta.flash_left : 5,
+      guide_pro: meta.guide_pro || 0,
+      text_pro: meta.text_pro || 0,
+      illustration_pro: meta.illustration_pro || 0,
+      pro_credits: meta.pro_credits || 0  // 🚨 新增：从元数据中读取共享池额度
+    });
+  }
+};
 
   useEffect(() => {
     refreshUserMetadata();
@@ -272,12 +273,21 @@ export default function Dashboard({ session }) {
                   <span style={styles.statusLabel}>引擎</span>
                   <span style={styles.statusValue}>{engineName}</span>
                </div>
+               {/* 1. 显示基础 Flash 额度 */}
                {!isPro && (
                  <div style={styles.statusItem}>
                     <span style={styles.statusLabel}>Flash 剩余</span>
                     <span style={usage.flash > 0 ? styles.statusValue : styles.statusEmpty}>{usage.flash}</span>
                  </div>
                )}
+               {/* 🚨 2. 插入位置：显示通用高级 Pro 额度 (加油包资源) */}
+               {usage.pro_credits > 0 && (
+                 <div style={styles.statusItem}>
+                    <span style={styles.statusLabel}>通用高级 Pro 额度</span>
+                    <span style={{...styles.statusValue, color: '#10b981'}}>{usage.pro_credits}</span>
+                 </div>
+               )}
+               {/* 3. 原有的专项奖励额度 (报名送的) */}
                {isContestant && usage[`${activeTab}_pro`] > 0 && (
                  <div style={styles.statusItem}>
                     <span style={styles.statusLabel}>高级奖励额度</span>
