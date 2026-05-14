@@ -27,9 +27,9 @@ async def contest_pipeline(submission_id: str):
         
         # 并发执行三方评审
         tasks = [
-            LiteraryLLMService.evaluate_contest_work(text, "panoramic"),
-            LiteraryLLMService.evaluate_contest_work(text, "nal_chief"),
-            LiteraryLLMService.evaluate_contest_work(text, "li_lifang")
+            ContestLiteraryService.evaluate_contest_work(text, "panoramic"),
+            ContestLiteraryService.evaluate_contest_work(text, "nal_chief"),
+            ContestLiteraryService.evaluate_contest_work(text, "li_lifang")
         ]
         results = await asyncio.gather(*tasks)
         
