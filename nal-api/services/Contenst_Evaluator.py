@@ -1,6 +1,6 @@
 import numpy as np
 from services.user_service import supabase_admin # 🚨 导入数据库客户端
-from services.literary_llm_service import ContestLiteraryService # 🚨 导入评审服务
+from services.contest_literary_service import ContestLiteraryService # 🚨 导入评审服务
 
 async def update_db(sid, data):
     """辅助函数：更新数据库"""
