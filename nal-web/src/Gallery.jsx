@@ -1,6 +1,6 @@
 // nal-web/src/pages/Gallery.jsx 中的导航逻辑
 import { useNavigate, useLocation } from 'react-router-dom';
-import { supabase } from '../supabaseClient'; // 假设你已配置好客户端
+import { supabase } from './supabaseClient'; // 假设你已配置好客户端
 
 const Gallery = () => {
   const navigate = useNavigate();
