@@ -54,3 +54,5 @@ const Gallery = () => {
     </header>
   );
 };
+
+export default Gallery;
