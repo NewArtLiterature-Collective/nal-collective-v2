@@ -52,20 +52,24 @@ class UserService:
                     print(f"🏆 用户 {user_id} 报名成功")
 
             # ✨ 逻辑 3：专业版 (pro) —— 绝对不影响
-            elif plan == "pro":
+           elif plan == "pro":
                 meta["role"] = "pro"
                 meta["is_paid"] = True
+                
                 # 设置有效期：从现在起 365 天
                 expiry_date = datetime.now() + timedelta(days=365)
                 meta["expiry_date"] = expiry_date.isoformat()
-                meta.update({
-                    "flash_left": 9999,
-                    "pro_credits": 9999,
-                    "daily_pro_usage": 0,
-                    "last_usage_date": datetime.now().date().isoformat()
-                })
-                print(f"✨ 用户 {user_id} 升级为专业版，资源已拉满。")
-
+                
+                # 资源拉满
+                meta["flash_left"] = 9999 
+                meta["pro_credits"] = 9999
+                
+                # 初始化每日 Pro 计数器（与 evaluation.py 的变量名完全对齐）
+                meta["pro_daily_used"] = 0
+                meta["last_active_date"] = datetime.now().date().isoformat()
+                
+                print(f"✨ 用户 {user_id} 升级为专业版，有效期至 {meta['expiry_date']}")
+            
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
