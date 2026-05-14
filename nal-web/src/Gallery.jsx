@@ -1,43 +1,54 @@
-// nal-web/src/pages/Gallery.jsx 中的导航逻辑
+import React, { useState, useEffect } from 'react'; // ✅ 确保导入了 hooks
 import { useNavigate, useLocation } from 'react-router-dom';
-import { supabase } from './supabaseClient'; // 假设你已配置好客户端
+import { supabase } from './supabaseClient';
 
-const Gallery = () => {
+const Gallery = ({ session }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [user, setUser] = React.useState(null);
+  
+  // 1. 核心状态：直接从 prop 获取 user，不需要重复定义 useState
+  const user = session?.user || null;
 
-  React.useEffect(() => {
-    // 获取当前登录状态
-    const session = supabase.auth.session();
-    setUser(session?.user ?? null);
+  // 2. 展厅数据状态
+  const [loading, setLoading] = useState(true);
+  const [works, setWorks] = useState([]);
+
+  useEffect(() => {
+    // 模拟或实际拉取数据
+    const fetchWorks = async () => {
+      setLoading(true);
+      // 这里未来可以放置你的 Supabase 查询逻辑
+      setLoading(false);
+    };
+    fetchWorks();
   }, []);
 
-  // 动态处理返回/进入按钮
+  // 动态处理返回/进入按钮逻辑
   const renderNavButtons = () => {
     if (user) {
-      // 场景 A：用户已登录
+      // 场景 A：用户已登录，显示返回工作台
       return (
         <button 
           onClick={() => navigate('/dashboard')} 
           className="text-stone-600 hover:text-indigo-600 transition-colors flex items-center"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSzie: '14px' }}
         >
           <span className="mr-2">🏛️</span> 返回工作台 (Dashboard)
         </button>
       );
     } else {
-      // 场景 B：访客身份
+      // 场景 B：访客身份，显示返回首页和登录
       return (
-        <div className="flex gap-4">
+        <div style={{ display: 'flex', gap: '15px' }}>
           <button 
             onClick={() => navigate('/')} 
-            className="text-stone-500 hover:text-stone-800"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#78716c' }}
           >
             ← 返回首页
           </button>
           <button 
-            onClick={() => navigate('/login')} // 或者弹出登录框
-            className="bg-stone-900 text-white px-4 py-1 text-sm rounded-sm hover:bg-stone-700"
+            onClick={() => navigate('/login')} 
+            style={{ backgroundColor: '#1c1917', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
           >
             登录/参与投稿
           </button>
@@ -47,11 +58,28 @@ const Gallery = () => {
   };
 
   return (
-    <header className="p-6 border-b flex justify-between items-center bg-stone-50">
-      {renderNavButtons()}
-      <h1 className="text-xl font-light tracking-widest">NAL EXHIBITION</h1>
-      <div className="w-24"></div> {/* 占位平衡 */}
-    </header>
+    <div style={{ minHeight: '100vh', backgroundColor: '#fafaf9' }}>
+      {/* 顶部导航栏 */}
+      <header style={{ padding: '20px 40px', borderBottom: '1px solid #e7e5e4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff' }}>
+        {renderNavButtons()}
+        <h1 style={{ fontSize: '1.25rem', fontWeight: '300', letterSpacing: '0.1em', margin: 0 }}>NAL EXHIBITION</h1>
+        <div style={{ width: '100px' }}></div> {/* 抵消左侧按钮宽度，保持标题居中 */}
+      </header>
+
+      {/* 展厅主内容区 */}
+      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '60px 20px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', color: '#a8a29e', marginTop: '100px' }}>🏛️ 正在布置 NAL 文学展厅...</div>
+        ) : (
+          <section>
+            {/* 这里放置你之前的 grid 布局逻辑来展示作品 */}
+            <div style={{ textAlign: 'center', color: '#d6d3d1', padding: '100px', border: '1px dashed #e7e5e4' }}>
+              暂无入选作品，评审 Agent 正在交叉会诊中...
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
   );
 };
 
