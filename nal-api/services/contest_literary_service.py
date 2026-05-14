@@ -1,4 +1,4 @@
-# services/literary_llm_service.py
+# services/contest_literary_service.py
 import json
 from core.config import settings
 import google.generativeai as genai
