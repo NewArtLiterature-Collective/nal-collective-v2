@@ -284,32 +284,55 @@ export default function Dashboard({ session }) {
 
       <main style={styles.main}>
         
-        {/* 🚨 完全恢复原有的状态栏和文本显示 */}
-        {activeTab !== 'contest' && (
-          <div style={styles.header}>
-            <div style={styles.statusRow}>
+        {/* 🚨 全局常驻顶部导航栏：左边抬头，右边资源（严格遵守阶梯逻辑） */}
+        <div style={styles.header}>
+          <h2 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
+            {activeTab === 'contest' && '🏆 参赛作品提交'}
+            {activeTab === 'guide' && '💡 创作指导'}
+            {activeTab === 'text' && '📝 文字评审'}
+            {activeTab === 'illustration' && '🎨 绘本插画'}
+          </h2>
+
+          <div style={styles.statusRow}>
+             <div style={styles.statusItem}>
+               <span style={styles.statusLabel}>当前引擎</span>
+               <span style={styles.statusValue}>{engineName}</span>
+             </div>
+
+             {/* 阶梯资源动态显示 */}
+             {isPro ? (
                <div style={styles.statusItem}>
-                 <span style={styles.statusLabel}>引擎</span>
-                 <span style={styles.statusValue}>{engineName}</span>
+                 <span style={styles.statusLabel}>Pro 额度</span>
+                 <span style={styles.statusValue}>{usage.pro_credits !== undefined ? usage.pro_credits : '无限'}</span>
                </div>
-               {!isPro && (
+             ) : (isContestant || hasAddon) ? (
+               <>
                  <div style={styles.statusItem}>
                    <span style={styles.statusLabel}>Flash 剩余</span>
                    <span style={styles.statusValue}>{usage.flash}</span>
                  </div>
-               )}
-            </div>
+                 <div style={styles.statusItem}>
+                   <span style={styles.statusLabel}>Pro 剩余</span>
+                   <span style={styles.statusValue}>{usage.pro_credits}</span>
+                 </div>
+               </>
+             ) : (
+               <div style={styles.statusItem}>
+                 <span style={styles.statusLabel}>Flash 剩余</span>
+                 <span style={styles.statusValue}>{usage.flash}</span>
+               </div>
+             )}
           </div>
-        )}
+        </div>
 
         <div style={styles.content}>
           {activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
+              {/* 左侧：参赛作品表单 (68%) */}
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
-                <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 
-                <div style={{ marginTop: '20px' }}>
+                <div style={{ marginTop: '0px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
                   <textarea 
                     style={{
@@ -378,6 +401,7 @@ export default function Dashboard({ session }) {
                 {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
               </div>
 
+              {/* 右侧：进度列表 (30%) */}
               <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                   <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 评审实时进度</h4>
@@ -421,14 +445,9 @@ export default function Dashboard({ session }) {
             </div>
           ) : (
             
+            // 非参赛模块界面风格 
             <div style={{ ...styles.reportBox, margin: 0 }}>
               
-              <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px', marginBottom: '15px' }}>
-                {activeTab === 'guide' && '💡 创作指导'}
-                {activeTab === 'text' && '📝 文字评审'}
-                {activeTab === 'illustration' && '🎨 绘本插画'}
-              </h3>
-
               {activeTab === 'guide' && (
                 <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
                   请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。
@@ -502,7 +521,6 @@ export default function Dashboard({ session }) {
   );
 }
 
-// 🚨 完美恢复了所有原始未被使用的样式表，以及原版的 flex-end 对齐方式
 const styles = {
   dashboard: { display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', fontFamily: 'system-ui' },
   overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', zIndex: 1000 },
@@ -521,13 +539,16 @@ const styles = {
   pendingBadge: { backgroundColor: 'rgba(255,255,255,0.05)', color: '#9ca3af', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', border: '1px dashed #4b5563' },
   roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
-  main: { flex: 1, padding: '40px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '15px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
-  statusRow: { display: 'flex', gap: '30px' },
-  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
+  main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
+  
+  // 🚨 重新优化的 Header 样式 (负责左右对齐分布)
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
+  statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
+  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, // 右对齐标签文本
+  
   statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
-  statusValue: { fontSize: '14px', fontWeight: 'bold', color: '#111827' },
-  statusEmpty: { fontSize: '14px', fontWeight: 'bold', color: '#ef4444' },
+  statusValue: { fontSize: '15px', fontWeight: 'bold', color: '#111827' },
+  statusEmpty: { fontSize: '15px', fontWeight: 'bold', color: '#ef4444' },
   content: { display: 'flex', flexDirection: 'column', gap: '15px' },
   textarea: { height: '320px', padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
   uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f8fafc' },
