@@ -22,7 +22,7 @@ export default function Dashboard({ session }) {
   const [userSubmissions, setUserSubmissions] = useState([]); 
   const [isRefreshing, setIsRefreshing] = useState(false); 
 
-  // 专家模型与引擎配置
+  // 🚨 恢复：专家模型与引擎配置状态
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
@@ -47,7 +47,7 @@ export default function Dashboard({ session }) {
 
   const [usage, setUsage] = useState({ flash: 0, pro_credits: 0 });
 
-  // 🚨 核心增强：精确映射四阶梯资源限制
+  // 核心增强：精确映射四阶梯资源限制
   const hasAddon = usage.pro_credits > 0; 
   
   let maxImageCount = 2;
@@ -86,11 +86,15 @@ export default function Dashboard({ session }) {
   }, [session.user.id, isEligibleForContest]);
 
   const refreshUserMetadata = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    // 🚨 修复 5 次变成 0 次的 Bug：强制刷新 session 取保拿到后端最新的 token 和 metadata
+    const { data: { session: currentSession } } = await supabase.auth.refreshSession();
+    const user = currentSession?.user || session.user;
+    
     if (user) {
       const meta = user.user_metadata || {};
       setRawUserMetadata(meta);
       setUsage({
+        // 保证哪怕后端没传，也兜底为 5
         flash: meta.flash_left !== undefined ? meta.flash_left : 5,
         pro_credits: meta.pro_credits || 0 
       });
@@ -109,14 +113,7 @@ export default function Dashboard({ session }) {
       )
       .subscribe();
 
-    const params = new URLSearchParams(window.location.search);
-    const intent = params.get('intent');
-    if (intent === 'pro' && !isPro) {
-      handlePayment('pro');
-    } else if (intent === 'contestant' && !isContestant && !isPro) {
-      handlePayment('contestant');
-    }
-
+    // 🚨 恢复：拉取数据库中的专家模型列表
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name');
       if (data) {
@@ -179,6 +176,7 @@ export default function Dashboard({ session }) {
     });
     if (success) {
       setWorkText(''); 
+      // 评审成功后强制延迟刷新，以获取后端扣减后的额度
       setTimeout(refreshUserMetadata, 1500); 
     }
   };
@@ -284,7 +282,7 @@ export default function Dashboard({ session }) {
 
       <main style={styles.main}>
         
-        {/* 🚨 全局常驻顶部导航栏：左边抬头，右边资源（严格遵守阶梯逻辑） */}
+        {/* 全局常驻顶部导航栏：左边抬头，右边资源 */}
         <div style={styles.header}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
             {activeTab === 'contest' && '🏆 参赛作品提交'}
@@ -445,9 +443,39 @@ export default function Dashboard({ session }) {
             </div>
           ) : (
             
-            // 非参赛模块界面风格 
+            // 🚨 非参赛模块界面：恢复了您最在意的模型选择和动态参数！
             <div style={{ ...styles.reportBox, margin: 0 }}>
               
+              {/* 模型选择区域 (恢复原版功能) */}
+              <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
+                  <select 
+                    value={selectedModelId} 
+                    onChange={(e) => setSelectedModelId(e.target.value)}
+                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
+                  >
+                    {models.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {activeTab === 'illustration' && (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
+                    <select 
+                      value={imageType} 
+                      onChange={(e) => setImageType(e.target.value)}
+                      style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
+                    >
+                      <option value="illustration">儿童绘本插画</option>
+                      <option value="cover">封面/海报设计</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
               {activeTab === 'guide' && (
                 <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
                   请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。
@@ -541,10 +569,9 @@ const styles = {
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
   
-  // 🚨 重新优化的 Header 样式 (负责左右对齐分布)
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
-  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, // 右对齐标签文本
+  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, 
   
   statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
   statusValue: { fontSize: '15px', fontWeight: 'bold', color: '#111827' },
