@@ -18,15 +18,16 @@ export function useEvaluation(userRole, usage) {
   };
 
   const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId }) => {
-   const isPro = userRole === 'pro';
+    const isPro = userRole === 'pro';
     const isContestant = userRole === 'contestant';
+    const hasAddon = usage && usage.pro_credits > 0;
     
     // 1. 文档校验 (大小：Pro 200MB, 参赛 150KB, 普通 50KB)
     if (activeTab === 'text') {
       if (!selectedDocx) return alert("文字评审必须上传一个 Word 文档 (.docx)。");
       if (!selectedDocx.name.endsWith('.docx')) return alert("格式错误：仅支持 .docx 文件。");
       
-      const maxDocxSize = isPro ? 200 * 1024 * 1024 : (isContestant ? 150 * 1024 : 50 * 1024);
+      const maxDocxSize = isPro ? 200 * 1024 * 1024 : (isContestant || hasAddon ? 150 * 1024 : 50 * 1024);
       if (selectedDocx.size > maxDocxSize) {
         return alert(`文件过大！您当前身份最大可上传 ${maxDocxSize / 1024} KB 的文档。`);
       }
@@ -36,12 +37,12 @@ export function useEvaluation(userRole, usage) {
     if (activeTab === 'illustration') {
       if (selectedImages.length === 0) return alert("请至少上传一张图片");
       
-      const maxImgCount = isPro ? 50 : (isContestant ? 5 : 2);
+      const maxImgCount = isPro ? 50 : (isContestant || hasAddon ? 5 : 2);
       if (selectedImages.length > maxImgCount) {
         return alert(`数量超限！您当前最多只能上传 ${maxImgCount} 张图片。`);
       }
 
-      const maxImgSize = isPro ? 5 * 1024 * 1024 : (isContestant ? 1.5 * 1024 * 1024 : 1 * 1024 * 1024);
+      const maxImgSize = isPro ? 5 * 1024 * 1024 : (isContestant || hasAddon ? 1.5 * 1024 * 1024 : 1 * 1024 * 1024);
       for (let img of selectedImages) {
         if (img.size > maxImgSize) {
           return alert(`单张图片过大！文件 "${img.name}" 超出了您当前级别 ${maxImgSize / (1024 * 1024)} MB 的单张限制。`);
@@ -73,7 +74,7 @@ export function useEvaluation(userRole, usage) {
       formData.append('model_db_id', activeTab === 'illustration' ? '' : selectedModelId);
       
       // 传递参赛选手是否还有余量，用于后端判断字数和模型
-      const hasProLimit = usage[`${activeTab}_pro`] > 0;
+      const hasProLimit = usage && usage.pro_credits > 0;
       formData.append('has_pro_limit', hasProLimit ? "true" : "false");
 
       if (activeTab === 'illustration') {
