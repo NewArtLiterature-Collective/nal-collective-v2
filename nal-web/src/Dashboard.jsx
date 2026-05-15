@@ -7,16 +7,7 @@ import { useEvaluation } from './hooks/useEvaluation';
 export default function Dashboard({ session }) {
   const navigate = useNavigate();
 
-  // 🚨 修复 1：在组件挂载的第一时间，就读取真实的 metadata，防止子组件陷入 0 的错误闭包
-  const initialMeta = session?.user?.user_metadata || {};
-  const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
-  
-  const [usage, setUsage] = useState({ 
-    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 5, 
-    pro_credits: initialMeta.pro_credits || 0 
-  });
-
-  // --- 1. 核心状态管理 ---
+  // --- 1. 核心状态管理 (严格还原初代结构) ---
   const [activeTab, setActiveTab] = useState('text'); 
   const [workText, setWorkText] = useState('');
   const [selectedImages, setSelectedImages] = useState([]);
@@ -36,25 +27,29 @@ export default function Dashboard({ session }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
 
-  // 用户身份与权限逻辑
-  let userMetadata = { ...rawUserMetadata };
-  if (userMetadata.role === 'pro' && userMetadata.expiry_date) {
+  // 用户身份与权限逻辑 (完全依赖原生 user_metadata，移除冗余状态)
+  const [userMetadata, setUserMetadata] = useState(session.user.user_metadata || {});
+  
+  let processedRole = userMetadata.role;
+  if (processedRole === 'pro' && userMetadata.expiry_date) {
     const now = new Date();
     const expiry = new Date(userMetadata.expiry_date);
     if (now > expiry) {
-      userMetadata.role = null; 
-      userMetadata.is_paid = false;
+      processedRole = null; 
     }
   }
 
-  const userRole = userMetadata.role || (userMetadata.is_paid ? 'contestant' : 'free');
+  const userRole = processedRole || (userMetadata.is_paid ? 'contestant' : 'free');
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
   const isEligibleForContest = isContestant || isPro;
 
-  // 核心增强：精确映射四阶梯资源限制
-  const hasAddon = usage.pro_credits > 0; 
-  
+  // 动态读取资源展示
+  const flashLeft = userMetadata.flash_left !== undefined ? userMetadata.flash_left : 5;
+  const proCredits = userMetadata.pro_credits || 0;
+  const hasAddon = proCredits > 0;
+
+  // 🚨 核心增强：精确映射 CSV 的四阶梯资源限制
   let maxImageCount = 2;
   let maxDocSizeBytes = 50 * 1024; // 50KB
   let maxImageSizeMB = 1;
@@ -73,7 +68,9 @@ export default function Dashboard({ session }) {
   }
 
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
-  const { loading, report, evaluate } = useEvaluation(userRole, usage);
+  
+  // 还原初版的钩子调用方式
+  const { loading, report, evaluate } = useEvaluation(); 
 
   // --- 2. 初始化与监听逻辑 ---
 
@@ -90,37 +87,32 @@ export default function Dashboard({ session }) {
     setTimeout(() => setIsRefreshing(false), 500); 
   }, [session.user.id, isEligibleForContest]);
 
-  const refreshUserMetadata = async () => {
-    const { data: { session: currentSession } } = await supabase.auth.refreshSession();
-    const user = currentSession?.user || session.user;
-    
-    if (user) {
-      let meta = user.user_metadata || {};
+  useEffect(() => {
+    const initUserAndRefresh = async () => {
+      const meta = session?.user?.user_metadata || {};
       
-      // 🚨 核心修复 2：新用户自愈机制
-      // 如果发现数据库里根本没有 flash_left 这个字段，前端主动为其注入 5 次！
-      // 这样后端在查验时，就能真正拿到 5，而不是 undefined
+      // 🚨 终极修复：新用户自愈机制
       if (meta.flash_left === undefined) {
-        console.log("检测到新用户，正在向数据库初始化 5 次 Flash 额度...");
+        console.log("初始化新用户额度，注入 5 次 Flash...");
         const { data, error } = await supabase.auth.updateUser({
-          data: { flash_left: 5, pro_credits: meta.pro_credits || 0 }
+          data: { flash_left: 5, pro_credits: 0 }
         });
         
         if (!error && data?.user) {
-          meta = data.user.user_metadata; // 拿到注入后的最新配置
+          await supabase.auth.refreshSession(); // 强刷底层会话
+          setUserMetadata(data.user.user_metadata);
+          // 强制重载页面，确保 Edge Function 和所有子组件拿到包含 5 次额度的最新 JWT Token
+          window.location.reload(); 
+        }
+      } else {
+        // 老用户仅做常规同步
+        const { data } = await supabase.auth.refreshSession();
+        if (data?.session) {
+          setUserMetadata(data.session.user.user_metadata);
         }
       }
-
-      setRawUserMetadata(meta);
-      setUsage({
-        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
-        pro_credits: meta.pro_credits || 0 
-      });
-    }
-  };
-
-  useEffect(() => {
-    refreshUserMetadata();
+    };
+    initUserAndRefresh();
     fetchUserSubmissions(); 
     
     const submissionSubscription = supabase
@@ -146,7 +138,7 @@ export default function Dashboard({ session }) {
     return () => {
       supabase.removeChannel(submissionSubscription); 
     };
-  }, [userRole, isPro, fetchUserSubmissions, session.user.id]);
+  }, [userRole, isPro, fetchUserSubmissions, session]);
 
   // --- 3. 业务处理函数 ---
 
@@ -191,8 +183,11 @@ export default function Dashboard({ session }) {
     const success = await evaluate({
       activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId
     });
-    // 无论成功还是被拦截报错，都强制刷新一次以对齐后端真实数据
-    setTimeout(refreshUserMetadata, 1000); 
+    // 强制同步后台扣减后的最新额度
+    const { data } = await supabase.auth.refreshSession();
+    if (data?.session) {
+      setUserMetadata(data.session.user.user_metadata);
+    }
     if (success) {
       setWorkText(''); 
     }
@@ -299,7 +294,7 @@ export default function Dashboard({ session }) {
 
       <main style={styles.main}>
         
-        {/* 全局常驻顶部导航栏：左边抬头，右边资源 */}
+        {/* 全局常驻顶部导航栏：左边抬头，右边动态资源 */}
         <div style={styles.header}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
             {activeTab === 'contest' && '🏆 参赛作品提交'}
@@ -314,27 +309,26 @@ export default function Dashboard({ session }) {
                <span style={styles.statusValue}>{engineName}</span>
              </div>
 
-             {/* 阶梯资源动态显示 */}
              {isPro ? (
                <div style={styles.statusItem}>
                  <span style={styles.statusLabel}>Pro 额度</span>
-                 <span style={styles.statusValue}>{usage.pro_credits !== undefined ? usage.pro_credits : '无限'}</span>
+                 <span style={styles.statusValue}>{proCredits !== undefined ? proCredits : '无限'}</span>
                </div>
              ) : (isContestant || hasAddon) ? (
                <>
                  <div style={styles.statusItem}>
                    <span style={styles.statusLabel}>Flash 剩余</span>
-                   <span style={styles.statusValue}>{usage.flash}</span>
+                   <span style={styles.statusValue}>{flashLeft}</span>
                  </div>
                  <div style={styles.statusItem}>
                    <span style={styles.statusLabel}>Pro 剩余</span>
-                   <span style={styles.statusValue}>{usage.pro_credits}</span>
+                   <span style={styles.statusValue}>{proCredits}</span>
                  </div>
                </>
              ) : (
                <div style={styles.statusItem}>
                  <span style={styles.statusLabel}>Flash 剩余</span>
-                 <span style={styles.statusValue}>{usage.flash}</span>
+                 <span style={styles.statusValue}>{flashLeft}</span>
                </div>
              )}
           </div>
@@ -461,7 +455,6 @@ export default function Dashboard({ session }) {
             // 非参赛模块界面 
             <div style={{ ...styles.reportBox, margin: 0 }}>
               
-              {/* 模型选择与插画类型选择 */}
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 
                 {activeTab !== 'illustration' && (
@@ -479,6 +472,7 @@ export default function Dashboard({ session }) {
                   </div>
                 )}
 
+                {/* 绘本插画类型词汇更新 */}
                 {activeTab === 'illustration' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
