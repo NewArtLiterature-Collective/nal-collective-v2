@@ -169,9 +169,6 @@ export default function Dashboard({ session }) {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      // 这里的日志能帮你最后确认
-      console.log("执行校验时的 maxDocxSize:", maxDocxSize);
-
       if (file.size > maxDocxSize) {
         return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
       }
