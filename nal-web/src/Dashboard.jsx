@@ -20,7 +20,7 @@ export default function Dashboard({ session }) {
   
   // 评审进度相关
   const [userSubmissions, setUserSubmissions] = useState([]); 
-  const [isRefreshing, setIsRefreshing] = useState(false); // 🚨 新增：刷新状态动画
+  const [isRefreshing, setIsRefreshing] = useState(false); 
 
   // 专家模型与引擎配置
   const [models, setModels] = useState([]);
@@ -89,14 +89,6 @@ export default function Dashboard({ session }) {
       )
       .subscribe();
 
-    const params = new URLSearchParams(window.location.search);
-    const intent = params.get('intent');
-    if (intent === 'pro' && !isPro) {
-      handlePayment('pro');
-    } else if (intent === 'contestant' && !isContestant && !isPro) {
-      handlePayment('contestant');
-    }
-
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name');
       if (data) {
@@ -115,6 +107,11 @@ export default function Dashboard({ session }) {
   }, [userRole, isPro, fetchUserSubmissions, session.user.id]);
 
   // --- 3. 业务处理函数 ---
+
+  // 独立删除某张参赛图片
+  const removeContestImage = (index) => {
+    setContestImages(prev => prev.filter((_, i) => i !== index));
+  };
 
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files);
@@ -140,6 +137,10 @@ export default function Dashboard({ session }) {
   const submitContestWork = async () => {
     if (contestImages.length < 1 || contestImages.length > 2) return alert("请上传 1-2 幅插画！");
     if (contestText.trim().length < 500) return alert("参赛文字内容需接近 800 字。");
+    
+    // 提前锁定：如果已经有提交记录（且不是 invalid 的），则拦截
+    const hasExisting = userSubmissions.some(s => s.status !== 'invalid');
+    if (hasExisting) return alert("您已经提交过参赛作品，每个账户限投一次。");
 
     setIsSubmitting(true);
     try {
@@ -184,20 +185,11 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '10px' }}>{b.label}</span>;
   };
 
-  const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
+  // 检查是否已经提交过
+  const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
 
   return (
     <div style={styles.dashboard}>
-      {payLoading && (
-        <div style={styles.overlay}>
-          <div style={styles.paymentModal}>
-            <div style={styles.spinner}></div>
-            <h3 style={{ margin: '20px 0 10px 0', color: '#111827' }}>正在连接支付网关...</h3>
-            <button onClick={() => setPayLoading(false)} style={styles.cancelPayBtn}>返回</button>
-          </div>
-        </div>
-      )}
-
       <aside style={styles.sidebar}>
         <div>
           <h2 style={styles.logo}>NAL Collective</h2>
@@ -231,108 +223,111 @@ export default function Dashboard({ session }) {
       </aside>
 
       <main style={styles.main}>
-        {activeTab !== 'contest' && (
-          <div style={styles.header}>
-            <div style={styles.statusRow}>
-               <div style={styles.statusItem}><span style={styles.statusLabel}>引擎</span><span style={styles.statusValue}>{engineName}</span></div>
-               {!isPro && <div style={styles.statusItem}><span style={styles.statusLabel}>Flash 剩余</span><span style={styles.statusValue}>{usage.flash}</span></div>}
-            </div>
-          </div>
-        )}
-
         <div style={styles.content}>
           {activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '25px', alignItems: 'flex-start' }}>
               
-              {/* 🚨 左侧：表单 (放大了比例 flex: 2.5) */}
-              <div style={{...styles.reportBox, flex: 2.5, margin: 0 }}>
+              {/* 🚨 左侧：表单 (调整为 70% 比例) */}
+              <div style={{...styles.reportBox, flex: 7, margin: 0 }}>
                 <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 
-                {/* 🚨 优化后的文本输入框：横置、字数限制 */}
+                {/* 文本输入框：横置、字数限制 */}
                 <div style={{ marginTop: '20px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (限 800 字)</label>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
                   <textarea 
                     style={{
                       ...styles.textarea, 
-                      height: '350px', 
+                      height: '380px', 
                       width: '100%', 
                       boxSizing: 'border-box',
                       backgroundColor: '#f9fafb',
-                      resize: 'vertical'
+                      resize: 'none'
                     }}
-                    placeholder="在此粘贴参赛作品文字..."
+                    placeholder="在此粘贴您的参赛作品文字内容..."
                     value={contestText}
                     onChange={(e) => {
-                      if (e.target.value.length <= 800) {
-                        setContestText(e.target.value);
-                      }
+                      if (e.target.value.length <= 800) setContestText(e.target.value);
                     }}
                   />
-                  <div style={{ textAlign: 'right', fontSize: '13px', color: contestText.length >= 800 ? '#ef4444' : '#6b7280', marginTop: '6px', fontWeight: '500' }}>
+                  <div style={{ textAlign: 'right', fontSize: '12px', color: contestText.length >= 800 ? '#ef4444' : '#94a3b8', marginTop: '5px' }}>
                     {contestText.length} / 800 字
                   </div>
                 </div>
 
-                {/* 🚨 优化后的插画上传：显示文件名，支持删除更换 */}
+                {/* 插画上传：逐个显示、允许单独删除 */}
                 <div style={{ marginTop: '20px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>相关插画 (1-2幅)</label>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>作品插画 (需 1-2 幅)</label>
                   
-                  {contestImages.length > 0 ? (
-                    <div style={{ padding: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-                        {contestImages.map((file, idx) => (
-                          <div key={idx} style={{ fontSize: '14px', color: '#166534', display: 'flex', alignItems: 'center' }}>
-                            <span style={{ marginRight: '8px' }}>🖼️</span>
-                            {file.name}
-                          </div>
-                        ))}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {contestImages.map((file, index) => (
+                      <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
+                        <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                          🖼️ {file.name}
+                        </span>
+                        <button 
+                          onClick={() => removeContestImage(index)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                          移除
+                        </button>
                       </div>
-                      <button 
-                        onClick={() => setContestImages([])} 
-                        style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', padding: 0 }}
-                      >
-                        🗑️ 删除并重新选择
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={styles.uploadArea}>
-                      <input type="file" id="c-img" hidden multiple accept="image/*" onChange={(e) => setContestImages(Array.from(e.target.files).slice(0,2))} />
-                      <label htmlFor="c-img" style={{...styles.uploadBtn, display: 'block'}}>
-                        ➕ 点击上传插画文件
-                      </label>
-                    </div>
-                  )}
+                    ))}
+                    
+                    {contestImages.length < 2 && (
+                      <div style={{...styles.uploadArea, padding: '15px'}}>
+                        <input type="file" id="c-img" hidden multiple accept="image/*" 
+                          onChange={(e) => {
+                            const newFiles = Array.from(e.target.files);
+                            setContestImages(prev => [...prev, ...newFiles].slice(0, 2));
+                          }} 
+                        />
+                        <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>
+                          {contestImages.length === 0 ? "➕ 上传第一幅插画" : "➕ 上传第二幅插画"}
+                        </label>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <button onClick={submitContestWork} disabled={isSubmitting} style={{...styles.submitBtn, width: '100%', marginTop: '30px', backgroundColor: '#4f46e5'}}>
-                  {isSubmitting ? "作品上传中..." : "📤 确认提交参赛作品"}
+                <button 
+                  onClick={submitContestWork} 
+                  disabled={isSubmitting || alreadySubmitted} 
+                  style={{
+                    ...styles.submitBtn, 
+                    width: '100%', 
+                    marginTop: '30px', 
+                    backgroundColor: alreadySubmitted ? '#94a3b8' : '#4f46e5',
+                    cursor: alreadySubmitted ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {isSubmitting ? "正在上传..." : (alreadySubmitted ? "🔒 您已提交作品" : "📤 确认提交参赛作品")}
                 </button>
+                {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
               </div>
 
-              {/* 右侧：进度列表 (保持原功能，缩小比例 flex: 1) */}
-              <div style={{...styles.reportBox, flex: 1, margin: 0, backgroundColor: '#f8fafc', minWidth: '300px' }}>
+              {/* 🚨 右侧：进度列表 (调整为 30% 比例) */}
+              <div style={{...styles.reportBox, flex: 3, margin: 0, backgroundColor: '#f8fafc', minWidth: '280px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                  <h4 style={{ margin: 0, color: '#334155' }}>📊 评审实时进度</h4>
+                  <h4 style={{ margin: 0, color: '#334155', fontSize: '15px' }}>📊 评审实时进度</h4>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', animation: 'pulse 2s infinite' }}></div>
                 </div>
 
                 {userSubmissions.length === 0 ? (
-                  <p style={{fontSize: '13px', color: '#94a3b8', textAlign: 'center', padding: '20px 0'}}>暂无提交记录</p>
+                  <p style={{fontSize: '12px', color: '#94a3b8', textAlign: 'center', padding: '20px 0'}}>暂无记录</p>
                 ) : (
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                  <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
                     {userSubmissions.map(sub => (
                       <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'}}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
-                          <span style={{fontSize: '11px', color: '#64748b'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
+                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px'}}>
+                          <span style={{fontSize: '10px', color: '#94a3b8'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
                           {renderStatusBadge(sub.status)}
                         </div>
-                        <div style={{fontSize: '12px', fontWeight: 'bold', color: '#1e293b', fontFamily: 'monospace'}}>ID: {sub.id.substring(0,8)}...</div>
-                        
+                        <div style={{fontSize: '11px', fontWeight: 'bold', color: '#1e293b', fontFamily: 'monospace'}}>ID: {sub.id.substring(0,8)}</div>
                         {sub.status === 'success' && sub.ai_total_score > 0 && (
-                          <div style={{fontSize: '13px', color: '#10b981', marginTop: '6px', fontWeight: 'bold'}}>综合评分: {sub.ai_total_score.toFixed(1)}</div>
+                          <div style={{fontSize: '12px', color: '#10b981', marginTop: '5px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
                         )}
                         {sub.status === 'invalid' && sub.error_msg && (
-                          <div style={{fontSize: '11px', color: '#ef4444', marginTop: '6px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
+                          <div style={{fontSize: '10px', color: '#ef4444', marginTop: '5px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
                         )}
                       </div>
                     ))}
@@ -342,13 +337,10 @@ export default function Dashboard({ session }) {
                 <button 
                   onClick={fetchUserSubmissions} 
                   disabled={isRefreshing}
-                  style={{marginTop: '20px', width: '100%', padding: '8px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b'}}
+                  style={{marginTop: '15px', width: '100%', padding: '8px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', color: '#64748b'}}
                 >
-                  {isRefreshing ? "正在同步..." : "🔄 刷新列表"}
+                  {isRefreshing ? "同步中..." : "🔄 刷新状态"}
                 </button>
-                <p style={{ fontSize: '10px', color: '#94a3b8', marginTop: '10px', textAlign: 'center' }}>
-                  Agent 自动评审中，状态将实时更新
-                </p>
               </div>
             </div>
           ) : (
@@ -392,29 +384,15 @@ export default function Dashboard({ session }) {
 
 const styles = {
   dashboard: { display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', fontFamily: 'system-ui' },
-  overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', zIndex: 1000 },
-  paymentModal: { margin: 'auto', backgroundColor: 'white', padding: '40px', borderRadius: '24px', textAlign: 'center', width: '90%', maxWidth: '400px', boxShadow: '0 20px 50px rgba(0,0,0,0.2)' },
-  spinner: { width: '40px', height: '40px', border: '4px solid #f3f4f6', borderTop: '4px solid #4f46e5', borderRadius: '50%', margin: '0 auto', animation: 'spin 1s linear infinite' },
-  cancelPayBtn: { background: 'none', border: '1px solid #d1d5db', color: '#6b7280', padding: '10px 20px', borderRadius: '10px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
   sidebar: { width: '240px', backgroundColor: '#111827', color: 'white', padding: '30px 20px', display: 'flex', flexDirection: 'column' },
   logo: { fontSize: '20px', fontWeight: 'bold', color: '#a78bfa', marginBottom: '40px' },
   nav: { flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' },
   navBtn: { padding: '12px', textAlign: 'left', background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', borderRadius: '8px' },
   navActive: { padding: '12px', textAlign: 'left', background: '#374151', border: 'none', color: 'white', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold' },
   userSection: { borderTop: '1px solid #374151', paddingTop: '20px' },
-  proBadge: { background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)', color: 'white', fontSize: '13px', padding: '10px', borderRadius: '8px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)' },
-  freeBadge: { backgroundColor: '#374151', color: '#e5e7eb', fontSize: '12px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold' },
-  contestBadge: { backgroundColor: '#1e3a8a', color: '#60a5fa', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', fontWeight: 'bold', border: '1px solid #2563eb' },
-  pendingBadge: { backgroundColor: 'rgba(255,255,255,0.05)', color: '#9ca3af', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', border: '1px dashed #4b5563' },
   roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '40px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '15px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
-  statusRow: { display: 'flex', gap: '30px' },
-  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
-  statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
-  statusValue: { fontSize: '14px', fontWeight: 'bold', color: '#111827' },
-  statusEmpty: { fontSize: '14px', fontWeight: 'bold', color: '#ef4444' },
   content: { display: 'flex', flexDirection: 'column', gap: '15px' },
   textarea: { height: '320px', padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
   uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: 'white' },
@@ -425,6 +403,5 @@ const styles = {
   upgradeBox: { backgroundColor: '#1f2937', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #374151' },
   upgradeTitle: { color: '#f9fafb', fontSize: '14px', fontWeight: 'bold', marginTop: '0', marginBottom: '8px' },
   payBtn: { width: '100%', backgroundColor: '#6366f1', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
-  addonBtn: { width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
   proBtn: { width: '100%', backgroundColor: 'transparent', color: '#a78bfa', border: '1px solid #a78bfa', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
 };
