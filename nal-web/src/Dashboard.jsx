@@ -56,19 +56,18 @@ export default function Dashboard({ session }) {
     (usage.pro_credits > 0);
   const isEligibleForContest = isContestant || isPro;
 
-  // 根据当前所在的 Tab 动态显示对应领域的 Pro 次数
-  //const flashLeft = usage.flash;
-  //const currentProCredits = usage.pro_credits || 0;
-  //const hasAddon = 
-    //rawUserMetadata['has-bought-booster'] === true || 
-    //rawUserMetadata.role === 'has-bought-booster' ||
-    //usage.pro_credits > 0;
-
   // 精确映射 CSV 的四阶梯资源限制
-  let maxImageCount = 2;
-  let maxDocSizeBytes = 50 * 1024; // 50KB
-  let maxImageSizeMB = 1;
-  let maxDocSizeDisplay = '50KB';
+  const currentLimits = (() => {
+     if (isPro) return { count: 50, bytes: 100 * 1024 * 1024, mb: 5, display: '100MB' };
+     if (isContestant || hasAddon) return { count: 5, bytes: 150 * 1024, mb: 1.5, display: '150KB' };
+     return { count: 2, bytes: 50 * 1024, mb: 1, display: '50KB' };
+  })();
+
+  // 这样下面的代码依然可以使用这些变量名，且它们是实时的
+  const maxImageCount = currentLimits.count;
+  const maxDocSizeBytes = currentLimits.bytes;
+  const maxImageSizeMB = currentLimits.mb;
+  const maxDocSizeDisplay = currentLimits.display;
 
   if (isPro) {
     maxImageCount = 50;
