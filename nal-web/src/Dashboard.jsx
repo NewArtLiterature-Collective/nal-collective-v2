@@ -7,7 +7,7 @@ import { useEvaluation } from './hooks/useEvaluation';
 export default function Dashboard({ session }) {
   const navigate = useNavigate();
 
-  // --- 1. 核心状态管理 (严格还原初代结构) ---
+  // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
   const [workText, setWorkText] = useState('');
   const [selectedImages, setSelectedImages] = useState([]);
@@ -27,29 +27,39 @@ export default function Dashboard({ session }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
 
-  // 用户身份与权限逻辑 
-  const [userMetadata, setUserMetadata] = useState(session?.user?.user_metadata || {});
+  // 🚨 核心修复：防止 undefined 穿透
+  // 初始化时就为所有可能的细分字段提供默认值 0
+  const initialMeta = session?.user?.user_metadata || {};
+  const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
   
-  let processedRole = userMetadata.role;
-  if (processedRole === 'pro' && userMetadata.expiry_date) {
+  const [usage, setUsage] = useState({ 
+    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 5, 
+    pro_credits: initialMeta.pro_credits || 0,
+    guide_pro: initialMeta.guide_pro || 0,
+    text_pro: initialMeta.text_pro || 0,
+    illustration_pro: initialMeta.illustration_pro || 0
+  });
+
+  // 用户身份与权限逻辑 
+  let processedRole = rawUserMetadata.role;
+  if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
     const now = new Date();
-    const expiry = new Date(userMetadata.expiry_date);
+    const expiry = new Date(rawUserMetadata.expiry_date);
     if (now > expiry) {
       processedRole = null; 
     }
   }
 
-  const userRole = processedRole || (userMetadata.is_paid ? 'contestant' : 'free');
+  const userRole = processedRole || (rawUserMetadata.is_paid ? 'contestant' : 'free');
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
   const isEligibleForContest = isContestant || isPro;
 
-  // 动态读取资源展示
-  const flashLeft = userMetadata.flash_left !== undefined ? userMetadata.flash_left : 5;
-  const proCredits = userMetadata.pro_credits || 0;
-  const hasAddon = proCredits > 0;
+  // 根据当前所在的 Tab 动态显示对应领域的 Pro 次数
+  const currentProCredits = activeTab === 'guide' ? usage.guide_pro : (activeTab === 'illustration' ? usage.illustration_pro : usage.text_pro);
+  const hasAddon = usage.pro_credits > 0 || usage.guide_pro > 0 || usage.text_pro > 0 || usage.illustration_pro > 0; 
 
-  // 🚨 核心增强：精确映射 CSV 的四阶梯资源限制
+  // 精确映射 CSV 的四阶梯资源限制
   let maxImageCount = 2;
   let maxDocSizeBytes = 50 * 1024; // 50KB
   let maxImageSizeMB = 1;
@@ -69,7 +79,8 @@ export default function Dashboard({ session }) {
 
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
   
-  const { loading, report, evaluate } = useEvaluation(); 
+  // 🚨 还原初代调用方式：将带有完整默认值的 usage 传给 useEvaluation，防止其内部读取 undefined
+  const { loading, report, evaluate } = useEvaluation(userRole, usage); 
 
   // --- 2. 初始化与监听逻辑 ---
 
@@ -86,43 +97,38 @@ export default function Dashboard({ session }) {
     setTimeout(() => setIsRefreshing(false), 500); 
   }, [session?.user?.id, isEligibleForContest]);
 
-  useEffect(() => {
-    let isMounted = true; // 防止组件卸载后更新状态
-
-    const initUserAndRefresh = async () => {
-      const meta = session?.user?.user_metadata || {};
+  const refreshUserMetadata = async () => {
+    const { data: { session: currentSession } } = await supabase.auth.refreshSession();
+    const user = currentSession?.user || session?.user;
+    
+    if (user) {
+      let meta = user.user_metadata || {};
       
-      // 🚨 平滑自愈机制：直接走 React 状态，不再强制刷新浏览器
+      // 新用户自愈机制
       if (meta.flash_left === undefined) {
-        console.log("检测到新用户，正在后台静默注入 5 次 Flash...");
-        
-        // 第一步：先在前端视觉上补全，不让用户看到 0
-        if (isMounted) {
-          setUserMetadata(prev => ({ ...prev, flash_left: 5, pro_credits: 0 }));
-        }
-
-        // 第二步：异步写入数据库
         const { data, error } = await supabase.auth.updateUser({
-          data: { flash_left: 5, pro_credits: 0 }
+          data: { flash_left: 5 } // 仅初始化基础 flash 额度，不触碰 pro
         });
         
-        // 第三步：静默更新 Token 即可，绝对不调用 location.reload()
         if (!error && data?.user) {
-          await supabase.auth.refreshSession(); 
-          if (isMounted) {
-            setUserMetadata(data.user.user_metadata);
-          }
-        }
-      } else {
-        // 老用户仅做常规同步
-        const { data } = await supabase.auth.refreshSession();
-        if (data?.session && isMounted) {
-          setUserMetadata(data.session.user.user_metadata);
+          meta = data.user.user_metadata;
         }
       }
-    };
 
-    initUserAndRefresh();
+      setRawUserMetadata(meta);
+      // 🚨 无论数据库有没有该字段，严格填充所有细分 pro 字段为 0
+      setUsage({
+        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
+        pro_credits: meta.pro_credits || 0,
+        guide_pro: meta.guide_pro || 0,
+        text_pro: meta.text_pro || 0,
+        illustration_pro: meta.illustration_pro || 0
+      });
+    }
+  };
+
+  useEffect(() => {
+    refreshUserMetadata();
     fetchUserSubmissions(); 
     
     const submissionSubscription = supabase
@@ -135,7 +141,7 @@ export default function Dashboard({ session }) {
 
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name');
-      if (data && isMounted) {
+      if (data) {
         let filtered = isPro ? data : data.filter(m => m.name.includes('全景综合') || m.name.includes('首席专家'));
         setModels(filtered);
         const defaultModel = filtered.find(m => m.name.includes('首席专家'));
@@ -146,10 +152,9 @@ export default function Dashboard({ session }) {
     fetchModels();
 
     return () => {
-      isMounted = false;
       supabase.removeChannel(submissionSubscription); 
     };
-  }, [userRole, isPro, fetchUserSubmissions, session?.user?.id]); // 🚨 核心修复：依赖项只绑定 user.id，剥离会变的 session 对象，杜绝无限死循环
+  }, [userRole, isPro, fetchUserSubmissions, session?.user?.id]);
 
   // --- 3. 业务处理函数 ---
 
@@ -191,14 +196,13 @@ export default function Dashboard({ session }) {
   };
 
   const triggerEvaluation = async () => {
+    // 还原最干净的调用方式
     const success = await evaluate({
       activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId
     });
+    
     // 强制同步后台扣减后的最新额度
-    const { data } = await supabase.auth.refreshSession();
-    if (data?.session) {
-      setUserMetadata(data.session.user.user_metadata);
-    }
+    setTimeout(refreshUserMetadata, 1500);
     if (success) {
       setWorkText(''); 
     }
@@ -305,7 +309,7 @@ export default function Dashboard({ session }) {
 
       <main style={styles.main}>
         
-        {/* 全局常驻顶部导航栏：左边抬头，右边动态资源 */}
+        {/* 全局常驻顶部导航栏 */}
         <div style={styles.header}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
             {activeTab === 'contest' && '🏆 参赛作品提交'}
@@ -320,26 +324,29 @@ export default function Dashboard({ session }) {
                <span style={styles.statusValue}>{engineName}</span>
              </div>
 
+             {/* 阶梯资源动态显示 */}
              {isPro ? (
                <div style={styles.statusItem}>
                  <span style={styles.statusLabel}>Pro 额度</span>
-                 <span style={styles.statusValue}>{proCredits !== undefined ? proCredits : '无限'}</span>
+                 <span style={styles.statusValue}>无限</span>
                </div>
              ) : (isContestant || hasAddon) ? (
                <>
                  <div style={styles.statusItem}>
                    <span style={styles.statusLabel}>Flash 剩余</span>
-                   <span style={styles.statusValue}>{flashLeft}</span>
+                   <span style={styles.statusValue}>{usage.flash}</span>
                  </div>
                  <div style={styles.statusItem}>
-                   <span style={styles.statusLabel}>Pro 剩余</span>
-                   <span style={styles.statusValue}>{proCredits}</span>
+                   <span style={styles.statusLabel}>
+                     {activeTab === 'guide' ? '指导 Pro' : activeTab === 'illustration' ? '插画 Pro' : '文本 Pro'} 剩余
+                   </span>
+                   <span style={styles.statusValue}>{currentProCredits}</span>
                  </div>
                </>
              ) : (
                <div style={styles.statusItem}>
                  <span style={styles.statusLabel}>Flash 剩余</span>
-                 <span style={styles.statusValue}>{flashLeft}</span>
+                 <span style={styles.statusValue}>{usage.flash}</span>
                </div>
              )}
           </div>
