@@ -69,18 +69,6 @@ export default function Dashboard({ session }) {
   const maxImageSizeMB = currentLimits.mb;
   const maxDocSizeDisplay = currentLimits.display;
 
-  if (isPro) {
-    maxImageCount = 50;
-    maxDocSizeBytes = 100 * 1024 * 1024; // 100MB
-    maxImageSizeMB = 5;
-    maxDocSizeDisplay = '100MB';
-  } else if (isContestant || hasAddon) {
-    maxImageCount = 5;
-    maxDocSizeBytes = 150 * 1024; // 150KB
-    maxImageSizeMB = 1.5;
-    maxDocSizeDisplay = '150KB';
-  }
-
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
   
   // 🚨 还原初代调用方式：将带有完整默认值的 usage 传给 useEvaluation，防止其内部读取 undefined
