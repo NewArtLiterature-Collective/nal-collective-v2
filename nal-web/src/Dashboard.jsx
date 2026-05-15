@@ -47,6 +47,26 @@ export default function Dashboard({ session }) {
 
   const [usage, setUsage] = useState({ flash: 0, pro_credits: 0 });
 
+  // 🚨 核心增强：精确映射四阶梯资源限制
+  const hasAddon = usage.pro_credits > 0; 
+  
+  let maxImageCount = 2;
+  let maxDocSizeBytes = 50 * 1024; // 50KB
+  let maxImageSizeMB = 1;
+  let maxDocSizeDisplay = '50KB';
+
+  if (isPro) {
+    maxImageCount = 50;
+    maxDocSizeBytes = 100 * 1024 * 1024; // 100MB
+    maxImageSizeMB = 5;
+    maxDocSizeDisplay = '100MB';
+  } else if (isContestant || hasAddon) {
+    maxImageCount = 5;
+    maxDocSizeBytes = 150 * 1024; // 150KB
+    maxImageSizeMB = 1.5;
+    maxDocSizeDisplay = '150KB';
+  }
+
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
   const { loading, report, evaluate } = useEvaluation(userRole, usage);
 
@@ -89,6 +109,14 @@ export default function Dashboard({ session }) {
       )
       .subscribe();
 
+    const params = new URLSearchParams(window.location.search);
+    const intent = params.get('intent');
+    if (intent === 'pro' && !isPro) {
+      handlePayment('pro');
+    } else if (intent === 'contestant' && !isContestant && !isPro) {
+      handlePayment('contestant');
+    }
+
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name');
       if (data) {
@@ -114,13 +142,35 @@ export default function Dashboard({ session }) {
 
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files);
-    const max = isPro ? 50 : (isContestant ? 5 : 2);
-    if (files.length > max) return alert(`数量超限！当前账户最多上传 ${max} 张图片。`);
+    if (files.length > maxImageCount) {
+      return alert(`数量超限！当前账户最多允许批量上传 ${maxImageCount} 张图片。`);
+    }
+
+    const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
+    if (oversizedFiles.length > 0) {
+      return alert(`文件过大！当前账户单张图片大小限制为 ${maxImageSizeMB}MB。\n请压缩后重试。`);
+    }
+
     setSelectedImages(files);
   };
 
   const handleDocxChange = (e) => {
-    if (e.target.files.length > 0) setSelectedDocx(e.target.files[0]); 
+    if (e.target.files.length > 0) {
+      const file = e.target.files[0];
+      if (file.size > maxDocSizeBytes) {
+        return alert(`文件过大！当前账户文档大小限制为 ${maxDocSizeDisplay}。\n请精简文档或升级会员后重试。`);
+      }
+      setSelectedDocx(file);
+    }
+  };
+
+  const handleContestImageUpload = (e) => {
+    const files = Array.from(e.target.files);
+    const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
+    if (oversizedFiles.length > 0) {
+      return alert(`文件过大！单张插画不得超过 ${maxImageSizeMB}MB。`);
+    }
+    setContestImages(prev => [...prev, ...files].slice(0, 2));
   };
 
   const triggerEvaluation = async () => {
@@ -186,9 +236,20 @@ export default function Dashboard({ session }) {
   };
 
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
+  const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
 
   return (
     <div style={styles.dashboard}>
+      {payLoading && (
+        <div style={styles.overlay}>
+          <div style={styles.paymentModal}>
+            <div style={styles.spinner}></div>
+            <h3 style={{ margin: '20px 0 10px 0', color: '#111827' }}>正在连接支付网关...</h3>
+            <button onClick={() => setPayLoading(false)} style={styles.cancelPayBtn}>返回</button>
+          </div>
+        </div>
+      )}
+
       <aside style={styles.sidebar}>
         <div>
           <h2 style={styles.logo}>NAL Collective</h2>
@@ -222,11 +283,29 @@ export default function Dashboard({ session }) {
       </aside>
 
       <main style={styles.main}>
+        
+        {/* 🚨 完全恢复原有的状态栏和文本显示 */}
+        {activeTab !== 'contest' && (
+          <div style={styles.header}>
+            <div style={styles.statusRow}>
+               <div style={styles.statusItem}>
+                 <span style={styles.statusLabel}>引擎</span>
+                 <span style={styles.statusValue}>{engineName}</span>
+               </div>
+               {!isPro && (
+                 <div style={styles.statusItem}>
+                   <span style={styles.statusLabel}>Flash 剩余</span>
+                   <span style={styles.statusValue}>{usage.flash}</span>
+                 </div>
+               )}
+            </div>
+          </div>
+        )}
+
         <div style={styles.content}>
           {activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
-              {/* 左侧：参赛作品表单 (68%) */}
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
                 <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 
@@ -253,13 +332,15 @@ export default function Dashboard({ session }) {
                 </div>
 
                 <div style={{ marginTop: '20px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>作品插画 (需 1-2 幅)</label>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>
+                    作品插画 (需 1-2 幅，单张限制 <strong>{maxImageSizeMB}MB</strong>)
+                  </label>
                   
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {contestImages.map((file, index) => (
                       <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
                         <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
-                          🖼️ {file.name}
+                          🖼️ {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
                         </span>
                         <button 
                           onClick={() => removeContestImage(index)}
@@ -272,12 +353,7 @@ export default function Dashboard({ session }) {
                     
                     {contestImages.length < 2 && (
                       <div style={{...styles.uploadArea, padding: '15px'}}>
-                        <input type="file" id="c-img" hidden multiple accept="image/*" 
-                          onChange={(e) => {
-                            const newFiles = Array.from(e.target.files);
-                            setContestImages(prev => [...prev, ...newFiles].slice(0, 2));
-                          }} 
-                        />
+                        <input type="file" id="c-img" hidden multiple accept="image/*" onChange={handleContestImageUpload} />
                         <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>
                           {contestImages.length === 0 ? "➕ 上传第一幅插画" : "➕ 上传第二幅插画"}
                         </label>
@@ -302,7 +378,6 @@ export default function Dashboard({ session }) {
                 {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
               </div>
 
-              {/* 右侧：进度列表 (30%) */}
               <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                   <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 评审实时进度</h4>
@@ -346,17 +421,14 @@ export default function Dashboard({ session }) {
             </div>
           ) : (
             
-            // 🚨 新增：统一的非参赛模块界面风格 (带有抬头和权限提示)
             <div style={{ ...styles.reportBox, margin: 0 }}>
               
-              {/* 动态抬头 */}
               <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px', marginBottom: '15px' }}>
                 {activeTab === 'guide' && '💡 创作指导'}
                 {activeTab === 'text' && '📝 文字评审'}
                 {activeTab === 'illustration' && '🎨 绘本插画'}
               </h3>
 
-              {/* 动态规则与限制提示 */}
               {activeTab === 'guide' && (
                 <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
                   请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。
@@ -364,16 +436,15 @@ export default function Dashboard({ session }) {
               )}
               {activeTab === 'text' && (
                 <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
-                  支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，建议大小不超过 10MB。
+                  支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，文件大小不超过 <strong style={{color: '#4f46e5'}}>{maxDocSizeDisplay}</strong>。
                 </p>
               )}
               {activeTab === 'illustration' && (
                 <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
-                  请上传绘本插画素材。根据您的账户权限，当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{isPro ? 50 : (isContestant ? 5 : 2)}</strong> 张图片，建议单张大小不超过 5MB (格式要求：JPG / PNG)。
+                  请上传绘本插画素材。根据您的账户权限，当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{maxImageCount}</strong> 张图片，单张大小不超过 <strong style={{color: '#4f46e5'}}>{maxImageSizeMB}MB</strong> (格式：JPG / PNG)。
                 </p>
               )}
 
-              {/* 动态上传区域 */}
               {activeTab === 'illustration' && (
                 <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="up" hidden multiple onChange={handleImageChange} accept="image/*" />
@@ -391,7 +462,6 @@ export default function Dashboard({ session }) {
                 </div>
               )}
               
-              {/* 统一的输入框设计 */}
               <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
                 {activeTab === 'illustration' ? '补充说明 / 画面描述 (可选)' : '正文内容'}
               </label>
@@ -402,7 +472,6 @@ export default function Dashboard({ session }) {
                 onChange={(e) => setWorkText(e.target.value)} 
               />
               
-              {/* 启动按钮 */}
               <button 
                 onClick={triggerEvaluation} 
                 disabled={loading} 
@@ -433,17 +502,32 @@ export default function Dashboard({ session }) {
   );
 }
 
+// 🚨 完美恢复了所有原始未被使用的样式表，以及原版的 flex-end 对齐方式
 const styles = {
   dashboard: { display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', fontFamily: 'system-ui' },
+  overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', zIndex: 1000 },
+  paymentModal: { margin: 'auto', backgroundColor: 'white', padding: '40px', borderRadius: '24px', textAlign: 'center', width: '90%', maxWidth: '400px', boxShadow: '0 20px 50px rgba(0,0,0,0.2)' },
+  spinner: { width: '40px', height: '40px', border: '4px solid #f3f4f6', borderTop: '4px solid #4f46e5', borderRadius: '50%', margin: '0 auto', animation: 'spin 1s linear infinite' },
+  cancelPayBtn: { background: 'none', border: '1px solid #d1d5db', color: '#6b7280', padding: '10px 20px', borderRadius: '10px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
   sidebar: { width: '240px', backgroundColor: '#111827', color: 'white', padding: '30px 20px', display: 'flex', flexDirection: 'column' },
   logo: { fontSize: '20px', fontWeight: 'bold', color: '#a78bfa', marginBottom: '40px' },
   nav: { flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' },
   navBtn: { padding: '12px', textAlign: 'left', background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', borderRadius: '8px' },
   navActive: { padding: '12px', textAlign: 'left', background: '#374151', border: 'none', color: 'white', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold' },
   userSection: { borderTop: '1px solid #374151', paddingTop: '20px' },
+  proBadge: { background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)', color: 'white', fontSize: '13px', padding: '10px', borderRadius: '8px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)' },
+  freeBadge: { backgroundColor: '#374151', color: '#e5e7eb', fontSize: '12px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold' },
+  contestBadge: { backgroundColor: '#1e3a8a', color: '#60a5fa', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', fontWeight: 'bold', border: '1px solid #2563eb' },
+  pendingBadge: { backgroundColor: 'rgba(255,255,255,0.05)', color: '#9ca3af', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', border: '1px dashed #4b5563' },
   roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '40px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '15px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
+  statusRow: { display: 'flex', gap: '30px' },
+  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
+  statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
+  statusValue: { fontSize: '14px', fontWeight: 'bold', color: '#111827' },
+  statusEmpty: { fontSize: '14px', fontWeight: 'bold', color: '#ef4444' },
   content: { display: 'flex', flexDirection: 'column', gap: '15px' },
   textarea: { height: '320px', padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
   uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f8fafc' },
@@ -454,5 +538,6 @@ const styles = {
   upgradeBox: { backgroundColor: '#1f2937', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #374151' },
   upgradeTitle: { color: '#f9fafb', fontSize: '14px', fontWeight: 'bold', marginTop: '0', marginBottom: '8px' },
   payBtn: { width: '100%', backgroundColor: '#6366f1', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
+  addonBtn: { width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
   proBtn: { width: '100%', backgroundColor: 'transparent', color: '#a78bfa', border: '1px solid #a78bfa', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
 };
