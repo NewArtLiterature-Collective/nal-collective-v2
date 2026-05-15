@@ -34,18 +34,13 @@ export default function Dashboard({ session }) {
   
   const [usage, setUsage] = useState({ 
     flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 5, 
-    pro_credits: initialMeta.pro_credits || 0,
-    guide_pro: initialMeta.guide_pro || 0,
-    text_pro: initialMeta.text_pro || 0,
-    illustration_pro: initialMeta.illustration_pro || 0
+    pro_credits: initialMeta.pro_credits || 0
   });
 
-  // 用户身份与权限逻辑 
+  // 用户身份判定
   let processedRole = rawUserMetadata.role;
   if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
-    const now = new Date();
-    const expiry = new Date(rawUserMetadata.expiry_date);
-    if (now > expiry) {
+    if (new Date() > new Date(rawUserMetadata.expiry_date)) {
       processedRole = null; 
     }
   }
@@ -53,15 +48,21 @@ export default function Dashboard({ session }) {
   const userRole = processedRole || (rawUserMetadata.is_paid ? 'contestant' : 'free');
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
-  const isEligibleForContest = isContestant || isPro;
 
-  // 根据当前所在的 Tab 动态显示对应领域的 Pro 次数
-  const flashLeft = usage.flash;
-  const currentProCredits = usage.pro_credits || 0;
+  // 🚨 核心判定：是否拥有加油包权限（含后台标识与剩余额度）
   const hasAddon = 
     rawUserMetadata['has-bought-booster'] === true || 
     rawUserMetadata.role === 'has-bought-booster' ||
-    usage.pro_credits > 0;
+    (usage.pro_credits > 0);
+  const isEligibleForContest = isContestant || isPro;
+
+  // 根据当前所在的 Tab 动态显示对应领域的 Pro 次数
+  //const flashLeft = usage.flash;
+  //const currentProCredits = usage.pro_credits || 0;
+  //const hasAddon = 
+    //rawUserMetadata['has-bought-booster'] === true || 
+    //rawUserMetadata.role === 'has-bought-booster' ||
+    //usage.pro_credits > 0;
 
   // 精确映射 CSV 的四阶梯资源限制
   let maxImageCount = 2;
@@ -121,13 +122,10 @@ export default function Dashboard({ session }) {
 
       setRawUserMetadata(meta);
       // 🚨 无论数据库有没有该字段，严格填充所有细分 pro 字段为 0
-      setUsage({
-        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
-        pro_credits: meta.pro_credits || 0,
-        guide_pro: meta.guide_pro || 0,
-        text_pro: meta.text_pro || 0,
-        illustration_pro: meta.illustration_pro || 0
-      });
+     setUsage({
+      flash: meta.flash_left !== undefined ? meta.flash_left : 5,
+      pro_credits: meta.pro_credits || 0
+    });
     }
   };
 
@@ -301,7 +299,9 @@ export default function Dashboard({ session }) {
               ) : (
                 <div style={{color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold'}}>✅ 已获参赛资格</div>
               )}
-              <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
+              {(usage.flash <= 0 && !hasAddon && usage.pro_credits <= 0) && (
+                <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
+              )}
               <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
             </div>
           )}
