@@ -293,20 +293,31 @@ export default function Dashboard({ session }) {
           </nav>
         </div>
         <div style={{ marginTop: 'auto' }}>
-          {!isPro && (
-            <div style={styles.upgradeBox}>
-              <h4 style={styles.upgradeTitle}>NAL“童心”征文大赛</h4>
-              {!isContestant ? (
-                <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
-              ) : (
-                <div style={{color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold'}}>✅ 已获参赛资格</div>
-              )}
-              {(usage.flash <= 0 && usage.pro_credits <= 0) && (
-                <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
-              )}
-              <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
-            </div>
+          {/* 🚨 核心修正：移除了外层的 !isPro 拦截，允许盒子对 Pro 用户常驻显示 */}
+          <div style={styles.upgradeBox}>
+            <h4 style={styles.upgradeTitle}>NAL“童心”征文大赛</h4>
+    
+          {(isContestant || isPro) ? (
+          // 👈 只要是参赛选手或是 Pro 会员，一律显示已获资格
+          <div style={{color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold'}}>
+            ✅ 已获参赛资格
+          </div>
+          ) : (
+            <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
           )}
+    
+          {/* 👈 只有非 Pro 用户在资源耗尽时，才需要加油包 */}
+          {(!isPro && usage.flash <= 0 && usage.pro_credits <= 0) && (
+            <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
+          )}
+    
+          {/* 👈 已经是 Pro 的用户，不再显示升级按钮 */}
+          {!isPro && (
+            <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
+          )}
+        </div>
+      </div>
+          
           <div style={styles.userSection}>
             <div style={styles.roleLabel}>{session.user.email}</div>
             <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>退出登录</button>
