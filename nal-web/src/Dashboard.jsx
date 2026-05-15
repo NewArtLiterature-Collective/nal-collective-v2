@@ -151,7 +151,7 @@ export default function Dashboard({ session }) {
     setContestImages(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleImageChange = (e) => {
+  const handleImageChange = useCallback((e) => {
     const files = Array.from(e.target.files);
     if (files.length > maxImageCount) {
       return alert(`数量超限！当前账户最多允许批量上传 ${maxImageCount} 张图片。`);
@@ -163,24 +163,21 @@ export default function Dashboard({ session }) {
     }
 
     setSelectedImages(files);
-  };
+  }, [maxImageCount, maxImageSizeMB]); // 👈 只有限额变了，函数才会刷新
 
-  const handleDocxChange = (e) => {
-    console.log("--- 上传追踪开始 ---");
-    console.log("当前 rawUserMetadata:", rawUserMetadata);
-    console.log("当前 usage 状态:", usage);
-    console.log("hasAddon 判定值:", hasAddon);
-    console.log("isContestant 判定值:", isContestant);
-    console.log("计算出的 maxDocSizeBytes:", maxDocSizeBytes);
+  const handleDocxChange = useCallback((e) => {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
+      
+      // 这里的日志能帮你最后确认
+      console.log("执行校验时的 maxDocSizeBytes:", maxDocSizeBytes);
+
       if (file.size > maxDocSizeBytes) {
-        return alert(`文件过大！当前账户文档大小限制为 ${maxDocSizeDisplay}。\n请精简文档或升级会员后重试。`);
+        return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
       }
       setSelectedDocx(file);
     }
-  };
-
+  }, [maxDocSizeBytes, maxDocSizeDisplay]); // 👈 关键：限额更新时刷新此函数
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
     const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
