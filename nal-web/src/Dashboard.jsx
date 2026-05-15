@@ -315,8 +315,8 @@ export default function Dashboard({ session }) {
           {!isPro && (
             <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
           )}
+          </div>
         </div>
-      </div>
           
           <div style={styles.userSection}>
             <div style={styles.roleLabel}>{session.user.email}</div>
