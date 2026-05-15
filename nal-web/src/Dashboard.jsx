@@ -151,20 +151,32 @@ export default function Dashboard({ session }) {
     setContestImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  const removeSelectedImage = (index) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+  };
+  
   const handleImageChange = useCallback((e) => {
     const files = Array.from(e.target.files);
-    if (files.length > maxImageCount) {
-      return alert(`数量超限！当前账户最多允许批量上传 ${maxImageCount} 张图片。`);
-    }
+    const currentMaxCount = isPro ? 50 : (isContestant || hasAddon ? 5 : 2);
+    const currentMaxSizeMB = isPro ? 5 : (isContestant || hasAddon ? 1.5 : 1);
 
-    const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
-    if (oversizedFiles.length > 0) {
-      return alert(`文件过大！当前账户单张图片大小限制为 ${maxImageSizeMB}MB。\n请压缩后重试。`);
-    }
-
-    setSelectedImages(files);
-  }, [maxImageCount, maxImageSizeMB]); // 👈 只有限额变了，函数才会刷新
-
+    // 🚨 修正：将新选择的图片追加到现有列表，而不是直接覆盖
+    setSelectedImages(prev => {
+      const newList = [...prev, ...files];
+      if (newList.length > currentMaxCount) {
+        alert(`数量超限！当前账户最多允许上传 ${currentMaxCount} 张图片。`);
+        return prev; // 保持原样
+      }
+      
+      const oversizedFiles = files.filter(f => f.size > currentMaxSizeMB * 1024 * 1024);
+      if (oversizedFiles.length > 0) {
+        alert(`文件过大！当前账户单张图片大小限制为 ${currentMaxSizeMB}MB。`);
+        return prev;
+      }
+      return newList;
+    });
+  }, [maxImageCount, maxImageSizeMB]);
+  
   const handleDocxChange = useCallback((e) => {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
@@ -544,7 +556,7 @@ export default function Dashboard({ session }) {
                 disabled={loading} 
                 style={{ ...styles.submitBtn, width: '100%', marginTop: '20px' }}
               >
-                {loading ? "AI 专家计算中..." : "启动评审分析"}
+                {loading ? "AI 专家计算中..." : (activeTab === 'guide' ? "启动创作指导" : "启动评审分析")}
               </button>
             </div>
           )}
