@@ -27,8 +27,8 @@ export default function Dashboard({ session }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
 
-  // 用户身份与权限逻辑 (完全依赖原生 user_metadata，移除冗余状态)
-  const [userMetadata, setUserMetadata] = useState(session.user.user_metadata || {});
+  // 用户身份与权限逻辑 
+  const [userMetadata, setUserMetadata] = useState(session?.user?.user_metadata || {});
   
   let processedRole = userMetadata.role;
   if (processedRole === 'pro' && userMetadata.expiry_date) {
@@ -69,7 +69,6 @@ export default function Dashboard({ session }) {
 
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
   
-  // 还原初版的钩子调用方式
   const { loading, report, evaluate } = useEvaluation(); 
 
   // --- 2. 初始化与监听逻辑 ---
@@ -80,52 +79,63 @@ export default function Dashboard({ session }) {
     const { data } = await supabase
       .from('contest_submissions')
       .select('id, status, created_at, ai_total_score, error_msg') 
-      .eq('user_id', session.user.id)
+      .eq('user_id', session?.user?.id)
       .order('created_at', { ascending: false });
     
     if (data) setUserSubmissions(data);
     setTimeout(() => setIsRefreshing(false), 500); 
-  }, [session.user.id, isEligibleForContest]);
+  }, [session?.user?.id, isEligibleForContest]);
 
   useEffect(() => {
+    let isMounted = true; // 防止组件卸载后更新状态
+
     const initUserAndRefresh = async () => {
       const meta = session?.user?.user_metadata || {};
       
-      // 🚨 终极修复：新用户自愈机制
+      // 🚨 平滑自愈机制：直接走 React 状态，不再强制刷新浏览器
       if (meta.flash_left === undefined) {
-        console.log("初始化新用户额度，注入 5 次 Flash...");
+        console.log("检测到新用户，正在后台静默注入 5 次 Flash...");
+        
+        // 第一步：先在前端视觉上补全，不让用户看到 0
+        if (isMounted) {
+          setUserMetadata(prev => ({ ...prev, flash_left: 5, pro_credits: 0 }));
+        }
+
+        // 第二步：异步写入数据库
         const { data, error } = await supabase.auth.updateUser({
           data: { flash_left: 5, pro_credits: 0 }
         });
         
+        // 第三步：静默更新 Token 即可，绝对不调用 location.reload()
         if (!error && data?.user) {
-          await supabase.auth.refreshSession(); // 强刷底层会话
-          setUserMetadata(data.user.user_metadata);
-          // 强制重载页面，确保 Edge Function 和所有子组件拿到包含 5 次额度的最新 JWT Token
-          window.location.reload(); 
+          await supabase.auth.refreshSession(); 
+          if (isMounted) {
+            setUserMetadata(data.user.user_metadata);
+          }
         }
       } else {
         // 老用户仅做常规同步
         const { data } = await supabase.auth.refreshSession();
-        if (data?.session) {
+        if (data?.session && isMounted) {
           setUserMetadata(data.session.user.user_metadata);
         }
       }
     };
+
     initUserAndRefresh();
     fetchUserSubmissions(); 
     
     const submissionSubscription = supabase
       .channel('contest_changes')
       .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'contest_submissions', filter: `user_id=eq.${session.user.id}` }, 
+        { event: '*', schema: 'public', table: 'contest_submissions', filter: `user_id=eq.${session?.user?.id}` }, 
         () => fetchUserSubmissions()
       )
       .subscribe();
 
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name');
-      if (data) {
+      if (data && isMounted) {
         let filtered = isPro ? data : data.filter(m => m.name.includes('全景综合') || m.name.includes('首席专家'));
         setModels(filtered);
         const defaultModel = filtered.find(m => m.name.includes('首席专家'));
@@ -136,9 +146,10 @@ export default function Dashboard({ session }) {
     fetchModels();
 
     return () => {
+      isMounted = false;
       supabase.removeChannel(submissionSubscription); 
     };
-  }, [userRole, isPro, fetchUserSubmissions, session]);
+  }, [userRole, isPro, fetchUserSubmissions, session?.user?.id]); // 🚨 核心修复：依赖项只绑定 user.id，剥离会变的 session 对象，杜绝无限死循环
 
   // --- 3. 业务处理函数 ---
 
@@ -472,7 +483,6 @@ export default function Dashboard({ session }) {
                   </div>
                 )}
 
-                {/* 绘本插画类型词汇更新 */}
                 {activeTab === 'illustration' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
