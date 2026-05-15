@@ -22,7 +22,7 @@ export default function Dashboard({ session }) {
   const [userSubmissions, setUserSubmissions] = useState([]); 
   const [isRefreshing, setIsRefreshing] = useState(false); 
 
-  // 🚨 恢复：专家模型与引擎配置状态
+  // 专家模型与引擎配置状态
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('illustration'); 
@@ -86,7 +86,6 @@ export default function Dashboard({ session }) {
   }, [session.user.id, isEligibleForContest]);
 
   const refreshUserMetadata = async () => {
-    // 🚨 修复 5 次变成 0 次的 Bug：强制刷新 session 取保拿到后端最新的 token 和 metadata
     const { data: { session: currentSession } } = await supabase.auth.refreshSession();
     const user = currentSession?.user || session.user;
     
@@ -94,7 +93,6 @@ export default function Dashboard({ session }) {
       const meta = user.user_metadata || {};
       setRawUserMetadata(meta);
       setUsage({
-        // 保证哪怕后端没传，也兜底为 5
         flash: meta.flash_left !== undefined ? meta.flash_left : 5,
         pro_credits: meta.pro_credits || 0 
       });
@@ -113,7 +111,6 @@ export default function Dashboard({ session }) {
       )
       .subscribe();
 
-    // 🚨 恢复：拉取数据库中的专家模型列表
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name');
       if (data) {
@@ -176,7 +173,6 @@ export default function Dashboard({ session }) {
     });
     if (success) {
       setWorkText(''); 
-      // 评审成功后强制延迟刷新，以获取后端扣减后的额度
       setTimeout(refreshUserMetadata, 1500); 
     }
   };
@@ -443,24 +439,29 @@ export default function Dashboard({ session }) {
             </div>
           ) : (
             
-            // 🚨 非参赛模块界面：恢复了您最在意的模型选择和动态参数！
+            // 🚨 非参赛模块界面 
             <div style={{ ...styles.reportBox, margin: 0 }}>
               
-              {/* 模型选择区域 (恢复原版功能) */}
+              {/* 模型选择与插画类型选择 */}
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
-                  <select 
-                    value={selectedModelId} 
-                    onChange={(e) => setSelectedModelId(e.target.value)}
-                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
-                  >
-                    {models.map(m => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
-                </div>
+                
+                {/* 非插画模块：显示选择专家模型 */}
+                {activeTab !== 'illustration' && (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
+                    <select 
+                      value={selectedModelId} 
+                      onChange={(e) => setSelectedModelId(e.target.value)}
+                      style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
+                    >
+                      {models.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
+                {/* 插画模块：仅显示插画类型选择 */}
                 {activeTab === 'illustration' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
@@ -469,8 +470,8 @@ export default function Dashboard({ session }) {
                       onChange={(e) => setImageType(e.target.value)}
                       style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
                     >
-                      <option value="illustration">儿童绘本插画</option>
-                      <option value="cover">封面/海报设计</option>
+                      <option value="illustration">绘本分镜分析</option>
+                      <option value="cover">单幅插画审美</option>
                     </select>
                   </div>
                 )}
