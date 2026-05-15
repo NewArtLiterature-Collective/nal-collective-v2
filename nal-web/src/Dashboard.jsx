@@ -198,15 +198,17 @@ export default function Dashboard({ session }) {
   };
 
   const triggerEvaluation = async () => {
-    // 还原最干净的调用方式
     const success = await evaluate({
       activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId
     });
     
-    // 强制同步后台扣减后的最新额度
     setTimeout(refreshUserMetadata, 1500);
+
     if (success) {
       setWorkText(''); 
+      // 🚨 评审成功后，自动清空已加载的文件和图片
+      setSelectedImages([]);
+      setSelectedDocx(null);
     }
   };
 
@@ -525,13 +527,34 @@ export default function Dashboard({ session }) {
               )}
 
               {activeTab === 'illustration' && (
-                <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
-                  <input type="file" id="up" hidden multiple onChange={handleImageChange} accept="image/*" />
-                  <label htmlFor="up" style={styles.uploadBtn}>
-                    {selectedImages.length > 0 ? `✅ 已加载 ${selectedImages.length} 张图片` : "➕ 点击批量上传插画素材"}
-                  </label>
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
+                    {selectedImages.map((file, index) => (
+                      <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
+                        <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                          🖼️ {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
+                        </span>
+                        <button 
+                          onClick={() => removeSelectedImage(index)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                          移除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {selectedImages.length < maxImageCount && (
+                    <div style={styles.uploadArea}>
+                      <input type="file" id="up" hidden multiple onChange={handleImageChange} accept="image/*" />
+                      <label htmlFor="up" style={styles.uploadBtn}>
+                        ➕ 点击上传插画素材 (还可传 {maxImageCount - selectedImages.length} 张)
+                      </label>
+                    </div>
+                  )}
                 </div>
               )}
+              
               {activeTab === 'text' && (
                 <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="docx-up" hidden accept=".docx" onChange={handleDocxChange} />
