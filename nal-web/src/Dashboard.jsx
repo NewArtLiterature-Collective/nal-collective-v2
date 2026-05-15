@@ -108,7 +108,6 @@ export default function Dashboard({ session }) {
 
   // --- 3. 业务处理函数 ---
 
-  // 独立删除某张参赛图片
   const removeContestImage = (index) => {
     setContestImages(prev => prev.filter((_, i) => i !== index));
   };
@@ -138,7 +137,6 @@ export default function Dashboard({ session }) {
     if (contestImages.length < 1 || contestImages.length > 2) return alert("请上传 1-2 幅插画！");
     if (contestText.trim().length < 500) return alert("参赛文字内容需接近 800 字。");
     
-    // 提前锁定：如果已经有提交记录（且不是 invalid 的），则拦截
     const hasExisting = userSubmissions.some(s => s.status !== 'invalid');
     if (hasExisting) return alert("您已经提交过参赛作品，每个账户限投一次。");
 
@@ -174,18 +172,20 @@ export default function Dashboard({ session }) {
     }
   };
 
+  // 🚨 补充了 rejected 和 selected 的标签样式设计
   const renderStatusBadge = (status) => {
     const badges = {
-      pending: { label: '⏳ 待校验', color: '#6b7280' },
+      pending: { label: '⏳ 待校验', color: '#94a3b8' },
       processing: { label: '🧠 评审中', color: '#4f46e5' },
       success: { label: '✅ 已入选', color: '#10b981' },
+      selected: { label: '🎉 已入选', color: '#10b981' }, // 兼容新的状态词
+      rejected: { label: '🥀 遗憾落选', color: '#64748b' }, // 截图中的灰色状态词
       invalid: { label: '❌ 未通过', color: '#ef4444' }
     };
     const b = badges[status] || { label: status, color: '#374151' };
-    return <span style={{ backgroundColor: b.color, color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '10px' }}>{b.label}</span>;
+    return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
   };
 
-  // 检查是否已经提交过
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
 
   return (
@@ -225,13 +225,14 @@ export default function Dashboard({ session }) {
       <main style={styles.main}>
         <div style={styles.content}>
           {activeTab === 'contest' ? (
-            <div style={{ display: 'flex', flexDirection: 'row', gap: '25px', alignItems: 'flex-start' }}>
+            // 🚨 核心排版调整：利用百分比绝对锁定左右宽度比例
+            <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
-              {/* 🚨 左侧：表单 (调整为 70% 比例) */}
-              <div style={{...styles.reportBox, flex: 7, margin: 0 }}>
+              {/* 左侧：表单 (严格锁定为 68% 的宽度) */}
+              <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
                 <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 
-                {/* 文本输入框：横置、字数限制 */}
+                {/* 文本输入框 */}
                 <div style={{ marginTop: '20px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
                   <textarea 
@@ -254,7 +255,7 @@ export default function Dashboard({ session }) {
                   </div>
                 </div>
 
-                {/* 插画上传：逐个显示、允许单独删除 */}
+                {/* 插画上传 */}
                 <div style={{ marginTop: '20px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>作品插画 (需 1-2 幅)</label>
                   
@@ -305,10 +306,10 @@ export default function Dashboard({ session }) {
                 {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
               </div>
 
-              {/* 🚨 右侧：进度列表 (调整为 30% 比例) */}
-              <div style={{...styles.reportBox, flex: 3, margin: 0, backgroundColor: '#f8fafc', minWidth: '280px' }}>
+              {/* 🚨 右侧：进度列表 (严格锁定为 30% 的宽度，并且缩小了内部 padding 防止撑开) */}
+              <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                  <h4 style={{ margin: 0, color: '#334155', fontSize: '15px' }}>📊 评审实时进度</h4>
+                  <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 评审实时进度</h4>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', animation: 'pulse 2s infinite' }}></div>
                 </div>
 
@@ -318,16 +319,21 @@ export default function Dashboard({ session }) {
                   <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
                     {userSubmissions.map(sub => (
                       <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'}}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px'}}>
-                          <span style={{fontSize: '10px', color: '#94a3b8'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
+                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                          <span style={{fontSize: '11px', color: '#94a3b8'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
                           {renderStatusBadge(sub.status)}
                         </div>
                         <div style={{fontSize: '11px', fontWeight: 'bold', color: '#1e293b', fontFamily: 'monospace'}}>ID: {sub.id.substring(0,8)}</div>
-                        {sub.status === 'success' && sub.ai_total_score > 0 && (
-                          <div style={{fontSize: '12px', color: '#10b981', marginTop: '5px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
+                        
+                        {(sub.status === 'success' || sub.status === 'selected') && sub.ai_total_score > 0 && (
+                          <div style={{fontSize: '12px', color: '#10b981', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
+                        )}
+                        {/* 如果是落选（rejected），也把分数展示出来让用户心服口服 */}
+                        {sub.status === 'rejected' && sub.ai_total_score > 0 && (
+                          <div style={{fontSize: '12px', color: '#64748b', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
                         )}
                         {sub.status === 'invalid' && sub.error_msg && (
-                          <div style={{fontSize: '10px', color: '#ef4444', marginTop: '5px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
+                          <div style={{fontSize: '10px', color: '#ef4444', marginTop: '6px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
                         )}
                       </div>
                     ))}
