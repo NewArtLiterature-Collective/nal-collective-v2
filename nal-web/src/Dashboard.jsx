@@ -65,7 +65,7 @@ export default function Dashboard({ session }) {
 
   // 这样下面的代码依然可以使用这些变量名，且它们是实时的
   const maxImageCount = currentLimits.count;
-  const maxDocSizeBytes = currentLimits.bytes;
+  const maxDocxSize = currentLimits.bytes;
   const maxImageSizeMB = currentLimits.mb;
   const maxDocSizeDisplay = currentLimits.display;
 
@@ -170,14 +170,14 @@ export default function Dashboard({ session }) {
       const file = e.target.files[0];
       
       // 这里的日志能帮你最后确认
-      console.log("执行校验时的 maxDocSizeBytes:", maxDocSizeBytes);
+      console.log("执行校验时的 maxDocxSize:", maxDocxSize);
 
-      if (file.size > maxDocSizeBytes) {
+      if (file.size > maxDocxSize) {
         return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
       }
       setSelectedDocx(file);
     }
-  }, [maxDocSizeBytes, maxDocSizeDisplay]); // 👈 关键：限额更新时刷新此函数
+  }, [maxDocxSize, maxDocSizeDisplay]); // 👈 关键：限额更新时刷新此函数
   
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
