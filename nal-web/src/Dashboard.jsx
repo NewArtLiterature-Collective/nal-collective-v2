@@ -56,8 +56,12 @@ export default function Dashboard({ session }) {
   const isEligibleForContest = isContestant || isPro;
 
   // 根据当前所在的 Tab 动态显示对应领域的 Pro 次数
-  const currentProCredits = activeTab === 'guide' ? usage.guide_pro : (activeTab === 'illustration' ? usage.illustration_pro : usage.text_pro);
-  const hasAddon = usage.pro_credits > 0 || usage.guide_pro > 0 || usage.text_pro > 0 || usage.illustration_pro > 0; 
+  const flashLeft = usage.flash;
+  const currentProCredits = usage.pro_credits || 0;
+  const hasAddon = 
+    rawUserMetadata['has-bought-booster'] === true || 
+    rawUserMetadata.role === 'has-bought-booster' ||
+    usage.pro_credits > 0;
 
   // 精确映射 CSV 的四阶梯资源限制
   let maxImageCount = 2;
@@ -337,11 +341,9 @@ export default function Dashboard({ session }) {
                    <span style={styles.statusLabel}>Flash 剩余</span>
                    <span style={styles.statusValue}>{usage.flash}</span>
                  </div>
-                 <div style={styles.statusItem}>
-                   <span style={styles.statusLabel}>
-                     {activeTab === 'guide' ? '指导 Pro' : activeTab === 'illustration' ? '插画 Pro' : '文本 Pro'} 剩余
-                   </span>
-                   <span style={styles.statusValue}>{currentProCredits}</span>
+                <div style={styles.statusItem}>
+                   <span style={styles.statusLabel}>Pro 额度剩余</span>
+                   <span style={styles.statusValue}>{usage.pro_credits}</span>
                  </div>
                </>
              ) : (
