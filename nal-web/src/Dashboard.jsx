@@ -299,7 +299,7 @@ export default function Dashboard({ session }) {
               ) : (
                 <div style={{color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold'}}>✅ 已获参赛资格</div>
               )}
-              {(usage.flash <= 0 && !hasAddon && usage.pro_credits <= 0) && (
+              {(usage.flash <= 0 && usage.pro_credits <= 0) && (
                 <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
               )}
               <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
