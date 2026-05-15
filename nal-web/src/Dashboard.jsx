@@ -115,7 +115,7 @@ export default function Dashboard({ session }) {
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files);
     const max = isPro ? 50 : (isContestant ? 5 : 2);
-    if (files.length > max) return alert(`数量超限！最多上传 ${max} 张图片。`);
+    if (files.length > max) return alert(`数量超限！当前账户最多上传 ${max} 张图片。`);
     setSelectedImages(files);
   };
 
@@ -172,14 +172,13 @@ export default function Dashboard({ session }) {
     }
   };
 
-  // 🚨 补充了 rejected 和 selected 的标签样式设计
   const renderStatusBadge = (status) => {
     const badges = {
       pending: { label: '⏳ 待校验', color: '#94a3b8' },
       processing: { label: '🧠 评审中', color: '#4f46e5' },
       success: { label: '✅ 已入选', color: '#10b981' },
-      selected: { label: '🎉 已入选', color: '#10b981' }, // 兼容新的状态词
-      rejected: { label: '🥀 遗憾落选', color: '#64748b' }, // 截图中的灰色状态词
+      selected: { label: '🎉 已入选', color: '#10b981' }, 
+      rejected: { label: '🥀 遗憾落选', color: '#64748b' }, 
       invalid: { label: '❌ 未通过', color: '#ef4444' }
     };
     const b = badges[status] || { label: status, color: '#374151' };
@@ -225,14 +224,12 @@ export default function Dashboard({ session }) {
       <main style={styles.main}>
         <div style={styles.content}>
           {activeTab === 'contest' ? (
-            // 🚨 核心排版调整：利用百分比绝对锁定左右宽度比例
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
-              {/* 左侧：表单 (严格锁定为 68% 的宽度) */}
+              {/* 左侧：参赛作品表单 (68%) */}
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
                 <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px' }}>🌟 参赛作品提交</h3>
                 
-                {/* 文本输入框 */}
                 <div style={{ marginTop: '20px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
                   <textarea 
@@ -255,7 +252,6 @@ export default function Dashboard({ session }) {
                   </div>
                 </div>
 
-                {/* 插画上传 */}
                 <div style={{ marginTop: '20px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>作品插画 (需 1-2 幅)</label>
                   
@@ -306,7 +302,7 @@ export default function Dashboard({ session }) {
                 {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
               </div>
 
-              {/* 🚨 右侧：进度列表 (严格锁定为 30% 的宽度，并且缩小了内部 padding 防止撑开) */}
+              {/* 右侧：进度列表 (30%) */}
               <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                   <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 评审实时进度</h4>
@@ -328,7 +324,6 @@ export default function Dashboard({ session }) {
                         {(sub.status === 'success' || sub.status === 'selected') && sub.ai_total_score > 0 && (
                           <div style={{fontSize: '12px', color: '#10b981', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
                         )}
-                        {/* 如果是落选（rejected），也把分数展示出来让用户心服口服 */}
                         {sub.status === 'rejected' && sub.ai_total_score > 0 && (
                           <div style={{fontSize: '12px', color: '#64748b', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
                         )}
@@ -350,22 +345,72 @@ export default function Dashboard({ session }) {
               </div>
             </div>
           ) : (
-            <>
+            
+            // 🚨 新增：统一的非参赛模块界面风格 (带有抬头和权限提示)
+            <div style={{ ...styles.reportBox, margin: 0 }}>
+              
+              {/* 动态抬头 */}
+              <h3 style={{ marginTop: 0, color: '#111827', borderBottom: '2px solid #f3f4f6', paddingBottom: '15px', marginBottom: '15px' }}>
+                {activeTab === 'guide' && '💡 创作指导'}
+                {activeTab === 'text' && '📝 文字评审'}
+                {activeTab === 'illustration' && '🎨 绘本插画'}
+              </h3>
+
+              {/* 动态规则与限制提示 */}
+              {activeTab === 'guide' && (
+                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
+                  请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。
+                </p>
+              )}
+              {activeTab === 'text' && (
+                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
+                  支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，建议大小不超过 10MB。
+                </p>
+              )}
               {activeTab === 'illustration' && (
-                <div style={styles.uploadArea}>
+                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
+                  请上传绘本插画素材。根据您的账户权限，当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{isPro ? 50 : (isContestant ? 5 : 2)}</strong> 张图片，建议单张大小不超过 5MB (格式要求：JPG / PNG)。
+                </p>
+              )}
+
+              {/* 动态上传区域 */}
+              {activeTab === 'illustration' && (
+                <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="up" hidden multiple onChange={handleImageChange} accept="image/*" />
-                  <label htmlFor="up" style={styles.uploadBtn}>{selectedImages.length > 0 ? `✅ 已加载 ${selectedImages.length} 张图` : "➕ 点击批量上传评审素材"}</label>
+                  <label htmlFor="up" style={styles.uploadBtn}>
+                    {selectedImages.length > 0 ? `✅ 已加载 ${selectedImages.length} 张图片` : "➕ 点击批量上传插画素材"}
+                  </label>
                 </div>
               )}
               {activeTab === 'text' && (
-                <div style={styles.uploadArea}>
+                <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="docx-up" hidden accept=".docx" onChange={handleDocxChange} />
-                  <label htmlFor="docx-up" style={styles.uploadBtn}>{selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}</label>
+                  <label htmlFor="docx-up" style={styles.uploadBtn}>
+                    {selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}
+                  </label>
                 </div>
               )}
-              <textarea style={styles.textarea} placeholder="粘贴文本或备注..." value={workText} onChange={(e) => setWorkText(e.target.value)} />
-              <button onClick={triggerEvaluation} disabled={loading} style={styles.submitBtn}>{loading ? "AI 计算中..." : "启动评审"}</button>
-            </>
+              
+              {/* 统一的输入框设计 */}
+              <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
+                {activeTab === 'illustration' ? '补充说明 / 画面描述 (可选)' : '正文内容'}
+              </label>
+              <textarea 
+                style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
+                placeholder={activeTab === 'illustration' ? "可在此添加针对画面的理论阐述或细节描述..." : "在此粘贴需要评审的文本..."} 
+                value={workText} 
+                onChange={(e) => setWorkText(e.target.value)} 
+              />
+              
+              {/* 启动按钮 */}
+              <button 
+                onClick={triggerEvaluation} 
+                disabled={loading} 
+                style={{ ...styles.submitBtn, width: '100%', marginTop: '20px' }}
+              >
+                {loading ? "AI 专家计算中..." : "启动评审分析"}
+              </button>
+            </div>
           )}
         </div>
 
@@ -401,7 +446,7 @@ const styles = {
   main: { flex: 1, padding: '40px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
   content: { display: 'flex', flexDirection: 'column', gap: '15px' },
   textarea: { height: '320px', padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
-  uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: 'white' },
+  uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f8fafc' },
   uploadBtn: { cursor: 'pointer', color: '#6366f1', fontWeight: 'bold' },
   submitBtn: { padding: '16px', backgroundColor: '#111827', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   reportBox: { padding: '40px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', textAlign: 'left' },
