@@ -178,6 +178,7 @@ export default function Dashboard({ session }) {
       setSelectedDocx(file);
     }
   }, [maxDocSizeBytes, maxDocSizeDisplay]); // 👈 关键：限额更新时刷新此函数
+  
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
     const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
