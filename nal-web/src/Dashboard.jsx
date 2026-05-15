@@ -7,6 +7,15 @@ import { useEvaluation } from './hooks/useEvaluation';
 export default function Dashboard({ session }) {
   const navigate = useNavigate();
 
+  // 🚨 修复 1：在组件挂载的第一时间，就读取真实的 metadata，防止子组件陷入 0 的错误闭包
+  const initialMeta = session?.user?.user_metadata || {};
+  const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
+  
+  const [usage, setUsage] = useState({ 
+    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 5, 
+    pro_credits: initialMeta.pro_credits || 0 
+  });
+
   // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
   const [workText, setWorkText] = useState('');
@@ -28,8 +37,6 @@ export default function Dashboard({ session }) {
   const [imageType, setImageType] = useState('illustration'); 
 
   // 用户身份与权限逻辑
-  const [rawUserMetadata, setRawUserMetadata] = useState(session.user.user_metadata || {});
-  
   let userMetadata = { ...rawUserMetadata };
   if (userMetadata.role === 'pro' && userMetadata.expiry_date) {
     const now = new Date();
@@ -44,8 +51,6 @@ export default function Dashboard({ session }) {
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
   const isEligibleForContest = isContestant || isPro;
-
-  const [usage, setUsage] = useState({ flash: 0, pro_credits: 0 });
 
   // 核心增强：精确映射四阶梯资源限制
   const hasAddon = usage.pro_credits > 0; 
@@ -90,7 +95,22 @@ export default function Dashboard({ session }) {
     const user = currentSession?.user || session.user;
     
     if (user) {
-      const meta = user.user_metadata || {};
+      let meta = user.user_metadata || {};
+      
+      // 🚨 核心修复 2：新用户自愈机制
+      // 如果发现数据库里根本没有 flash_left 这个字段，前端主动为其注入 5 次！
+      // 这样后端在查验时，就能真正拿到 5，而不是 undefined
+      if (meta.flash_left === undefined) {
+        console.log("检测到新用户，正在向数据库初始化 5 次 Flash 额度...");
+        const { data, error } = await supabase.auth.updateUser({
+          data: { flash_left: 5, pro_credits: meta.pro_credits || 0 }
+        });
+        
+        if (!error && data?.user) {
+          meta = data.user.user_metadata; // 拿到注入后的最新配置
+        }
+      }
+
       setRawUserMetadata(meta);
       setUsage({
         flash: meta.flash_left !== undefined ? meta.flash_left : 5,
@@ -171,9 +191,10 @@ export default function Dashboard({ session }) {
     const success = await evaluate({
       activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId
     });
+    // 无论成功还是被拦截报错，都强制刷新一次以对齐后端真实数据
+    setTimeout(refreshUserMetadata, 1000); 
     if (success) {
       setWorkText(''); 
-      setTimeout(refreshUserMetadata, 1500); 
     }
   };
 
@@ -323,7 +344,6 @@ export default function Dashboard({ session }) {
           {activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
-              {/* 左侧：参赛作品表单 (68%) */}
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
                 
                 <div style={{ marginTop: '0px' }}>
@@ -395,7 +415,6 @@ export default function Dashboard({ session }) {
                 {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
               </div>
 
-              {/* 右侧：进度列表 (30%) */}
               <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                   <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 评审实时进度</h4>
@@ -439,13 +458,12 @@ export default function Dashboard({ session }) {
             </div>
           ) : (
             
-            // 🚨 非参赛模块界面 
+            // 非参赛模块界面 
             <div style={{ ...styles.reportBox, margin: 0 }}>
               
               {/* 模型选择与插画类型选择 */}
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 
-                {/* 非插画模块：显示选择专家模型 */}
                 {activeTab !== 'illustration' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
@@ -461,7 +479,6 @@ export default function Dashboard({ session }) {
                   </div>
                 )}
 
-                {/* 插画模块：仅显示插画类型选择 */}
                 {activeTab === 'illustration' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
@@ -565,28 +582,4 @@ const styles = {
   proBadge: { background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)', color: 'white', fontSize: '13px', padding: '10px', borderRadius: '8px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)' },
   freeBadge: { backgroundColor: '#374151', color: '#e5e7eb', fontSize: '12px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold' },
   contestBadge: { backgroundColor: '#1e3a8a', color: '#60a5fa', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', fontWeight: 'bold', border: '1px solid #2563eb' },
-  pendingBadge: { backgroundColor: 'rgba(255,255,255,0.05)', color: '#9ca3af', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', border: '1px dashed #4b5563' },
-  roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
-  logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
-  main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
-  
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
-  statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
-  statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, 
-  
-  statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
-  statusValue: { fontSize: '15px', fontWeight: 'bold', color: '#111827' },
-  statusEmpty: { fontSize: '15px', fontWeight: 'bold', color: '#ef4444' },
-  content: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  textarea: { height: '320px', padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
-  uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f8fafc' },
-  uploadBtn: { cursor: 'pointer', color: '#6366f1', fontWeight: 'bold' },
-  submitBtn: { padding: '16px', backgroundColor: '#111827', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
-  reportBox: { padding: '40px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', textAlign: 'left' },
-  reportTxt: { whiteSpace: 'pre-wrap', lineHeight: '2.0', color: '#374151', fontSize: '16px' },
-  upgradeBox: { backgroundColor: '#1f2937', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #374151' },
-  upgradeTitle: { color: '#f9fafb', fontSize: '14px', fontWeight: 'bold', marginTop: '0', marginBottom: '8px' },
-  payBtn: { width: '100%', backgroundColor: '#6366f1', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
-  addonBtn: { width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
-  proBtn: { width: '100%', backgroundColor: 'transparent', color: '#a78bfa', border: '1px solid #a78bfa', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
-};
+  pendingBadge: { backgroundColor: 'rgba(255,255,255,0.05)', color: '#9ca3af', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', border: '1px dashed #4b5563
