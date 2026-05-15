@@ -51,8 +51,8 @@ export default function Dashboard({ session }) {
 
   // 🚨 核心判定：是否拥有加油包权限（含后台标识与剩余额度）
   const hasAddon = 
-    rawUserMetadata['has-bought-booster'] === true || 
-    rawUserMetadata.role === 'has-bought-booster' ||
+    rawUserMetadata['has_bought_booster'] === true || 
+    rawUserMetadata.role === 'has_bought_booster' ||
     (usage.pro_credits > 0);
   const isEligibleForContest = isContestant || isPro;
 
