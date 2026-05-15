@@ -166,6 +166,12 @@ export default function Dashboard({ session }) {
   };
 
   const handleDocxChange = (e) => {
+    console.log("--- 上传追踪开始 ---");
+    console.log("当前 rawUserMetadata:", rawUserMetadata);
+    console.log("当前 usage 状态:", usage);
+    console.log("hasAddon 判定值:", hasAddon);
+    console.log("isContestant 判定值:", isContestant);
+    console.log("计算出的 maxDocSizeBytes:", maxDocSizeBytes);
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
       if (file.size > maxDocSizeBytes) {
