@@ -146,7 +146,7 @@ async def process_evaluation(
                 target_model=target_model
             )
             
-        elif task_type == "illustration":
+        elif task_type == "picturebook":
             try:
                 urls_list = json.loads(image_urls)
             except:
