@@ -159,7 +159,7 @@ export default function Dashboard({ session }) {
       .subscribe();
 
     const fetchModels = async () => {
-      const { data } = await supabase.from('evaluation_models').select('id, name');
+      const { data } = await supabase.from('evaluation_models').select('id, name, description');
       if (data) {
         let filtered = isPro ? data : data.filter(m => m.name.includes('全景综合') || m.name.includes('首席专家'));
         setModels(filtered);
@@ -541,6 +541,19 @@ export default function Dashboard({ session }) {
                         <option key={m.id} value={m.id}>{m.name}</option>
                       ))}
                     </select>
+                    {/* 🚨 改动 2：纯粹依赖数据库数据的动态卡片 */}
+                    {(() => {
+                      const currentModel = models.find(m => m.id === selectedModelId);
+                      if (currentModel && currentModel.description) {
+                        return (
+                          <div style={styles.descCard}>
+                            <strong style={styles.descTitle}>📜 学术底色：</strong>
+                            <p style={styles.descText}>{currentModel.description}</p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 )}
 
@@ -684,6 +697,11 @@ const styles = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
   statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, 
+
+  // 🚨 改动 3：追加学术底色卡片样式
+  descCard: {backgroundColor: '#f0fdf4', borderLeft: '5px solid #16a34a', padding: '16px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 2px 8px rgba(22, 163, 74, 0.03)'},
+  descTitle: {color: '#15803d', fontSize: '14px', fontWeight: 'bold', display: 'block', marginBottom: '6px'},
+  descText: {color: '#1e293b', fontSize: '13px', margin: 0, lineHeight: '1.6'},
   
   statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
   statusValue: { fontSize: '15px', fontWeight: 'bold', color: '#111827' },
