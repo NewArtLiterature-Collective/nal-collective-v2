@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta  # 🚨 必须导入这个，否则 Pro 发货会崩溃！
+from datetime import datetime, timedelta, timezone # 👈 确保导入了 timezone
 from supabase import create_client
 from dotenv import load_dotenv, find_dotenv
 
@@ -64,9 +64,9 @@ class UserService:
                 meta["role"] = "pro"
                 meta["is_paid"] = True
                 
-                # 设置有效期：从现在起 365 天
-                expiry_date = datetime.now() + timedelta(days=365)
-                meta["expiry_date"] = expiry_date.isoformat()
+                # 设置有效期：严格采用标准 UTC 时间，并在尾部追加 Z 标识
+                expiry_date = datetime.now(timezone.utc) + timedelta(days=365)
+                meta["expiry_date"] = expiry_date.strftime('%Y-%m-%dT%H:%M:%SZ') # 👈 完美的 2027-05-15T22:00:00Z 格式
                 
                 # 资源拉满
                 meta["flash_left"] = 9999 
