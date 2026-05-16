@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { supabase } from './supabaseClient';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import logo from './assets/nal_logo.png';
 
 export default function Auth() {
   const [searchParams] = useSearchParams();
@@ -65,7 +66,10 @@ export default function Auth() {
   return (
     <div style={styles.container}>
       <nav style={styles.navbar}>
-        <div style={styles.logo} onClick={() => navigate('/')}>NAL Collective</div>
+        <div style={styles.navLogoContainer} onClick={() => navigate('/')}>
+          <img src={logo} alt="NAL Logo" style={styles.navLogoImg} />
+          <div style={styles.logo}>NAL Collective</div>
+        </div>
         <button onClick={() => navigate('/')} style={styles.navBackBtn}>← 返回首页</button>
       </nav>
 
@@ -135,6 +139,8 @@ export default function Auth() {
 const styles = {
   container: { display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f9fafb', fontFamily: 'system-ui' },
   navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 50px', position: 'absolute', top: 0, left: 0, right: 0 },
+  navLogoContainer: { display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' },
+  navLogoImg: { height: '38px', width: 'auto', objectFit: 'contain' },
   logo: { fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', cursor: 'pointer' },
   navBackBtn: { background: '#f3f4f6', border: 'none', color: '#4b5563', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' },
   authCard: { margin: 'auto', width: '100%', maxWidth: '420px', backgroundColor: 'white', borderRadius: '24px', padding: '40px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6' },
