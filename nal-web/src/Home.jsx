@@ -34,7 +34,7 @@ export default function Home() {
       {/* 🧱 积木 1：顶部导航栏 */}
       <nav style={styles.navbar}>
         <div style={styles.navLogoContainer} onClick={() => window.location.reload()}>
-          <img src={logoImg} alt="NAL Logo" style={styles.navLogoImg} />
+          <img src={logo} alt="NAL Logo" style={styles.navLogoImg} />
           <div style={styles.logo}>NAL Collective</div>
       </div>
         <div style={styles.navLinks}>
