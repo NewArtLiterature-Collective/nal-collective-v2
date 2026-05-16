@@ -40,23 +40,33 @@ export default function Dashboard({ session }) {
     pro_credits: initialMeta.pro_credits || 0
   });
 
-  // 用户身份判定
+  // 1. 动态判定 Pro 是否过期
   let processedRole = rawUserMetadata.role;
+  let isProExpired = false;
   if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
     if (new Date() > new Date(rawUserMetadata.expiry_date)) {
       processedRole = null; 
+      isProExpired = true; 
     }
   }
 
-  const userRole = processedRole || (rawUserMetadata.is_paid ? 'contestant' : 'free');
+  // 2. 赛事门票动态防线：老用户的历史 paid_contest_id 会在赛季更替时自动失效
+  const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
+                              rawUserMetadata.paid_contest_id === currentContestId;
+
+  const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
 
-  // 🚨 核心判定：是否拥有加油包权限（含后台标识与剩余额度）
-  const hasAddon = 
-    rawUserMetadata['has_bought_booster'] === true || 
-    rawUserMetadata.role === 'has_bought_booster' ||
-    (usage.pro_credits > 0);
+  // 3. 额度动态洗白
+  const displayUsage = {
+    flash: (isProExpired && usage.flash === 9999) ? 0 : usage.flash,
+    pro_credits: (isProExpired && usage.pro_credits === 9999) ? 0 : usage.pro_credits
+  };
+
+  // 4. 特权卡槽熔断：有高级额度才给高级卡槽，额度为 0 立刻退回基础免费卡槽，没有中间灰色地带
+  const hasAddon = !isProExpired && (displayUsage.pro_credits > 0);
+    
   const isEligibleForContest = isContestant || isPro;
 
   // 精确映射 CSV 的四阶梯资源限制
