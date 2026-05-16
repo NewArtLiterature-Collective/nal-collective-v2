@@ -10,7 +10,7 @@ export default function Dashboard({ session }) {
   // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
   const [workText, setWorkText] = useState('');
-  const [selectedImages, setSelectedImages] = useState([]);navigate('/gallery'
+  const [selectedImages, setSelectedImages] = useState([]);
   const [selectedDocx, setSelectedDocx] = useState(null); 
   // 🚨 核心新增：全局赛事开关。true 为有赛事，false 为无赛事
   // 后续管理员可以在 Supabase 新建一个 site_settings 表，通过一条数据实时控制这个 client 端状态
