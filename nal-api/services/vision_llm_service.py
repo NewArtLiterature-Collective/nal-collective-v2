@@ -95,7 +95,7 @@ class VisionLLMService:
         """
 
     @classmethod
-    def async_evaluate_visual_work(cls, target_model: str, image_type: str, image_urls: list, work_text: str = "") -> str:
+    async def evaluate_visual_work(cls, target_model: str, image_type: str, image_urls: list, work_text: str = "") -> str:
         """
         🖼️ 核心多模态评估入口（已对齐评审与指导业务）
         """
@@ -123,7 +123,7 @@ class VisionLLMService:
                 system_instruction=system_instruction
             )
             
-            res = model.generate_content(
+            res = await model.generate_content(
                 contents,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1, # 极低温度保证数学思维链的严谨
