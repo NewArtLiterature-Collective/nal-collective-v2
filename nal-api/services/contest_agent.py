@@ -3,7 +3,21 @@ import numpy as np
 import asyncio
 from services.user_service import supabase_admin
 from services.contest_literary_service import ContestLiteraryService
+import httpx
+from io import BytesIO
+from PIL import Image
 
+async def download_image(url: str):
+    """异步下载图片并转换为 PIL 对象，供 Gemini 视觉识别"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                return Image.open(BytesIO(resp.content))
+    except Exception as e:
+        print(f"⚠️ 图片下载失败 {url}: {e}")
+    return None
+    
 async def contest_pipeline(submission_id: str):
     """
     NAL 大赛 Agent 流水线：竞争夺锁 -> 门槛校验 -> 三专家会诊 -> 计算争议 -> 入库
@@ -33,6 +47,16 @@ async def contest_pipeline(submission_id: str):
             await update_status(submission_id, "invalid", "未达参赛门槛（800字+1幅插画）")
             return
 
+        # 🚨 核心新增：统一全异步下载图片资产（只下载一次！）
+        download_tasks = [download_image(url) for url in image_urls]
+        pil_images = await asyncio.gather(*download_tasks)
+        # 过滤掉下载失败的坏图
+        valid_images = [img for img in pil_images if img is not None]
+
+        if not valid_images:
+            await update_status(submission_id, "invalid", "参赛插画资产解析失败或链接失效")
+            return
+        
         # --- Agent B: Evaluator (三专家会诊) ---
         # 💡 注意：上面夺锁时已经把状态改成 "processing" 了，这里不需要再重复 update_status 了
         print(f"🧠 正在调用 AI 专家组进行多维度并发会诊: {submission_id}")
