@@ -28,7 +28,7 @@ export default function Dashboard({ session }) {
   // 专家模型与引擎配置状态
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
-  const [imageType, setImageType] = useState('illustration'); 
+  const [imageType, setImageType] = useState('picturebook'); 
 
   // 🚨 核心修复：防止 undefined 穿透
   // 初始化时就为所有可能的细分字段提供默认值 0
@@ -304,7 +304,7 @@ export default function Dashboard({ session }) {
           <nav style={styles.nav}>
             <button onClick={() => setActiveTab('guide')} style={activeTab === 'guide' ? styles.navActive : styles.navBtn}>💡 创作指导</button>
             <button onClick={() => setActiveTab('text')} style={activeTab === 'text' ? styles.navActive : styles.navBtn}>📝 文字评审</button>
-            <button onClick={() => setActiveTab('illustration')} style={activeTab === 'illustration' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
+            <button onClick={() => setActiveTab('picturebook')} style={activeTab === 'picturebook' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
             {/* 🚨 修正：必须同时满足【全局有赛事】且【用户有资格】时，才对外展示大奖赛提交入口 */}
             {(isContestActive && isEligibleForContest) && (
@@ -356,7 +356,7 @@ export default function Dashboard({ session }) {
             {activeTab === 'contest' && '🏆 参赛作品提交'}
             {activeTab === 'guide' && '💡 创作指导'}
             {activeTab === 'text' && '📝 文字评审'}
-            {activeTab === 'illustration' && '🎨 绘本插画'}
+            {activeTab === 'picturebook' && '🎨 绘本插画'}
           </h2>
 
           <div style={styles.statusRow}>
@@ -514,7 +514,7 @@ export default function Dashboard({ session }) {
               
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 
-                {activeTab !== 'illustration' && (
+                {activeTab !== 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
                     <select 
@@ -529,7 +529,7 @@ export default function Dashboard({ session }) {
                   </div>
                 )}
 
-                {activeTab === 'illustration' && (
+                {activeTab === 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
                     <select 
@@ -537,8 +537,8 @@ export default function Dashboard({ session }) {
                       onChange={(e) => setImageType(e.target.value)}
                       style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
                     >
-                      <option value="illustration">绘本分镜分析</option>
-                      <option value="cover">单幅插画审美</option>
+                      <option value="picturebook">绘本分镜分析</option>
+                      <option value="illustration">单幅插画审美</option>
                     </select>
                   </div>
                 )}
@@ -554,13 +554,13 @@ export default function Dashboard({ session }) {
                   支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，文件大小不超过 <strong style={{color: '#4f46e5'}}>{maxDocSizeDisplay}</strong>。
                 </p>
               )}
-              {activeTab === 'illustration' && (
+              {activeTab === 'picturebook' && (
                 <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
                   请上传绘本插画素材。根据您的账户权限，当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{maxImageCount}</strong> 张图片，单张大小不超过 <strong style={{color: '#4f46e5'}}>{maxImageSizeMB}MB</strong> (格式：JPG / PNG)。
                 </p>
               )}
 
-              {activeTab === 'illustration' && (
+              {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
                     {selectedImages.map((file, index) => (
@@ -599,11 +599,11 @@ export default function Dashboard({ session }) {
               )}
               
               <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
-                {activeTab === 'illustration' ? '补充说明 / 画面描述 (可选)' : '正文内容'}
+                {activeTab === 'picturebook' ? '补充说明 / 画面描述 (可选)' : '正文内容'}
               </label>
               <textarea 
                 style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
-                placeholder={activeTab === 'illustration' ? "可在此添加针对画面的理论阐述或细节描述..." : "在此粘贴需要评审的文本..."} 
+                placeholder={activeTab === 'picturebook' ? "可在此添加针对画面的理论阐述或细节描述..." : "在此粘贴需要评审的文本..."} 
                 value={workText} 
                 onChange={(e) => setWorkText(e.target.value)} 
               />
