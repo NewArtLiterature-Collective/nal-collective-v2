@@ -19,15 +19,19 @@ class LiteraryLLMService:
 
         # 动态注入计费系统传来的字数拦截规则！
         creative_sys_inst = f"""你现在是儿童文学领域的金牌创作指导。
-        任务：协助作者构思并提供创作指导。
+        任务：协助作者构思并实打实地提供创作指导与文本打样。
         标准：{expert_standard}
-        
+
+        【试写片段刚性约束】
         {snippet_rule}
 
         【输出格式要求】
-        1. 前半部分：包含【核心立意升华】、【人物弧光设定】、【情节大纲建议】。
-        2. 如果权限允许试写，中间必须插入一行：===片段分割线===
-        3. 后半部分：请严格根据上方【权限拦截】或【权限特供】的要求，决定是否输出试写片段。如果允许输出，必须保证极强的画面感和文学性。
+         请严格按以下顺序输出：
+        1. 【核心立意升华】：深入剖析主题。
+        2. 【人物弧光设定】：主角的心路历程。
+        3. 【情节大纲建议】：整体故事走向。
+        4. ===片段分割线=== （请务必单起一行输出此分割线）
+        5. 【高光片段试写】：严格按照上方的【试写片段刚性约束】执行。如果要求写长片段，要求极强的画面感和文学性，绝不准敷衍！如果要求拦截，请直接说明“本次服务仅提供大纲”。
         """
 
         model = genai.GenerativeModel(
@@ -144,36 +148,34 @@ class LiteraryLLMService:
         1. 逻辑与事实核查：检查故事逻辑漏洞与科学/历史事实准确性。
         2. 原创性评估：审视是否落入常见套路。
 
-        【评审准则：严禁平庸】
-        1. 你的默认立场是“寻找瑕疵”，而非“寻找美感”。对于平庸但无硬伤的作品，综合评分基准定在 60-65 分。
-        2. 对于落入俗套的情节、说教式的口吻、成人主义的傲慢，对应维度的分数必须直接削减 50%。
-        3. 原创性是核心门槛。若概念陈旧，即使文笔优美，总分也绝对不得超过 70 分。
-        4. 综合学术评分中，85分以上代表“具备传世潜力”，绝不轻易给出。
+        【评审准则：学术辩证】
+        1. 深度审视：挖掘瑕疵时，你必须审慎评估创作者是否在使用反讽、隐喻、嵌套或多轨镜像叙事。**切勿将文本中刻意描写的体制异化现象机械地等同于作者本身的创作说教。**
+        2. 严禁平庸：对于情节流于俗套、说教口吻浓厚、文笔平庸的作品，综合评分基准定在 60-65 分。对应缺陷维度可酌情惩罚扣减 20%-30%。
+        3. 破格给高分：若发现罕见的、真正具备儿童生命本体深度、解构极其精妙、或者具备先锋实验性的艺术作品，必须慷慨给予 85 分乃至 90 分以上的高分表彰！
 
         【强制输出规范】
-        请直接输出你的最终评审报告，严格使用下方的排版格式。
-        （👇 注意：下方只是一个格式范例，请将分数和评语替换为你对本文的【真实评估结果】！）
-
-        ### 📊 综合学术评分：85/100
+        请直接输出你的最终评审报告，严格使用下方的排版格式。将分数和评语替换为你对本文的【真实评估结果】。
 
         ### 💡 逻辑与原创性审查
-        * **事实与逻辑排查**：逻辑严密，无明显硬伤。（或者指出具体漏洞）
-        * **原创性评估**：8/10分。设定新颖，视角独特。
-
+        * **事实与逻辑排查**：[填写您的客观分析]
+        * **原创性评估**：[X/10分。简述理由]
+        
         ### 🧮 维度解析与单项得分
-        （注意：这四项的实际得分相加，必须等于上方的综合评分！）
+        （注意：这四项的实际得分相加，必须等于下方的最终综合评分！）
         {example_dims}
         
         ### 📝 核心修改建议
         1. 建议在结尾处增加...
         2. 建议削弱某些冗余的对话...
+
+        ### 📊 综合学术评分：[真实总分]/100
         """
 
         # 3. 运行自适应调权
         adaptive_inst = await cls._get_adaptive_instruction(raw_text, base_weights, user_note)
         
         # 4. 合并所有指令：特定体系指令 + 自适应分配权重 + 严格防呆格式
-        combined_instruction = model_system_instruction + "\n\n" + adaptive_inst + "\n\n" + eval_sys_inst
+        combined_instruction = adaptive_inst + "\n\n" + eval_sys_inst
         
         try:
             eval_model = genai.GenerativeModel(
@@ -181,12 +183,12 @@ class LiteraryLLMService:
                 system_instruction=combined_instruction
             )
             
-            prompt = f"【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！"
+            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！"
             
             # 保留 V1 中评价任务最稳健的 temperature
             res = await eval_model.generate_content_async(
                 prompt, 
-                generation_config=genai.types.GenerationConfig(temperature=0.05)
+                generation_config=genai.types.GenerationConfig(temperature=0.2)
             )
             
             if res.candidates and res.candidates[0].content.parts:
