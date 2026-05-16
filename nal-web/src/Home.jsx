@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import logo from './assets/nal_logo.png';
 import { supabase } from './supabaseClient'; // 🚨 注入 Supabase 客户端
 
 export default function Home() {
@@ -32,7 +33,10 @@ export default function Home() {
     <div style={styles.container}>
       {/* 🧱 积木 1：顶部导航栏 */}
       <nav style={styles.navbar}>
-        <div style={styles.logo}>NAL Collective</div>
+        <div style={styles.navLogoContainer} onClick={() => window.location.reload()}>
+          <img src="/nal_logo.png" alt="NAL Logo" style={styles.navLogoImg} />
+          <div style={styles.logo}>NAL Collective</div>
+      </div>
         <div style={styles.navLinks}>
           {/* 🚨 联动：只有当开启赛事时，才显示大赛动态入口 */}
           {isContestActive && <span style={styles.navLink}>大赛动态</span>}
@@ -147,14 +151,29 @@ export default function Home() {
 
 const styles = {
   container: { fontFamily: 'system-ui, sans-serif', color: '#111827', overflowX: 'hidden' },
-  navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 50px', backgroundColor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, borderBottom: '1px solid #f3f4f6' },
+  
+  // 🏢 导航栏
+  navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 50px', backgroundColor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, borderBottom: '1px solid #f3f4f6' },
+  
+  // 🚨 新增：导航栏 Logo 专属容器与图片控制（完美适配 15px 垂直内边距）
+  navLogoContainer: { display: 'flex', alignItems: 'center', gap：'12px', cursor: 'pointer' },
+  navLogoImg: { height: '38px', width: 'auto', objectFit: 'contain' },
+  
   logo: { fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', letterSpacing: '-0.5px' },
   navLinks: { display: 'flex', gap: '30px', alignItems: 'center' },
   navLink: { color: '#4b5563', fontWeight: '500', cursor: 'pointer', fontSize: '15px' },
   loginBtn: { padding: '10px 24px', backgroundColor: '#111827', color: 'white', borderRadius: '10px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  hero: { minHeight: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb', paddingTop: '60px', padding: '20px', textAlign: 'center' },
+  
+  // 🚀 主视觉迎宾区
+  hero: { minHeight: '85vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifycontent: 'center', backgroundColor: '#f9fafb', paddingTop: '100px', padding: '20px', textAlign: 'center' },
+  
+  // 🚨 新增：Hero C位巨幕大 Logo 样式（放置于 Title 上方，形成纵向艺术感）
+  heroLogoImg: { width: '180px', height: 'auto', marginBottom: '24px', objectFit: 'contain' },
+  
   heroTitle: { fontSize: '54px', fontWeight: '800', lineHeight: '1.2', marginBottom: '24px', maxWidth: '900px', background: 'linear-gradient(to right, #111827, #4f46e5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: '-1px' },
   heroSubtitle: { fontSize: '22px', color: '#6b7280', fontWeight: '500', letterSpacing: '1px' },
+  
+  // 🧩 特性版块
   section: { padding: '100px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: 'white' },
   sectionTitle: { fontSize: '36px', fontWeight: 'bold', marginBottom: '60px', textAlign: 'center' },
   grid: { display: 'flex', gap: '30px', maxWidth: '1200px', width: '100%', flexWrap: 'wrap', justifyContent: 'center' },
@@ -162,6 +181,8 @@ const styles = {
   featureIcon: { fontSize: '40px', marginBottom: '20px' },
   featureTitle: { fontSize: '22px', fontWeight: 'bold', marginBottom: '15px' },
   featureDesc: { color: '#6b7280', lineHeight: '1.6' },
+  
+  // 💰 计费版块
   pricingGrid: { display: 'flex', gap: '30px', maxWidth: '1100px', width: '100%', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' },
   pricingCard: { flex: '1 1 300px', padding: '40px', backgroundColor: 'white', borderRadius: '24px', border: '1px solid #e5e7eb', position: 'relative', transition: 'all 0.3s ease' },
   popularBadge: { position: 'absolute', top: '-15px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#4f46e5', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' },
@@ -172,5 +193,7 @@ const styles = {
   planBtnFree: { width: '100%', padding: '14px', backgroundColor: '#f3f4f6', color: '#111827', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   planBtnContest: { width: '100%', padding: '14px', backgroundColor: '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   planBtnPro: { width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#a78bfa', border: '2px solid #a78bfa', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  
+  // 🗺️ 页脚
   footer: { padding: '60px 40px', textAlign: 'center', backgroundColor: '#111827', color: '#9ca3af', borderTop: '1px solid #374151' }
 };
