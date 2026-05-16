@@ -10,8 +10,11 @@ export default function Dashboard({ session }) {
   // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
   const [workText, setWorkText] = useState('');
-  const [selectedImages, setSelectedImages] = useState([]);
+  const [selectedImages, setSelectedImages] = useState([]);navigate('/gallery'
   const [selectedDocx, setSelectedDocx] = useState(null); 
+  // 🚨 核心新增：全局赛事开关。true 为有赛事，false 为无赛事
+  // 后续管理员可以在 Supabase 新建一个 site_settings 表，通过一条数据实时控制这个 client 端状态
+  const [isContestActive, setIsContestActive] = useState(true);
 
   // 参赛作品专属状态
   const [contestText, setContestText] = useState('');
@@ -116,7 +119,23 @@ export default function Dashboard({ session }) {
     }
   };
 
+  const fetchSiteSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('site_settings')
+        .select('is_contest_active')
+        .single(); // 利用单例约束，直接取单行数据
+        
+      if (!error && data) {
+        setIsContestActive(data.is_contest_active);
+      }
+    } catch (err) {
+      console.error("⚠️ 读取全局配置失败:", err);
+    }
+  };
+  
   useEffect(() => {
+    fetchSiteSettings();
     refreshUserMetadata();
     fetchUserSubmissions(); 
     
@@ -287,36 +306,41 @@ export default function Dashboard({ session }) {
             <button onClick={() => setActiveTab('text')} style={activeTab === 'text' ? styles.navActive : styles.navBtn}>📝 文字评审</button>
             <button onClick={() => setActiveTab('illustration')} style={activeTab === 'illustration' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
-            {isEligibleForContest && (
-              <button onClick={() => setActiveTab('contest')} style={activeTab === 'contest' ? {...styles.navActive, backgroundColor: '#4f46e5'} : {...styles.navBtn, color: '#818cf8', marginTop: '10px'}}>🏆 提交参赛作品</button>
+            {/* 🚨 修正：必须同时满足【全局有赛事】且【用户有资格】时，才对外展示大奖赛提交入口 */}
+            {(isContestActive && isEligibleForContest) && (
+              <button onClick={() => setActiveTab('contest')} style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}>🏆 提交参赛作品</button>
             )}
           </nav>
         </div>
-        <div style={{ marginTop: 'auto' }}>
-          {/* 🚨 核心修正：移除了外层的 !isPro 拦截，允许盒子对 Pro 用户常驻显示 */}
+<div style={{ marginTop: 'auto' }}>
+          {/* 动态卡片：有赛事显示大赛，无赛事退化为常规资源中心 */}
           <div style={styles.upgradeBox}>
-            <h4 style={styles.upgradeTitle}>NAL“童心”征文大赛</h4>
-    
-          {(isContestant || isPro) ? (
-          // 👈 只要是参赛选手或是 Pro 会员，一律显示已获资格
-          <div style={{color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold'}}>
-            ✅ 已获参赛资格
+            {/* 🚨 修正：根据赛事状态动态切换标题 */}
+            <h4 style={styles.upgradeTitle}>{isContestActive ? "NAL“童心”征文大赛" : "NAL 专属资源中心"}</h4>
+            
+            {/* 🚨 核心修正：只有全局有赛事时，才渲染大赛报名按钮或资格提示。无赛事时完全不显示 */}
+            {isContestActive && (
+              (isContestant || isPro) ? (
+                <div style={{ color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold' }}>
+                  ✅ 已获参赛资格
+                </div>
+              ) : (
+                <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
+              )
+            )}
+            
+            {/* 只有非 Pro 用户在资源耗尽时，才需要加油包（日常/大赛均通用） */}
+            {(!isPro && usage.flash <= 0 && usage.pro_credits <= 0) && (
+              <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
+            )}
+            
+            {/* 已经是 Pro 的用户，不再显示升级按钮（日常/大赛均通用） */}
+            {!isPro && (
+              <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
+            )}
           </div>
-          ) : (
-            <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
-          )}
-    
-          {/* 👈 只有非 Pro 用户在资源耗尽时，才需要加油包 */}
-          {(!isPro && usage.flash <= 0 && usage.pro_credits <= 0) && (
-            <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
-          )}
-    
-          {/* 👈 已经是 Pro 的用户，不再显示升级按钮 */}
-          {!isPro && (
-            <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
-          )}
-          </div>
-          
+                    
+          {/* 用户账号信息与安全退出区 */}
           <div style={styles.userSection}>
             <div style={styles.roleLabel}>{session.user.email}</div>
             <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>退出登录</button>
