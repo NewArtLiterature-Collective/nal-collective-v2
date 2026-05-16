@@ -385,17 +385,17 @@ export default function Dashboard({ session }) {
                <>
                  <div style={styles.statusItem}>
                    <span style={styles.statusLabel}>Flash 剩余</span>
-                   <span style={styles.statusValue}>{usage.flash}</span>
+                   <span style={styles.statusValue}>{displayUsage.flash}</span>
                  </div>
                 <div style={styles.statusItem}>
                    <span style={styles.statusLabel}>Pro 额度剩余</span>
-                   <span style={styles.statusValue}>{usage.pro_credits}</span>
+                   <span style={styles.statusValue}>{displayUsage.pro_credits}</span>
                  </div>
                </>
              ) : (
                <div style={styles.statusItem}>
                  <span style={styles.statusLabel}>Flash 剩余</span>
-                 <span style={styles.statusValue}>{usage.flash}</span>
+                 <span style={styles.statusValue}>{displayUsage.flash}</span>
                </div>
              )}
           </div>
