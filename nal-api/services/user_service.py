@@ -51,7 +51,7 @@ class UserService:
                         
                         # 3. 剥夺 Pro 身份，9999 滥用额度直接一刀切清零
                         meta["role"] = None  # 降级退化为普通用户
-                        meta["flash_left"] = 0   
+                        meta["flash_left"] = 5   
                         meta["pro_credits"] = 0
                         
                         # 🚨 4. 彻底物理粉碎历史旧布尔标记，防止污染前端卡槽
