@@ -135,8 +135,8 @@ class VisionLLMService:
                 # 解析返回的 JSON 字符串
                 result_json = json.loads(res.text)
                 if res.candidates and res.candidates[0].content.parts:
-                # 解析返回的 JSON 字符串
-                result_json = json.loads(res.text)
+                    # 解析返回的 JSON 字符串
+                    result_json = json.loads(res.text)
                 
                 # 🚨 核心防御：如果大模型因为多图原因调皮地返回了 [ {...} ] 数组格式，自动剥离外壳取第一个字典
                 if isinstance(result_json, list):
