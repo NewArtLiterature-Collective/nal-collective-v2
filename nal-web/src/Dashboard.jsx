@@ -675,6 +675,11 @@ const styles = {
 
   logoContainer: {display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px 16px', borderBottom: '1px solid rgba(0, 0, 0, 0.05)'},
   logoImage: {width: '140px', height: 'auto', objectFit: 'contain'},
+  logo: {fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', letterSpacing: '-0.5px', margin: 0},
+  // 🚨 新增：侧边栏 Logo 头部的横向 Flex 排版
+  sidebarHeader: {display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 16px', cursor: 'pointer', borderBottom: '1px solid rgba(0, 0, 0, 0.05)', marginBottom: '15px'},
+  // 🚨 新增：侧边栏图形高度控制
+  sidebarLogoImg: {height: '32px', width: 'auto', objectFit: 'contain'},
   
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
