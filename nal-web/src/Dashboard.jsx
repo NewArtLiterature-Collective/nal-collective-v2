@@ -60,7 +60,6 @@ export default function Dashboard({ session }) {
 
   // 3. 额度动态洗白
   const displayUsage = {
-    const displayUsage = {
     flash: (isProExpired && usage.flash >= 9999) ? 5 : Math.max(0, Number(usage.flash || 0)),
     pro_credits: (isProExpired && usage.pro_credits >= 9999) ? 0 : Math.max(0, Number(usage.pro_credits || 0))
   };
