@@ -7,15 +7,45 @@ import httpx
 from io import BytesIO
 from PIL import Image
 
-async def download_image(url: str):
-    """异步下载图片并转换为 PIL 对象，供 Gemini 视觉识别"""
+async def download_image(url_or_path: str):
+    """
+    NAL 存储桶专属下载器：
+    完美咬合前端 getPublicUrl() 传过来的 'contest_works' 长网址，
+    自动切片提取出纯文件名，利用 admin 权限走高速内网通道拉取。
+    """
     try:
+        # 🚨 1. 精准咬合前端创建的存储桶名字
+        BUCKET_NAME = "contest_works" 
+        
+        # 情况 A：如果因特殊原因传入的是纯文件名或桶内路径 (如: "41bb_1715812345.png")
+        if not url_or_path.startswith("http://") and not url_or_path.startswith("https://"):
+            storage_res = supabase_admin.storage.from_(BUCKET_NAME).download(url_or_path)
+            return Image.open(BytesIO(storage_res))
+
+        # 情况 B：完美命中前端传来的完整长网址
+        # 例如: https://xxx.supabase.co/storage/v1/object/public/contest_works/user_123_17158...png
+        if f"/{BUCKET_NAME}/" in url_or_path:
+            # 通过桶名进行切片，parts[1] 拿到的就是纯文件名 "${session.user.id}_${Date.now()}.${fileExt}"
+            parts = url_or_path.split(f"/{BUCKET_NAME}/")
+            if len(parts) > 1:
+                filename = parts[1]
+                
+                # 🚨 核心优势：直接利用 admin 权限在云端存储内网执行 download 抓取二进制流
+                # 速度比走公网 httpx.get 快数倍，且永远免疫未来可能改为 Private 桶带来的 403 风险
+                storage_res = supabase_admin.storage.from_(BUCKET_NAME).download(filename)
+                return Image.open(BytesIO(storage_res))
+
+        # 情况 C：公网兜底拦截（应对极端情况下的历史测试脏数据外链）
+        import httpx
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(url_or_path)
             if resp.status_code == 200:
                 return Image.open(BytesIO(resp.content))
+            else:
+                print(f"❌ 外部兜底图片网络请求失败，状态码: {resp.status_code}")
+                
     except Exception as e:
-        print(f"⚠️ 图片下载失败 {url}: {e}")
+        print(f"🚨 存储桶 [contest_works] 资产捕获崩溃 [{url_or_path}]: {e}")
     return None
     
 async def contest_pipeline(submission_id: str):
