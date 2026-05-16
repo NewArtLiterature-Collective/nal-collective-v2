@@ -6,13 +6,24 @@ from services.contest_literary_service import ContestLiteraryService
 
 async def contest_pipeline(submission_id: str):
     """
-    NAL 大赛 Agent 流水线：校验 -> 三专家会诊 -> 计算争议 -> 入库
+    NAL 大赛 Agent 流水线：竞争夺锁 -> 门槛校验 -> 三专家会诊 -> 计算争议 -> 入库
     """
     try:
-        # 1. 获取作品
-        res = supabase_admin.table("contest_submissions").select("*").eq("id", submission_id).single().execute()
-        work = res.data
-        if not work: return
+        # 🚨 核心安全升级：原子夺锁机制（彻底粉碎 API 实时唤醒与长驻轮询器的毫秒级撞车）
+        # 尝试将当前作品的状态从 'pending' 原子改写为 'processing'。
+        # 如果 lock_res.data 为空，说明别的线程（比如实时 API 或另一个 Worker）已经抢先把它叼走了。
+        lock_res = supabase_admin.table("contest_submissions") \
+            .update({"status": "processing"}) \
+            .eq("id", submission_id) \
+            .eq("status", "pending") \
+            .execute()
+            
+        if not lock_res.data:
+            print(f"⏭️ 作品 {submission_id} 已被其他评审线程夺取或已完成，本线程自动安全退出。")
+            return
+
+        # 1. 直接从锁返回的最新数据里提取作品内容（精妙处：直接省去了原本下面的 select(*) 数据库请求！）
+        work = lock_res.data[0]
 
         text = work.get("text_content", "")
         images = work.get("image_urls", [])
@@ -23,7 +34,8 @@ async def contest_pipeline(submission_id: str):
             return
 
         # --- Agent B: Evaluator (三专家会诊) ---
-        await update_status(submission_id, "processing")
+        # 💡 注意：上面夺锁时已经把状态改成 "processing" 了，这里不需要再重复 update_status 了
+        print(f"🧠 正在调用 AI 专家组进行多维度并发会诊: {submission_id}")
         
         # 并发执行三方评审
         tasks = [
@@ -48,7 +60,6 @@ async def contest_pipeline(submission_id: str):
         ai_total_score = float(np.mean(all_score_points))
 
         # 3. 构造简洁的专家评语展示
-        # 这种格式方便前端直接 split('\n\n') 或解析标签
         final_review = (
             f"【全景视角】：{p_res['review']}\n\n"
             f"【首席锐评】：{c_res['review']}\n\n"
@@ -56,7 +67,7 @@ async def contest_pipeline(submission_id: str):
         )
 
         # 4. 回写数据库
-        await supabase_admin.table("contest_submissions").update({
+        supabase_admin.table("contest_submissions").update({
             "status": "success",
             "ai_scores": combined_scores,
             "ai_total_score": ai_total_score,
@@ -79,14 +90,13 @@ async def update_status(sid, status, error=None):
 
 async def main_worker():
     """
-    长驻轮询器：每 10 秒扫描一次数据库中的 'pending' 作品
+    长驻轮询器：每 10 秒扫描一次数据库中的 'pending' 作品（安全的兜底漏网之鱼）
     """
     print("🏛️ NAL 专家评审 Agent 启动，正在监听待处理作品...")
     
     while True:
         try:
             # 1. 查找一个待处理的作品
-            # 我们只需要拉取 ID 即可，pipeline 内部会重新拉取完整数据
             res = supabase_admin.table("contest_submissions") \
                 .select("id") \
                 .eq("status", "pending") \
@@ -95,18 +105,16 @@ async def main_worker():
 
             if res.data:
                 target_id = res.data[0]['id']
-                print(f"🔍 发现新投稿 {target_id}，启动流水线...")
+                print(f"🔍 轮询兜底器发现新投稿 {target_id}，尝试唤醒流水线...")
                 
-                # 2. 执行你写的流水线
+                # 2. 扔进流水线（内部的原子锁会确保它不会跟 API 实时线程撞车）
                 await contest_pipeline(target_id)
             
-            # 3. 适当休息，避免给数据库造成太大压力
             await asyncio.sleep(10)
             
         except Exception as e:
             print(f"❌ 轮询异常: {e}")
-            await asyncio.sleep(30) # 报错后多歇一会
+            await asyncio.sleep(30)
 
 if __name__ == "__main__":
-    # 启动异步事件循环
     asyncio.run(main_worker())
