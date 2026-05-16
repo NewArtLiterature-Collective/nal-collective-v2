@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import logo from './assets/nal_logo.png';
-import { supabase } from './supabaseClient'; // 🚨 注入 Supabase 客户端
+import logo from './assets/nal_logo.png'; // 👈 引入的名字叫 logo
+import { supabase } from './supabaseClient'; 
 
 export default function Home() {
   const navigate = useNavigate();
-  
-  // 🚨 核心新增：全局赛事开关，默认先设为 true 承接首屏
   const [isContestActive, setIsContestActive] = useState(true);
 
-  // 🚨 核心新增：挂载时拉取最新的全局赛事状态
   useEffect(() => {
     const fetchSiteSettings = async () => {
       try {
@@ -34,11 +31,11 @@ export default function Home() {
       {/* 🧱 积木 1：顶部导航栏 */}
       <nav style={styles.navbar}>
         <div style={styles.navLogoContainer} onClick={() => window.location.reload()}>
+          {/* 🚨 核心修正：将 logoImg 精准对齐修正为顶部的变量 logo */}
           <img src={logo} alt="NAL Logo" style={styles.navLogoImg} />
           <div style={styles.logo}>NAL Collective</div>
-      </div>
+        </div>
         <div style={styles.navLinks}>
-          {/* 🚨 联动：只有当开启赛事时，才显示大赛动态入口 */}
           {isContestActive && <span style={styles.navLink}>大赛动态</span>}
           
           <span 
@@ -55,6 +52,9 @@ export default function Home() {
   
       {/* 🧱 积木 2：首屏视觉区 (Hero) */}
       <header style={styles.hero}>
+        {/* 🚨 核心新增：把漏掉的 C位巨幕大 Logo 挂在主视觉标题上方 */}
+        <img src={logo} alt="New Art Literature Collective" style={styles.heroLogoImg} />
+        
         <h1 style={styles.heroTitle}>
           汇聚先进技术和人类智慧<br/>
           为童书创作保驾护航
@@ -91,7 +91,7 @@ export default function Home() {
         <h2 style={styles.sectionTitle}>选择您的创作通行证</h2>
         <div style={styles.pricingGrid}>
           
-          {/* 普通用户卡片 - 常驻 */}
+          {/* 普通用户卡片 */}
           <div style={styles.pricingCard}>
             <h3 style={styles.planName}><span role="img" aria-label="free">☕</span> 普通用户</h3>
             <div style={styles.planPrice}>免费体验</div>
@@ -105,7 +105,7 @@ export default function Home() {
             <button onClick={() => navigate('/login')} style={styles.planBtnFree}>立即注册</button>
           </div>
 
-          {/* 🚨 参赛选手卡片 - 联动控制显隐 */}
+          {/* 参赛选手卡片 */}
           {isContestActive && (
             <div style={{...styles.pricingCard, border: '2px solid #4f46e5', transform: 'scale(1.05)', zIndex: 10}}>
               <div style={styles.popularBadge}>2026 评审季推荐</div>
@@ -122,12 +122,11 @@ export default function Home() {
             </div>
           )}
 
-          {/* 专业会员卡片 - 常驻，但动态过滤大赛话术 */}
+          {/* 专业会员卡片 */}
           <div style={{...styles.pricingCard, background: '#111827', color: 'white'}}>
             <h3 style={{...styles.planName, color: '#a78bfa'}}><span role="img" aria-label="pro">✨</span> 专业会员</h3>
             <div style={styles.planPrice}>￥500 <span style={{...styles.priceUnit, color: '#9ca3af'}}>/ 年</span></div>
             <ul style={{...styles.planFeatures, color: '#d1d5db'}}>
-              {/* 🚨 智能化话术过滤：有比赛时强调资格，没比赛时强调全阶梯高阶算力功能 */}
               <li>✓ <b>{isContestActive ? "包含参赛资格及所有评审功能" : "完全解锁全场景深度视觉与文本评审"}</b></li>
               <li>✓ 解锁 <b>文学专业旗舰算力</b></li>
               <li>✓ 解锁全部 7 个细分学术模型</li>
@@ -154,22 +153,17 @@ const styles = {
   
   // 🏢 导航栏
   navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 50px', backgroundColor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, borderBottom: '1px solid #f3f4f6' },
-  
-  // 🚨 新增：导航栏 Logo 专属容器与图片控制（完美适配 15px 垂直内边距）
   navLogoContainer: { display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' },
   navLogoImg: { height: '38px', width: 'auto', objectFit: 'contain' },
-  
   logo: { fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', letterSpacing: '-0.5px' },
   navLinks: { display: 'flex', gap: '30px', alignItems: 'center' },
   navLink: { color: '#4b5563', fontWeight: '500', cursor: 'pointer', fontSize: '15px' },
   loginBtn: { padding: '10px 24px', backgroundColor: '#111827', color: 'white', borderRadius: '10px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
   
   // 🚀 主视觉迎宾区
-  hero: { minHeight: '85vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifycontent: 'center', backgroundColor: '#f9fafb', paddingTop: '100px', padding: '20px', textAlign: 'center' },
-  
-  // 🚨 新增：Hero C位巨幕大 Logo 样式（放置于 Title 上方，形成纵向艺术感）
+  // 🚨 修正拼写错误：将 justifycontent 修正为驼峰命名的 justifyContent
+  hero: { minHeight: '85vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb', paddingTop: '100px', padding: '20px', textAlign: 'center' },
   heroLogoImg: { width: '180px', height: 'auto', marginBottom: '24px', objectFit: 'contain' },
-  
   heroTitle: { fontSize: '54px', fontWeight: '800', lineHeight: '1.2', marginBottom: '24px', maxWidth: '900px', background: 'linear-gradient(to right, #111827, #4f46e5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: '-1px' },
   heroSubtitle: { fontSize: '22px', color: '#6b7280', fontWeight: '500', letterSpacing: '1px' },
   
