@@ -34,7 +34,7 @@ export function useEvaluation(userRole, usage) {
     }
 
     // 2. 图片校验 (数量：Pro 50张, 参赛 5张, 普通 2张 | 大小：5MB, 1.5MB, 1MB)
-    if (activeTab === 'illustration') {
+    if (activeTab === 'picturebook') {
       if (selectedImages.length === 0) return alert("请至少上传一张图片");
       
       const maxImgCount = isPro ? 50 : (isContestant || hasAddon ? 5 : 2);
@@ -50,7 +50,7 @@ export function useEvaluation(userRole, usage) {
       }
     }
 
-    if (activeTab === 'illustration' && selectedImages.length === 0) return alert("请上传图片");
+    if (activeTab === 'picturebook' && selectedImages.length === 0) return alert("请上传图片");
     if (activeTab === 'guide' && !workText) return alert("请输入创作构思");
 
     setLoading(true);
@@ -61,7 +61,7 @@ export function useEvaluation(userRole, usage) {
       if (!currentSession) throw new Error("会话过期");
 
       let publicImageUrls = [];
-      if (activeTab === 'illustration') {
+      if (activeTab === 'picturebook') {
         publicImageUrls = await uploadImagesToStorage(selectedImages, currentSession.user.id);
       }
 
@@ -70,14 +70,14 @@ export function useEvaluation(userRole, usage) {
       formData.append('task_type', activeTab);
       formData.append('user_role', userRole);
       formData.append('work_text', workText);
-      formData.append('image_type', activeTab === 'illustration' ? imageType : '');
-      formData.append('model_db_id', activeTab === 'illustration' ? '' : selectedModelId);
+      formData.append('image_type', activeTab === 'picturebook' ? imageType : '');
+      formData.append('model_db_id', activeTab === 'picturebook' ? '' : selectedModelId);
       
       // 传递参赛选手是否还有余量，用于后端判断字数和模型
       const hasProLimit = usage && usage.pro_credits > 0;
       formData.append('has_pro_limit', hasProLimit ? "true" : "false");
 
-      if (activeTab === 'illustration') {
+      if (activeTab === 'picturebook') {
         formData.append('image_urls', JSON.stringify(publicImageUrls));
       }
       if (activeTab === 'text' && selectedDocx) {
