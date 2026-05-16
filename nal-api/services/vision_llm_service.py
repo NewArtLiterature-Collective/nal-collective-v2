@@ -123,7 +123,7 @@ class VisionLLMService:
                 system_instruction=system_instruction
             )
             
-            res = await model.generate_content(
+            res = await model.generate_content_async(
                 contents,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1, # 极低温度保证数学思维链的严谨
