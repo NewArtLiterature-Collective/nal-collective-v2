@@ -22,23 +22,21 @@ async def create_checkout_session_route(request: Request):
             if user_res and hasattr(user_res, 'user'):
                 meta = user_res.user.user_metadata or {}
             
-            # 1. 如果是 Pro，不执行拦截逻辑（因为前端已隐藏按钮，这里做后台保底）
+            # 1. 如果是 Pro 会员，直接保底放行（无限额度用户前端已隐藏按钮）
             if meta.get("role") == "pro":
                 return {"url": PaymentService.create_checkout_session(user_id, user_email, plan)}
 
-            # 2. 资源耗尽检查：基础 Flash (注册默认 5 次) + 三项高级资源
-            f0 = int(meta.get("flash_left", 5)) # 默认为 5，因为注册即送
-            r1 = int(meta.get("guide_pro") or 0)
-            r2 = int(meta.get("text_pro") or 0)
-            r3 = int(meta.get("illustration_pro") or 0)
+            # 2. 🚨 核心修正：完全废弃旧的细分字段，精准对齐统一额度账本
+            f0 = int(meta.get("flash_left") if meta.get("flash_left") is not None else 5)
+            pro_credits = int(meta.get("pro_credits") or 0) # 👈 统一读取 Pro 点数
             
-            total = f0 + r1 + r2 + r3
+            total = f0 + pro_credits
             
-            # 只要还有资源，就不允许进入支付页面
+            # 只要还有任何剩余资源，就不允许进入支付页面
             if total > 0:
                 return JSONResponse(
                     status_code=400,
-                    content={"detail": f"您还有 {total} 次资源未用完，请耗尽后再购买加油包。"}
+                    content={"detail": f"您还有 {total} 次可用资源（含高级额度），请耗尽后再购买资源加油包。"}
                 )
 
         # 正常创建支付链接
@@ -61,9 +59,8 @@ async def stripe_webhook(request: Request):
 
     if event['type'] == 'checkout.session.completed':
         try:
-            # 🚨 修复关键：将 Stripe 对象转为标准字典
+            # 将 Stripe 对象转为标准字典
             session_obj = event['data']['object']
-            # 使用 getattr 获取 metadata 对象，或者直接转成 dict
             session_dict = session_obj.to_dict() 
             
             metadata = session_dict.get('metadata', {})
@@ -73,6 +70,9 @@ async def stripe_webhook(request: Request):
             print(f"💰 Webhook 成功解析：User:{user_id}, Plan:{plan}")
 
             if user_id:
+                # 🚨 强力提醒：请务必检查 UserService.upgrade_user_to_pro 内部！
+                # 确保当 plan == 'addon' 时，加算的是 meta 中的 pro_credits 字段（比如 +5），
+                # 而不是去加算什么遗留的 guide_pro / text_pro / illustration_pro。
                 UserService.upgrade_user_to_pro(user_id, plan)
         
         except Exception as err:
