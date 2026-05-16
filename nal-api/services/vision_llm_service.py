@@ -134,8 +134,19 @@ class VisionLLMService:
             if res.candidates and res.candidates[0].content.parts:
                 # 解析返回的 JSON 字符串
                 result_json = json.loads(res.text)
+                if res.candidates and res.candidates[0].content.parts:
+                # 解析返回的 JSON 字符串
+                result_json = json.loads(res.text)
                 
-                # 🚨 前端报告界面同步变更：将“评委会预测”转换为“评审指导结论”
+                # 🚨 核心防御：如果大模型因为多图原因调皮地返回了 [ {...} ] 数组格式，自动剥离外壳取第一个字典
+                if isinstance(result_json, list):
+                    print("⚠️ 接收到 list 格式响应，正在执行自动解包...")
+                    if len(result_json) > 0 and isinstance(result_json[0], dict):
+                        result_json = result_json[0]
+                    else:
+                        raise ValueError("视觉模型返回了非法的空列表或格式错误。")
+                
+                # 为了前端展示兼容，我们将其转换成一段漂亮的 Markdown 报告返回
                 markdown_report = f"""
 ### 🎨 NAL 视觉艺术评审与指导报告 (V6.5)
 
