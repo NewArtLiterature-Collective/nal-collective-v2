@@ -34,20 +34,27 @@ class UserService:
             
             # 📦 逻辑 1：加油包 (addon)
             if plan == "addon":
-                meta["has_bought_booster"] = True  # 👈 记录买过包
-                meta["flash_left"] = (meta.get("flash_left") or 0) + 2
-                meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
+                meta["has_bought_booster"] = True  
+                
+                # 🚨 修正：加入 int() 强制转换，并处理可能存在的字符串或 None 溢出
+                current_flash = int(meta.get("flash_left") if meta.get("flash_left") is not None else 0)
+                current_pro = int(meta.get("pro_credits") if meta.get("pro_credits") is not None else 0)
+                
+                meta["flash_left"] = current_flash + 2
+                meta["pro_credits"] = current_pro + 3
                 print(f"📦 用户 {user_id} 获得加油包：+2 Flash, +3 Pro。")
 
             # 🏆 逻辑 2：参赛费 (contestant)
             elif plan == "contestant":
-                meta["role"] = "contestant" # 给予门票
+                meta["role"] = "contestant" 
                 meta["is_paid"] = True
                 
-                # 🚨 核心防叠加逻辑：只给没买过加油包的人发初始资源
                 if not meta.get("has_bought_booster"):
-                    meta["flash_left"] = (meta.get("flash_left") or 0) + 2
-                    meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
+                    current_flash = int(meta.get("flash_left") if meta.get("flash_left") is not None else 0)
+                    current_pro = int(meta.get("pro_credits") if meta.get("pro_credits") is not None else 0)
+                    
+                    meta["flash_left"] = current_flash + 2
+                    meta["pro_credits"] = current_pro + 3
                     print(f"🏆 用户 {user_id} 报名成功，获得资格及资源：+2 Flash, +3 Pro。")
                 else:
                     print(f"🏆 用户 {user_id} 报名成功，已购加油包，不重复发放资源。")
@@ -95,15 +102,18 @@ class UserService:
             # 给予参赛者门票
             meta["role"] = "contestant"
             
-            # 💡 防刷：检查是否买过加油包
+           # 💡 防刷：检查是否买过加油包
             if meta.get("has_bought_booster"):
                 print(f"⚠️ 用户 {user_id} 报名成功（已购加油包，不送资源）。")
             else:
-                # 🚨 核心修改：对齐最新的发货标准 (2次Flash, 3次共享Pro)
-                meta["flash_left"] = (meta.get("flash_left") or 0) + 2
-                meta["pro_credits"] = (meta.get("pro_credits") or 0) + 3
+                # 🚨 修正：同理进行安全加算
+                current_flash = int(meta.get("flash_left") if meta.get("flash_left") is not None else 0)
+                current_pro = int(meta.get("pro_credits") if meta.get("pro_credits") is not None else 0)
+                
+                meta["flash_left"] = current_flash + 2
+                meta["pro_credits"] = current_pro + 3
                 print(f"🏆 用户 {user_id} 报名成功，获得资格及资源：+2 Flash, +3 Pro。")
-
+                
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
