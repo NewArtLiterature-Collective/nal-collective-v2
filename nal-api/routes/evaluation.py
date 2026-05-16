@@ -3,12 +3,11 @@ from fastapi import APIRouter, Request, HTTPException, Header, Form, File, Uploa
 from typing import Optional
 import io
 import json
-import datetime
 from docx import Document
+# 🚨 核心修正 1：规范化时间库引入，只引入 datetime 和 timezone，绝不发生覆盖对撞
+from datetime import datetime, timezone, date 
 
-# 引入原有的用户服务和数据库配置
 from services.user_service import supabase_admin
-# 引入新创建的专业文学与视觉服务
 from services.literary_llm_service import LiteraryLLMService
 from services.vision_llm_service import VisionLLMService
 
@@ -55,33 +54,43 @@ async def process_evaluation(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"解析 Word 文档失败: {e}")
 
+    # 🚨 边界防御：如果文本和文件同时为空，直接拦截，拒绝浪费核心算力
+    if not extracted_text.strip() and task_type != "picturebook":
+        raise HTTPException(status_code=400, detail="提交的文本内容为空，请输入文字或上传 Word 文档。")
+
     # ==========================================
     # 3. 商业路由：到期清算与模型分配
     # ==========================================
     role = metadata.get("role")
     
-    # --- 🚨 新增：专业版到期清算逻辑 ---
-    now = datetime.datetime.now()
+    # --- 专业版到期清算逻辑 (精准热修复版) ---
+    now = datetime.now(timezone.utc)
     expiry_date_str = metadata.get("expiry_date")
     
     if role == "pro" and expiry_date_str:
-        expiry_date = datetime.datetime.fromisoformat(expiry_date_str)
+        # 🚨 核心修正 2：使用更正后的类名 datetime.fromisoformat，并添加 Z 兼容垫片
+        expiry_date = datetime.fromisoformat(expiry_date_str.replace("Z", "+00:00"))
+        
+        # 🚨 核心修正 3：防止缺少时区指纹，强制上锁 UTC
+        if expiry_date.tzinfo is None:
+            expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+            
         if now > expiry_date:
             print(f"⏰ 用户 {user.id} 专业版已到期，执行降级清算。")
-            role = None # 降级为普通用户
+            role = None  # 内部路由身份状态退化
             metadata["role"] = None
             metadata["is_paid"] = False
             metadata["expiry_date"] = None
             metadata["pro_credits"] = 0
-            metadata["flash_left"] = 5 # 重新分配为普通用户的 5 次初始资源
+            metadata["flash_left"] = 5  # 重新分配为普通用户的 5 次初始资源
             # 立即写回数据库，防止并发漏洞
             supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
 
     # 读取当前最新额度
     flash_left = metadata.get("flash_left", 0)
-    pro_credits = metadata.get("pro_credits", 0) # 👈 使用统一共享池
+    pro_credits = metadata.get("pro_credits", 0) 
     
-    today_str = datetime.date.today().isoformat()
+    today_str = date.today().isoformat()  # 👈 联动修正：使用标准的 date.today()
     last_active = metadata.get("last_active_date", "")
     pro_daily_used = metadata.get("pro_daily_used", 0)
 
@@ -95,28 +104,26 @@ async def process_evaluation(
     used_pro = False
     used_pro_daily = False 
     
-    # --- 🚨 核心分配逻辑 ---
+    # --- 核心分配逻辑 ---
     if role == "pro":
-        if pro_daily_used < 5: # 👈 每天限用 5 次 3.1 Pro (熔断机制)
+        if pro_daily_used < 5: 
             target_model = "gemini-3.1-pro-preview" 
             used_pro_daily = True
         else:
-            target_model = "gemini-2.5-flash" # 超过 5 次当天降级为 Flash
-            # 注意：专业版即使降级为 Flash 也是无限使用的，不设置扣费 flag
-            
+            target_model = "gemini-2.5-flash"
     else:
-        # 瀑布流扣费预检 (普通用户 & 参赛者)
+        # 瀑布流扣费预检
         if flash_left > 0:
             target_model = "gemini-2.5-flash"
             used_flash = True
         elif pro_credits > 0:
-            target_model = "gemini-2.5-pro" # 高级额度使用 2.5 Pro
+            target_model = "gemini-2.5-pro" 
             used_pro = True
         else:
             raise HTTPException(status_code=403, detail="资源已耗尽，请购买加油包或报名参赛。")
 
     # ==========================================
-    # 4. 调用 AI 核心
+    # 4. 调用 AI 核心 (完美契合专家提示词改进版)
     # ==========================================
     report = ""
     try:
@@ -169,11 +176,9 @@ async def process_evaluation(
     try:
         metadata["last_active_date"] = today_str
         
-        # 1. 专业版计数
         if used_pro_daily:
             metadata["pro_daily_used"] = pro_daily_used + 1
         
-        # 2. 瀑布式扣费落地
         if role != "pro":
             if used_flash:
                 metadata["flash_left"] = max(0, flash_left - 1)
@@ -190,4 +195,12 @@ async def process_evaluation(
     except Exception as e:
         print(f"⚠️ 数据库额度更新失败 (非致命错误): {e}")
    
-    return {"report": report}
+    # 🚨 高阶体验重构：在返回报告的同时，将最新扣减后的资产余量同步发回给前端，实现即时渲染！
+    return {
+        "report": report,
+        "sync_usage": {
+            "role": metadata.get("role"),
+            "flash_left": metadata.get("flash_left", 0),
+            "pro_credits": metadata.get("pro_credits", 0)
+        }
+    }
