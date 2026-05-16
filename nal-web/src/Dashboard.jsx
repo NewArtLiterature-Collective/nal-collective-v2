@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { usePayment } from './hooks/usePayment';
 import { useEvaluation } from './hooks/useEvaluation';
+import logo from './assets/nal_logo.png';
 
 export default function Dashboard({ session }) {
   const navigate = useNavigate();
@@ -310,7 +311,11 @@ export default function Dashboard({ session }) {
 
       <aside style={styles.sidebar}>
         <div>
-          <h2 style={styles.logo}>NAL Collective</h2>
+          <div style={styles.sidebarHeader} onClick={() => window.location.reload()}>
+            {/* 确保你顶部 import logo from './assets/nal_logo.png' 引入的名字叫 logo */}
+            <img src={logo} alt="NAL Logo" style={styles.sidebarLogoImg} />
+            <h2 style={styles.logo}>NAL Collective</h2>
+          </div>
           <nav style={styles.nav}>
             <button onClick={() => setActiveTab('guide')} style={activeTab === 'guide' ? styles.navActive : styles.navBtn}>💡 创作指导</button>
             <button onClick={() => setActiveTab('text')} style={activeTab === 'text' ? styles.navActive : styles.navBtn}>📝 文字评审</button>
@@ -667,6 +672,9 @@ const styles = {
   roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
+
+  logoContainer: {display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px 16px', borderBottom: '1px solid rgba(0, 0, 0, 0.05)'},
+  logoImage: {width: '140px', height: 'auto', objectFit: 'contain'}
   
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
