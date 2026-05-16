@@ -674,7 +674,7 @@ const styles = {
   main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
 
   logoContainer: {display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px 16px', borderBottom: '1px solid rgba(0, 0, 0, 0.05)'},
-  logoImage: {width: '140px', height: 'auto', objectFit: 'contain'}
+  logoImage: {width: '140px', height: 'auto', objectFit: 'contain'},
   
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
