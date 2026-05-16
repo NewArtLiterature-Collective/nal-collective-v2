@@ -4,7 +4,6 @@ from typing import Optional
 import io
 import json
 from docx import Document
-# 🚨 核心修正 1：规范化时间库引入，只引入 datetime 和 timezone，绝不发生覆盖对撞
 from datetime import datetime, timezone, date 
 
 from services.user_service import supabase_admin
@@ -32,7 +31,6 @@ async def process_evaluation(
         raise HTTPException(status_code=401, detail="缺少身份验证")
     
     token = authorization.split(" ")[1]
-
     try:
         user_res = supabase_admin.auth.get_user(token)
         if not user_res or not user_res.user:
@@ -54,57 +52,46 @@ async def process_evaluation(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"解析 Word 文档失败: {e}")
 
-    # 🚨 边界防御：如果文本和文件同时为空，直接拦截，拒绝浪费核心算力
     if not extracted_text.strip() and task_type != "picturebook":
-        raise HTTPException(status_code=400, detail="提交的文本内容为空，请输入文字或上传 Word 文档。")
+        raise HTTPException(status_code=400, detail="提交的文本内容为空。")
 
     # ==========================================
     # 3. 商业路由：到期清算与模型分配
     # ==========================================
     role = metadata.get("role")
-    
-    # --- 专业版到期清算逻辑 (精准热修复版) ---
     now = datetime.now(timezone.utc)
     expiry_date_str = metadata.get("expiry_date")
     
     if role == "pro" and expiry_date_str:
-        # 🚨 核心修正 2：使用更正后的类名 datetime.fromisoformat，并添加 Z 兼容垫片
         expiry_date = datetime.fromisoformat(expiry_date_str.replace("Z", "+00:00"))
-        
-        # 🚨 核心修正 3：防止缺少时区指纹，强制上锁 UTC
         if expiry_date.tzinfo is None:
             expiry_date = expiry_date.replace(tzinfo=timezone.utc)
             
         if now > expiry_date:
             print(f"⏰ 用户 {user.id} 专业版已到期，执行降级清算。")
-            role = None  # 内部路由身份状态退化
+            role = None  
             metadata["role"] = None
             metadata["is_paid"] = False
             metadata["expiry_date"] = None
             metadata["pro_credits"] = 0
-            metadata["flash_left"] = 5  # 重新分配为普通用户的 5 次初始资源
-            # 立即写回数据库，防止并发漏洞
+            metadata["flash_left"] = 5  
             supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
 
-    # 读取当前最新额度
     flash_left = metadata.get("flash_left", 0)
     pro_credits = metadata.get("pro_credits", 0) 
     
-    today_str = date.today().isoformat()  # 👈 联动修正：使用标准的 date.today()
+    today_str = date.today().isoformat()  
     last_active = metadata.get("last_active_date", "")
     pro_daily_used = metadata.get("pro_daily_used", 0)
 
-    # 跨天重置 Pro 每日用量
     if last_active != today_str:
         pro_daily_used = 0
 
-    # 路由追踪变量
     target_model = "gemini-2.5-flash" 
     used_flash = False
     used_pro = False
     used_pro_daily = False 
     
-    # --- 核心分配逻辑 ---
     if role == "pro":
         if pro_daily_used < 5: 
             target_model = "gemini-3.1-pro-preview" 
@@ -112,7 +99,6 @@ async def process_evaluation(
         else:
             target_model = "gemini-2.5-flash"
     else:
-        # 瀑布流扣费预检
         if flash_left > 0:
             target_model = "gemini-2.5-flash"
             used_flash = True
@@ -123,32 +109,60 @@ async def process_evaluation(
             raise HTTPException(status_code=403, detail="资源已耗尽，请购买加油包或报名参赛。")
 
     # ==========================================
-    # 4. 调用 AI 核心 (完美契合专家提示词改进版)
+    # 4. 动态读取模型配置 (彻底消灭硬编码维度漏洞)
+    # ==========================================
+    # 默认建立安全牌兜底
+    selected_model_name = "全景综合-通用基准模型"
+    if task_type == "text":
+        selected_model_name = "NAL-首席专家锐评模型"
+    
+    # 🚨 核心改造：直接去 Supabase 捞取当前模型在线配置的真实中文学术维度矩阵
+    try:
+        model_setting_res = supabase_admin.table("evaluation_models") \
+            .select("parameters, system_instruction") \
+            .eq("name", selected_model_name) \
+            .single().execute()
+        
+        if model_setting_res.data:
+            base_weights = model_setting_res.data.get("parameters", {})
+            model_system_instruction = model_setting_res.data.get("system_instruction", "")
+        else:
+            # 极度安全的云端失效本地兜底线
+            base_weights = {"心理契合": 25, "文学质感": 25, "时代立意": 25, "逻辑与创新": 25}
+            model_system_instruction = "你是一位高水平儿童文学评论家。"
+    except Exception as e:
+        print(f"⚠️ 读取云端模型维度失败，启动学术维度兜底: {e}")
+        base_weights = {"心理契合": 25, "文学质感": 25, "时代立意": 25, "逻辑与创新": 25}
+        model_system_instruction = "你是一位高水平儿童文学评论家。"
+
+    # ==========================================
+    # 5. 调用 AI 核心
     # ==========================================
     report = ""
     try:
         if task_type == "guide":
             if role == "pro":
-                snippet_rule = "【权限特供】：在大纲之后，请务必提供大约 800 字的高深文学性高光片段试写。"
+                snippet_rule = "在大纲之后，请务必提供大约 800 字的高深文学性高光片段试写。"
             elif role == "contestant" or has_pro_limit == "true":
-                snippet_rule = "【参赛权益】：在大纲之后，请提供大约 300 字的高光片段试写。"
+                snippet_rule = "在大纲之后，请提供大约 300 字的高光片段试写。"
             else:
-                snippet_rule = "【权限拦截】：本次指导仅提供结构性创作大纲，严禁输出任何具体的试写片段内容。"
+                snippet_rule = "本次指导仅提供结构性创作大纲，严禁输出任何具体的试写片段内容。"
 
             report = await LiteraryLLMService.generate_creative_guide(
                 user_prompt=extracted_text,
                 mentor_desc="资深的儿童文学策展人与创作导师风格",
-                focus_dimensions="原创精神、文学底色、本土特色内核",
+                focus_dimensions="、".join(base_weights.keys()),
                 snippet_rule=snippet_rule,
                 target_model=target_model
             )
 
         elif task_type == "text":
+            # 🚨 完美契合：将动态捞出的高阶中文 4 维度和最新优化的后置思维链 Prompt 送入核心层
             report = await LiteraryLLMService.evaluate_work(
                 raw_text=extracted_text,
-                selected_model="NAL-首席专家锐评模型",
-                base_weights={"fantasy": 25, "reality": 30, "character": 45}, 
-                model_system_instruction="你是一位严谨的儿童文学理论评论家。请指出刻板说教和“人造儿童”现象。",
+                selected_model=selected_model_name,
+                base_weights=base_weights, 
+                model_system_instruction=model_system_instruction,
                 user_note="请重点关注文本的原创性与叙事深度",
                 target_model=target_model
             )
@@ -171,31 +185,22 @@ async def process_evaluation(
         raise HTTPException(status_code=500, detail=f"AI 分析失败: {e}")
 
     # ==========================================
-    # 5. 后置账单处理：扣费与状态持久化
+    # 6. 后置账单处理：扣费与状态持久化
     # ==========================================
+    # [这部分保持原有的严谨瀑布流扣费逻辑不变...]
     try:
         metadata["last_active_date"] = today_str
-        
         if used_pro_daily:
             metadata["pro_daily_used"] = pro_daily_used + 1
-        
         if role != "pro":
             if used_flash:
                 metadata["flash_left"] = max(0, flash_left - 1)
-                print(f"💰 用户 {user.id} 扣费成功：消耗 1 次 Flash")
             elif used_pro:
                 metadata["pro_credits"] = max(0, pro_credits - 1)
-                print(f"💰 用户 {user.id} 扣费成功：消耗 1 次 Pro (Flash已耗尽)")
-                
-        # 写回 Supabase 用户元数据
-        supabase_admin.auth.admin.update_user_by_id(
-            user.id, 
-            attributes={'user_metadata': metadata}
-        )
+        supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
     except Exception as e:
-        print(f"⚠️ 数据库额度更新失败 (非致命错误): {e}")
+        print(f"⚠️ 数据库额度更新失败: {e}")
    
-    # 🚨 高阶体验重构：在返回报告的同时，将最新扣减后的资产余量同步发回给前端，实现即时渲染！
     return {
         "report": report,
         "sync_usage": {
