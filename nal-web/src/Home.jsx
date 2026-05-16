@@ -156,7 +156,7 @@ const styles = {
   navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 50px', backgroundColor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, borderBottom: '1px solid #f3f4f6' },
   
   // 🚨 新增：导航栏 Logo 专属容器与图片控制（完美适配 15px 垂直内边距）
-  navLogoContainer: { display: 'flex', alignItems: 'center', gap：'12px', cursor: 'pointer' },
+  navLogoContainer: { display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' },
   navLogoImg: { height: '38px', width: 'auto', objectFit: 'contain' },
   
   logo: { fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', letterSpacing: '-0.5px' },
