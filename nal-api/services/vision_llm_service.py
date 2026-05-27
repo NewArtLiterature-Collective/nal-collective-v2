@@ -36,48 +36,63 @@ class VisionLLMService:
 
     @classmethod
     def _get_v65_instruction(cls, image_type: str) -> str:
-        """获取 NAL V6.5 创作指导型视觉评审指令"""
+        """
+        🚀 获取 NAL 升级版创作指导型视觉评审指令
+        已植入：反“视觉人造儿童”警示、4:3:3 子维度强制拆解
+        """
+        
+        core_philosophy = """
+        【编辑哲学前提：全龄化与生命本位】
+        优秀的视觉叙事必须同时为儿童与成人创造真实的阅读体验。
+        
+        【🚨 视觉评审极度警示（必须规避的三大陷阱）】
+        1. 警惕「精美陷阱」：视觉极为精美但沦为“画廊展品”。若图画未参与叙事或缺乏文本推进力，必须严厉扣分。
+        2. 警惕「视觉人造儿童」：严查画面中是否有将儿童强行宠物化、弱智化的视觉表达。坚决抵制披着低幼外衣的刻板道德说教。
+        3. 警惕「图文复读机」：画出来的和写出来的一模一样，毫无文本与图像的博弈和互补空间。
+        """
         
         # 维度 1：画面艺术性
         artistry_base = """
-        1. 画面艺术性 (权重 40%)：
-           - 基于【陈晖：视觉呈现】：评估线条生命力、色彩契合度、造型独创性及风格稳定性。若有不足，明确指出破坏“真实心理深度”的视觉硬伤。
-           - 基于【葛承训：文化活化】：识别画面中民族元素的现代转化水平，评价其是否流于传统符号的机械拼贴。
+        1. 视觉艺术性与工业水准 (满分 4.0)：
+           - 评估作品的原创辨识度、色彩/线条/造型的自洽性，是否具有不妥协的艺术尊严？
+           - 警惕“朴素偏见”：风格简单不等于缺乏艺术性，重点在于表达的准确性。
         """
         
         # 维度 2：创意与隐喻
         creativity_advance = """
-        2. 创意与隐喻 (权重 30%)：
-           - 基于【视觉隐喻】：评估画面意象的厚度。重点审视其是否为创作者主观捏造的“人工儿童”式空洞视觉，符号创新是否具备多层解码空间。
+        2. 图像主体意识与全龄隐喻 (满分 3.0)：
+           - 图像是否运用了儿童视平线，赋予儿童真正的“主体意识”，而非被成人凝视的客体？
+           - 画面中是否预埋了超越表层叙事的视觉隐喻，引发全龄读者的深层共鸣？
         """
         
         # 维度 3：叙事引擎 (双轨制分流)
         if image_type == "illustration":
             narrative_advance = """
-        3. 单幅叙事张力 (权重 30%) - 【🎨 插画专属标准】：
-           - 不要用绘本的“翻页连贯性”来苛求单幅插画！
-           - 考核其是否能在单张（或不连贯的）画面内完成完整的情绪叙事、故事浓缩或定格张力。
+        3. 单幅叙事张力 (满分 3.0) - 【🎨 插画专属标准】：
+           - 重点考核其是否能在单张画面内完成情绪爆发，具备“定格动画”般的瞬间表现力和巨大的空间张力。绝不用“翻页连贯性”苛求单幅插画。
             """
-        else: # 默认为 picture-book
+        else: # 默认为 picturebook
             narrative_advance = """
-        3. 叙事与节奏 (权重 30%) - 【📖 绘本专属标准】：
-           - 基于【巴德：总合设计】：评估图文依存关系、图文对撞效率（画面是否提供了文字以外的代偿细节）。
-           - 基于【翻页节奏】：审视全书视觉流向的呼吸感与视觉张力驱动力。
+        3. 图文对位与「第三层故事」 (满分 3.0) - 【📖 绘本专属标准】：
+           - 研判图文关系层次（同步/互补/对位/对抗）。
+           - 图像是否填补了文字的留白？图文合并后，是否产生了超越各自的“第三层故事”？翻页的物理节奏是否被巧妙设计？
             """
 
         cot_steps = """
         【强制执行步骤（防止幻觉与打分波动）】
-        在你给出最终的 v65_visual_score 和结论之前，必须在 v65_synergy_report 中严格按以下步骤书写：
-        - [步骤一 视觉锚定]：客观列出你在画面中看到的 3 个最核心的视觉细节（如颜色、特定符号、人物微表情）。
-        - [步骤二 理论映射与诊断]：将这些细节带入 4:3:3 的三个维度中进行评判，重点指出哪里需要优化。
-        - [步骤三 量化算式]：写出你对三个维度的子评分（如：艺术3.8 + 创意2.5 + 叙事2.6），加总得到最终总分。
+        你必须按照提供的 JSON 格式输出。
+        1. 首先，分别评估三个子维度的得分（score_artistry, score_subject, score_narrative）。
+        2. 然后，将三者严格相加，得出 v65_visual_score。
+        3. 在 v65_synergy_report 中，明确回答该作品是否触发了上述“三大陷阱”。
         """
         
         work_name = "插画作品" if image_type == "illustration" else "绘本作品"
         
-        return f"""你现在是 NAL 顶尖儿童文学视觉评审专家与艺术指导顾问。请严格根据以下 4:3:3 的权重标准评审这组【{work_name}】，重点在于提出具体的打磨改进建议，并必须仅以 JSON 格式输出结果。
+        return f"""你现在是 NAL 顶尖儿童文学视觉评审专家与艺术指导顾问。请严格根据以下标准评审这组【{work_name}】，重点在于提出具体的打磨改进建议，并必须仅以 JSON 格式输出结果。
 
-        【核心评分维度】：
+        {core_philosophy}
+
+        【核心评分维度（4:3:3）】：
         {artistry_base}
         {creativity_advance}
         {narrative_advance}
@@ -87,17 +102,20 @@ class VisionLLMService:
         【强制 JSON 输出格式】
         必须严格输出以下 JSON，不要包含 Markdown 标记：
         {{
-            "v65_visual_score": 浮点数 (1-10分),
-            "v65_critique": "集成陈晖、巴德理论的综合艺术点评，必须针对画面存在的缺陷提出清晰、可执行的修改建议（除非认定为杰作）",
+            "score_artistry": 浮点数 (0.0-4.0),
+            "score_subject": 浮点数 (0.0-3.0),
+            "score_narrative": 浮点数 (0.0-3.0),
+            "v65_visual_score": 浮点数 (1-10分，前三项的严格加总),
+            "v65_critique": "集成理论的综合艺术点评，必须针对画面缺陷提出可执行的修改建议",
             "v65_prediction": "限制三个固定值之一：'提出修改建议'、'认定是视觉杰作'、'需人工复核'",
-            "v65_synergy_report": "包含步骤一、二、三的强制思维链专项诊断分析"
+            "v65_synergy_report": "包含陷阱自查与画面优缺点理论映射的思维链分析"
         }}
         """
 
     @classmethod
     async def evaluate_visual_work(cls, target_model: str, image_type: str, image_urls: list, work_text: str = "") -> str:
         """
-        🖼️ 核心多模态评估入口（已对齐评审与指导业务）
+        🖼️ 核心多模态评估入口
         """
         # 1. 下载并处理图片
         processed_images = []
@@ -112,7 +130,6 @@ class VisionLLMService:
         # 2. 构建 Prompt 和内容列表
         system_instruction = cls._get_v65_instruction(image_type)
         
-        # 将文字和图片组合打包喂给大模型
         contents = [f"【作品补充文本（如有）】: {work_text}"]
         contents.extend(processed_images)
 
@@ -126,19 +143,15 @@ class VisionLLMService:
             res = await model.generate_content_async(
                 contents,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.1, # 极低温度保证数学思维链的严谨
+                    temperature=0.2, # 🚨 核心修复：解冻至 0.2，恢复模型对图像隐喻和情绪张力的感知
                     response_mime_type="application/json"
                 )
             )
             
             if res.candidates and res.candidates[0].content.parts:
-                # 解析返回的 JSON 字符串
                 result_json = json.loads(res.text)
-                if res.candidates and res.candidates[0].content.parts:
-                    # 解析返回的 JSON 字符串
-                    result_json = json.loads(res.text)
                 
-                # 🚨 核心防御：如果大模型因为多图原因调皮地返回了 [ {...} ] 数组格式，自动剥离外壳取第一个字典
+                # 自动解包防御
                 if isinstance(result_json, list):
                     print("⚠️ 接收到 list 格式响应，正在执行自动解包...")
                     if len(result_json) > 0 and isinstance(result_json[0], dict):
@@ -146,11 +159,17 @@ class VisionLLMService:
                     else:
                         raise ValueError("视觉模型返回了非法的空列表或格式错误。")
                 
-                # 为了前端展示兼容，我们将其转换成一段漂亮的 Markdown 报告返回
+                # 🚨 核心修复：将 JSON 中的子维度拆解提取，渲染到优雅的 Markdown 报告中
+                artistry = result_json.get('score_artistry', 'N/A')
+                subject = result_json.get('score_subject', 'N/A')
+                narrative = result_json.get('score_narrative', 'N/A')
+
                 markdown_report = f"""
-### 🎨 NAL 视觉艺术评审与指导报告 (V6.5)
+### 🎨 NAL 视觉艺术评审与指导报告
 
 **📊 综合视觉表现分：{result_json.get('v65_visual_score', 'N/A')} / 10**
+*(单项得分明细：艺术质感 {artistry}/4.0 | 主体意识 {subject}/3.0 | 叙事对位 {narrative}/3.0)*
+
 **🔍 评审指导结论：{result_json.get('v65_prediction', 'N/A')}**
 
 ---
@@ -158,7 +177,7 @@ class VisionLLMService:
 #### 💡 综合评审与修改建议
 {result_json.get('v65_critique', 'N/A')}
 
-#### 🔬 理论映射与专项诊断 (思维链)
+#### 🔬 理论映射与专项诊断 (陷阱自查与思维链)
 {result_json.get('v65_synergy_report', 'N/A')}
 """
                 return markdown_report
