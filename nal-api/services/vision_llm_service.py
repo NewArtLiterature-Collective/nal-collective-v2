@@ -113,27 +113,78 @@ class VisionLLMService:
         """
 
     @classmethod
-    async def evaluate_visual_work(cls, target_model: str, image_type: str, image_urls: list, work_text: str = "") -> str:
+    async def evaluate_visual_work(
+        cls, 
+        target_model: str, 
+        image_type: str, 
+        image_urls: list, 
+        work_text: str = "", 
+        page_texts: list = None,  # 🚨 找回丢失的参数！
+        is_pro: bool = False      # 🚨 找回丢失的参数！
+    ) -> str:
         """
-        🖼️ 核心多模态评估入口
+        🖼️ 核心多模态评估入口（动态上限 + 等距抽样 + 图文强绑定）
         """
-        # 1. 下载并处理图片
-        processed_images = []
-        for url in image_urls[:12]: # 限制最多 12 张防溢出
+        # 1. 动态设定算力上限
+        MAX_IMAGES = 50 if is_pro else 12
+
+        # 2. 智能等距抽样算法 (Uniform Spaced Sampling)
+        total_images = len(image_urls)
+        if total_images > MAX_IMAGES:
+            print(f"⚠️ 图片数量({total_images})超出上限({MAX_IMAGES})，触发等距抽样算法。")
+            step = total_images / MAX_IMAGES
+            # 均匀抽取中间页
+            sampled_indices = [int(i * step) for i in range(MAX_IMAGES)]
+            # 刚性覆盖：确保绘本的“大结局”（最后一页）绝对被包含在内
+            if sampled_indices[-1] != total_images - 1:
+                sampled_indices[-1] = total_images - 1
+        else:
+            sampled_indices = list(range(total_images))
+
+        # 3. 执行下载与图文强绑定 (Index Binding)
+        processed_pairs = []
+        for i in sampled_indices:
+            url = image_urls[i]
             img = cls._fetch_and_process_image(url)
             if img:
-                processed_images.append(img)
-                
-        if not processed_images:
+                # 🚨 核心关系处理：严格对齐文本。如果缺失文本数组，用兜底文本填补，绝不错位！
+                if page_texts is not None:
+                    pt_text = page_texts[i] if i < len(page_texts) and page_texts[i].strip() else "（本页无文字描述/纯无字分镜）"
+                else:
+                    pt_text = ""
+
+                processed_pairs.append({
+                    "original_page": i + 1,  # 记录这幅图在原书中的真实物理页码
+                    "image": img,
+                    "text": pt_text
+                })
+
+        if not processed_pairs:
             raise ValueError("未提取到有效的图片用于视觉评审。")
 
-        # 2. 构建 Prompt 和内容列表
+        # 4. 构建 Prompt 和内容交织列表 (Interleaving)
         system_instruction = cls._get_v65_instruction(image_type)
-        
-        contents = [f"【作品补充文本（如有）】: {work_text}"]
-        contents.extend(processed_images)
+        contents = []
 
-        # 3. 调用模型
+        # 🚨 商业路由：如果是绘本且传入了分页文本（代表触发了高阶文图协作）
+        if page_texts is not None and image_type == "picturebook":
+            contents.append(f"【高阶评审模式：逐页图文对位审查】以下为系统从原书中提取的 {len(processed_pairs)} 个跨页/分镜剧本：\n")
+            
+            # 将图文像三明治一样交织组装
+            for pair in processed_pairs:
+                contents.append(f"--- 📖 原书第 {pair['original_page']} 跨页/分镜 ---")
+                contents.append(f"📄 本页文本/剧本: {pair['text']}")
+                contents.append(pair['image'])
+                
+            contents.append("\n【终审指令】：请严格根据上方逐页映射的图文关系，评估图画是否填补了文字的留白？是否存在高级的反讽、对位或互补关系？警惕图文完全重复的“复读机”现象。")
+            
+        else:
+            # 基础降级模式：全局文本 + 图片瀑布流
+            contents.append(f"【作品全局补充文本】: {work_text}")
+            for pair in processed_pairs:
+                contents.append(pair['image'])
+
+        # 5. 调用模型
         try:
             model = genai.GenerativeModel(
                 model_name=target_model,
@@ -143,7 +194,7 @@ class VisionLLMService:
             res = await model.generate_content_async(
                 contents,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.2, # 🚨 核心修复：解冻至 0.2，恢复模型对图像隐喻和情绪张力的感知
+                    temperature=0.2, # 恢复艺术感知的黄金温度
                     response_mime_type="application/json"
                 )
             )
@@ -159,7 +210,7 @@ class VisionLLMService:
                     else:
                         raise ValueError("视觉模型返回了非法的空列表或格式错误。")
                 
-                # 🚨 核心修复：将 JSON 中的子维度拆解提取，渲染到优雅的 Markdown 报告中
+                # 渲染最终 Markdown 报告
                 artistry = result_json.get('score_artistry', 'N/A')
                 subject = result_json.get('score_subject', 'N/A')
                 narrative = result_json.get('score_narrative', 'N/A')
