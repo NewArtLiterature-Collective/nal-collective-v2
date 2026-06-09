@@ -17,6 +17,14 @@ export default function Dashboard({ session }) {
   // 后续管理员可以在 Supabase 新建一个 site_settings 表，通过一条数据实时控制这个 client 端状态
   const [isContestActive, setIsContestActive] = useState(true);
 
+  //新增：专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
+  const [imageTexts, setImageTexts] = useState([]); 
+
+  // 专家模型与引擎配置状态
+  const [models, setModels] = useState([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [imageType, setImageType] = useState('picturebook'); 
+
   // 参赛作品专属状态
   const [contestText, setContestText] = useState('');
   const [contestImages, setContestImages] = useState([]);
@@ -25,11 +33,6 @@ export default function Dashboard({ session }) {
   // 评审进度相关
   const [userSubmissions, setUserSubmissions] = useState([]); 
   const [isRefreshing, setIsRefreshing] = useState(false); 
-
-  // 专家模型与引擎配置状态
-  const [models, setModels] = useState([]);
-  const [selectedModelId, setSelectedModelId] = useState('');
-  const [imageType, setImageType] = useState('picturebook'); 
 
   // 🚨 核心修复：防止 undefined 穿透
   // 初始化时就为所有可能的细分字段提供默认值 0
@@ -52,12 +55,22 @@ export default function Dashboard({ session }) {
   }
 
   // 2. 赛事门票动态防线：老用户的历史 paid_contest_id 会在赛季更替时自动失效
+  // 注意：这里假设 currentContestId 已经在外部或上下文中定义，为保持原有代码不报错保留
+  const currentContestId = "2026_contest"; // 补充一个默认防崩常量
   const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
                               rawUserMetadata.paid_contest_id === currentContestId;
 
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
+
+  //动态限额：插画 Pro 最多 10 张，绘本 Pro 最多 50 张
+  const maxImageCount = (() => {
+    if (imageType === 'illustration') {
+      return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
+    }
+    return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); // Picturebook
+  })();
 
   // 3. 额度动态洗白
   const displayUsage = {
@@ -72,13 +85,12 @@ export default function Dashboard({ session }) {
 
   // 精确映射 CSV 的四阶梯资源限制
   const currentLimits = (() => {
-     if (isPro) return { count: 50, bytes: 100 * 1024 * 1024, mb: 5, display: '100MB' };
-     if (isContestant || hasAddon) return { count: 5, bytes: 150 * 1024, mb: 1.5, display: '150KB' };
-     return { count: 2, bytes: 50 * 1024, mb: 1, display: '50KB' };
+     if (isPro) return { count: maxImageCount, bytes: 100 * 1024 * 1024, mb: 5, display: '100MB' };
+     if (isContestant || hasAddon) return { count: maxImageCount, bytes: 150 * 1024, mb: 1.5, display: '150KB' };
+     return { count: maxImageCount, bytes: 50 * 1024, mb: 1, display: '50KB' };
   })();
 
   // 这样下面的代码依然可以使用这些变量名，且它们是实时的
-  const maxImageCount = currentLimits.count;
   const maxDocxSize = currentLimits.bytes;
   const maxImageSizeMB = currentLimits.mb;
   const maxDocSizeDisplay = currentLimits.display;
@@ -183,26 +195,33 @@ export default function Dashboard({ session }) {
 
   const removeSelectedImage = (index) => {
     setSelectedImages(prev => prev.filter((_, i) => i !== index));
+    setImageTexts(prev => prev.filter((_, i) => i !== index));
   };
   
+  // 新增：处理特定页面的文字输入
+  const handleImageTextChange = (index, text) => {
+    const newTexts = [...imageTexts];
+    newTexts[index] = text;
+    setImageTexts(newTexts);
+  };
+
   const handleImageChange = useCallback((e) => {
     const files = Array.from(e.target.files);
-    const currentMaxCount = isPro ? 50 : (isContestant || hasAddon ? 5 : 2);
-    const currentMaxSizeMB = isPro ? 5 : (isContestant || hasAddon ? 1.5 : 1);
 
     // 🚨 修正：将新选择的图片追加到现有列表，而不是直接覆盖
     setSelectedImages(prev => {
       const newList = [...prev, ...files];
-      if (newList.length > currentMaxCount) {
-        alert(`数量超限！当前账户最多允许上传 ${currentMaxCount} 张图片。`);
+      if (newList.length > maxImageCount) {
+        alert(`数量超限！当前账户最多允许上传 ${maxImageCount} 张图片。`);
         return prev; // 保持原样
       }
       
-      const oversizedFiles = files.filter(f => f.size > currentMaxSizeMB * 1024 * 1024);
+      const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
       if (oversizedFiles.length > 0) {
-        alert(`文件过大！当前账户单张图片大小限制为 ${currentMaxSizeMB}MB。`);
+        alert(`文件过大！当前账户单张图片大小限制为 ${maxImageSizeMB}MB。`);
         return prev;
       }
+      setImageTexts(prevTexts => [...prevTexts, ...Array(files.length).fill('')]);
       return newList;
     });
   }, [maxImageCount, maxImageSizeMB]);
@@ -228,8 +247,12 @@ export default function Dashboard({ session }) {
   };
 
   const triggerEvaluation = async () => {
+    // 🚨 将文本数组转化为 JSON 字符串传给后端
+    const pageTextsJson = JSON.stringify(imageTexts);
+    
     const success = await evaluate({
-      activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId
+      activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId,
+      page_texts_json: pageTextsJson
     });
     
     setTimeout(refreshUserMetadata, 1500);
@@ -238,6 +261,7 @@ export default function Dashboard({ session }) {
       setWorkText(''); 
       // 🚨 评审成功后，自动清空已加载的文件和图片
       setSelectedImages([]);
+      setImageTexts([]);
       setSelectedDocx(null);
     }
   };
@@ -296,6 +320,38 @@ export default function Dashboard({ session }) {
 
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
+
+  // --- 🚨 图文协作核心业务大闸 ---
+  let isPictureBookValid = true;
+  let requiredTextCount = 0;
+  let filledTextCount = 0;
+  let warningMessage = "";
+
+  if (activeTab === 'picturebook' && selectedImages.length > 0) {
+    const count = selectedImages.length;
+    
+    // 统计用户有效填写的文本数量
+    filledTextCount = imageTexts.filter(t => t && t.trim().length > 0).length;
+
+    if (imageType === 'picturebook') {
+      // 绘本规则：阶梯式覆盖率
+      if (count <= 10) {
+        requiredTextCount = Math.ceil(count * 0.8); // 80%
+      } else if (count <= 30) {
+        requiredTextCount = Math.ceil(count * 0.6); // 60%
+      } else {
+        requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); // 40% 或最低15页
+      }
+
+      if (filledTextCount < requiredTextCount) {
+        isPictureBookValid = false;
+        warningMessage = `🚨 绘本评审强制要求：当前上传 ${count} 跨页，基于出版标准，您至少需要填写 ${requiredTextCount} 页的文字描述（已填 ${filledTextCount} 页）。`;
+      }
+    } else {
+      // 插画规则：无强制文字要求
+      isPictureBookValid = true; 
+    }
+  }
 
   return (
     <div style={styles.dashboard}>
@@ -590,21 +646,48 @@ export default function Dashboard({ session }) {
 
               {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-                    {selectedImages.map((file, index) => (
-                      <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
-                          🖼️ {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
-                        </span>
-                        <button 
-                          onClick={() => removeSelectedImage(index)}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                        >
-                          移除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                  
+                  {/* --- 🚨 核心改动：多模态图文输入区 (卡片化 UI) --- */}
+                  {selectedImages.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px' }}>
+                      {selectedImages.map((file, index) => (
+                        <div key={index} style={{ 
+                          display: 'flex', gap: '15px', padding: '15px', 
+                          backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' 
+                        }}>
+                          {/* 左侧：文件信息与删除 */}
+                          <div style={{ width: '25%', display: 'flex', flexDirection: 'column', gap: '8px', borderRight: '1px dashed #cbd5e1', paddingRight: '15px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>
+                              第 {index + 1} 页 / 分镜
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>
+                              📄 {file.name}
+                            </span>
+                            <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0 }}>
+                              ❌ 移除此页
+                            </button>
+                          </div>
+                          
+                          {/* 右侧：专属文本描述框 */}
+                          <div style={{ width: '75%' }}>
+                            <textarea
+                              placeholder={imageType === 'picturebook' 
+                                ? "✍️ 请输入本跨页对应的绘本正文或脚本描述（若为纯无字画页可留空）..."
+                                : "✍️ 插画创作理念或意境描述（可选填）..."
+                              }
+                              value={imageTexts[index] || ''}
+                              onChange={(e) => handleImageTextChange(index, e.target.value)}
+                              style={{ 
+                                width: '100%', height: '80px', padding: '10px', 
+                                borderRadius: '8px', border: '1px solid #cbd5e1', 
+                                fontSize: '13px', outline: 'none', resize: 'vertical'
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   
                   {selectedImages.length < maxImageCount && (
                     <div style={styles.uploadArea}>
@@ -627,21 +710,33 @@ export default function Dashboard({ session }) {
               )}
               
               <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
-                {activeTab === 'picturebook' ? '补充说明 / 画面描述 (可选)' : '正文内容'}
+                {activeTab === 'picturebook' ? '补充说明 / 画面描述 (全局可选)' : '正文内容'}
               </label>
               <textarea 
                 style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
-                placeholder={activeTab === 'picturebook' ? "可在此添加针对画面的理论阐述或细节描述..." : "在此粘贴需要评审的文本..."} 
+                placeholder={activeTab === 'picturebook' ? "可在此添加针对整体画面的全局理论阐述或细节描述..." : "在此粘贴需要评审的文本..."} 
                 value={workText} 
                 onChange={(e) => setWorkText(e.target.value)} 
               />
               
+              {/* --- 🚨 新增警告提示区 --- */}
+              {activeTab === 'picturebook' && warningMessage && (
+                <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>
+                  {warningMessage}
+                </div>
+              )}
+
+              {/* 🚨 核心改动：禁用按钮的逻辑强化 */}
               <button 
                 onClick={triggerEvaluation} 
-                disabled={loading} 
-                style={{ ...styles.submitBtn, width: '100%', marginTop: '20px' }}
+                disabled={loading || (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0))} 
+                style={{ 
+                  ...styles.submitBtn, width: '100%', marginTop: '20px',
+                  backgroundColor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? '#94a3b8' : '#111827',
+                  cursor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? 'not-allowed' : 'pointer'
+                }}
               >
-                {loading ? "AI 专家计算中..." : (activeTab === 'guide' ? "启动创作指导" : "启动评审分析")}
+                {loading ? "AI 专家计算中..." : (activeTab === 'picturebook' ? "启动视觉与图文协作评审" : (activeTab === 'guide' ? "启动创作指导" : "启动评审分析"))}
               </button>
             </div>
           )}
