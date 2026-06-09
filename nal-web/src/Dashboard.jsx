@@ -246,8 +246,8 @@ export default function Dashboard({ session }) {
   };
 
   const triggerEvaluation = async () => {
-    // 🚨 将文本数组转化为 JSON 字符串传给后端
-    const pageTextsJson = JSON.stringify(imageTexts);
+    // 🚨 根据业务逻辑：只有专业用户才封装逐页描述传给后端，普通用户传 null 以退化为全局描述
+    const pageTextsJson = isPro ? JSON.stringify(imageTexts) : null;
     
     const success = await evaluate({
       activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId,
@@ -320,7 +320,7 @@ export default function Dashboard({ session }) {
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
 
-  // --- 🚨 图文协作核心业务大闸 ---
+  // --- 🚨 图文协作核心业务大闸 (严格贴合双轨制新规) ---
   let isPictureBookValid = true;
   let requiredTextCount = 0;
   let filledTextCount = 0;
@@ -329,26 +329,34 @@ export default function Dashboard({ session }) {
   if (activeTab === 'picturebook' && selectedImages.length > 0) {
     const count = selectedImages.length;
     
-    // 统计用户有效填写的文本数量
-    filledTextCount = imageTexts.filter(t => t && t.trim().length > 0).length;
+    if (isPro) {
+      // 分支 1：专业用户强制卡点
+      filledTextCount = imageTexts.filter(t => t && t.trim().length > 0).length;
 
-    if (imageType === 'picturebook') {
-      // 绘本规则：阶梯式覆盖率
-      if (count <= 10) {
-        requiredTextCount = Math.ceil(count * 0.8); // 80%
-      } else if (count <= 30) {
-        requiredTextCount = Math.ceil(count * 0.6); // 60%
+      if (imageType === 'picturebook') {
+        // 绘本规则：阶梯式覆盖率
+        if (count <= 10) {
+          requiredTextCount = Math.ceil(count * 0.8); // 80%
+        } else if (count <= 30) {
+          requiredTextCount = Math.ceil(count * 0.6); // 60%
+        } else {
+          requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); // 40% 或最低15页
+        }
+
+        if (filledTextCount < requiredTextCount) {
+          isPictureBookValid = false;
+          warningMessage = `🚨 绘本专业评审要求：当前上传 ${count} 跨页，基于出版标准，您至少需要填写 ${requiredTextCount} 页的分镜文本（已填 ${filledTextCount} 页）。`;
+        }
       } else {
-        requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); // 40% 或最低15页
-      }
-
-      if (filledTextCount < requiredTextCount) {
-        isPictureBookValid = false;
-        warningMessage = `🚨 绘本评审强制要求：当前上传 ${count} 跨页，基于出版标准，您至少需要填写 ${requiredTextCount} 页的文字描述（已填 ${filledTextCount} 页）。`;
+        // 插画规则：专业用户强制每个页面输入
+        if (filledTextCount < count) {
+          isPictureBookValid = false;
+          warningMessage = `🚨 插画专业评审要求：专业账户必须为每一幅上传的插画填写专属的内容或审美理念描述（已填 ${filledTextCount} / ${count} 幅）。`;
+        }
       }
     } else {
-      // 插画规则：无强制文字要求
-      isPictureBookValid = true; 
+      // 分支 2：普通用户完全不强制文字，可以无文字评审
+      isPictureBookValid = true;
     }
   }
 
@@ -412,7 +420,6 @@ export default function Dashboard({ session }) {
                     
           {/* 用户账号信息与安全退出区 */}
           <div style={styles.userSection}>
-            {/* 🚨 核心修复：新用户异步会话未就绪时可选链防御，防止 undefined.email 致命崩溃 */}
             <div style={styles.roleLabel}>{session?.user?.email || '加载中...'}</div>
             <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>退出登录</button>
           </div>
@@ -597,7 +604,6 @@ export default function Dashboard({ session }) {
                         <option key={m.id} value={m.id}>{m.name}</option>
                       ))}
                     </select>
-                    {/* 🚨 改动 2：纯粹依赖数据库数据的动态卡片 */}
                     {(() => {
                       const currentModel = models.find(m => m.id === selectedModelId);
                       if (currentModel && currentModel.description) {
@@ -647,45 +653,62 @@ export default function Dashboard({ session }) {
               {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
                   
-                  {/* --- 🚨 核心改动：多模态图文输入区 (卡片化 UI) --- */}
+                  {/* --- 🚨 核心改动：多模态图文输入区 (根据身份动态切换 UI) --- */}
                   {selectedImages.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px' }}>
-                      {selectedImages.map((file, index) => (
-                        <div key={index} style={{ 
-                          display: 'flex', gap: '15px', padding: '15px', 
-                          backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' 
-                        }}>
-                          {/* 左侧：文件信息与删除 */}
-                          <div style={{ width: '25%', display: 'flex', flexDirection: 'column', gap: '8px', borderRight: '1px dashed #cbd5e1', paddingRight: '15px' }}>
-                            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>
-                              第 {index + 1} 页 / 分镜
-                            </span>
-                            <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>
-                              📄 {file.name}
-                            </span>
-                            <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0 }}>
-                              ❌ 移除此页
-                            </button>
-                          </div>
-                          
-                          {/* 右侧：专属文本描述框 */}
-                          <div style={{ width: '75%' }}>
-                            <textarea
-                              placeholder={imageType === 'picturebook' 
-                                ? "✍️ 请输入本跨页对应的绘本正文或脚本描述（若为纯无字画页可留空）..."
-                                : "✍️ 插画创作理念或意境描述（可选填）..."
-                              }
-                              value={imageTexts[index] || ''}
-                              onChange={(e) => handleImageTextChange(index, e.target.value)}
-                              style={{ 
-                                width: '100%', height: '80px', padding: '10px', 
-                                borderRadius: '8px', border: '1px solid #cbd5e1', 
-                                fontSize: '13px', outline: 'none', resize: 'vertical'
-                              }}
-                            />
-                          </div>
-                        </div>
-                      ))}
+                      {selectedImages.map((file, index) => {
+                        if (isPro) {
+                          // 专业用户渲染卡片式输入 UI
+                          return (
+                            <div key={index} style={{ 
+                              display: 'flex', gap: '15px', padding: '15px', 
+                              backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' 
+                            }}>
+                              <div style={{ width: '25%', display: 'flex', flexDirection: 'column', gap: '8px', borderRight: '1px dashed #cbd5e1', paddingRight: '15px' }}>
+                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>
+                                  {imageType === 'picturebook' ? `第 ${index + 1} 页 / 跨页` : `第 ${index + 1} 幅插画`}
+                                </span>
+                                <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>
+                                  📄 {file.name.length > 20 ? `${file.name.substring(0, 15)}...` : file.name}
+                                </span>
+                                <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0, fontWeight: 'bold' }}>
+                                  ❌ 移除此页
+                                </button>
+                              </div>
+                              <div style={{ width: '75%' }}>
+                                <textarea
+                                  placeholder={imageType === 'picturebook' 
+                                    ? "✍️ [绘本硬性要求] 请输入本跨页对应的绘本正文、独白或脚本分镜台词（若刻意设计为无字画面请填“无字留白”）..."
+                                    : "✍️ [插画硬性要求] 请输入本幅插画的创作初衷、审美理念、核心意境或画面背景说明（专业用户必填）..."
+                                  }
+                                  value={imageTexts[index] || ''}
+                                  onChange={(e) => handleImageTextChange(index, e.target.value)}
+                                  style={{ 
+                                    width: '100%', height: '80px', padding: '10px', 
+                                    borderRadius: '8px', border: '1px solid #cbd5e1', 
+                                    fontSize: '13px', outline: 'none', resize: 'vertical'
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        } else {
+                          // 普通用户退化为简单列表 UI
+                          return (
+                            <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
+                              <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                                🖼️ [第 {index + 1} 画面] {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
+                              </span>
+                              <button 
+                                onClick={() => removeSelectedImage(index)}
+                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                              >
+                                移除
+                              </button>
+                            </div>
+                          );
+                        }
+                      })}
                     </div>
                   )}
                   
@@ -709,24 +732,31 @@ export default function Dashboard({ session }) {
                 </div>
               )}
               
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
-                {activeTab === 'picturebook' ? '补充说明 / 画面描述 (全局可选)' : '正文内容'}
-              </label>
-              <textarea 
-                style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
-                placeholder={activeTab === 'picturebook' ? "可在此添加针对整体画面的全局理论阐述或细节描述..." : "在此粘贴需要评审的文本..."} 
-                value={workText} 
-                onChange={(e) => setWorkText(e.target.value)} 
-              />
+              {/* 🚨 核心改动：专业用户采用卡片逐页文本框，因此在此处隐藏全局文本框；普通用户依然沿用此全局文本框作为可选填 */}
+              {!(activeTab === 'picturebook' && isPro) && (
+                <>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
+                    {activeTab === 'picturebook' ? '插画/绘本补充说明 (可选)' : '正文内容'}
+                  </label>
+                  <textarea 
+                    style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
+                    placeholder={activeTab === 'picturebook' 
+                      ? "可在此处一次性输入您的整本绘本文字、分镜情节大纲或整体艺术理论阐述（选填）..." 
+                      : "在此粘贴需要评审的文本..."} 
+                    value={workText} 
+                    onChange={(e) => setWorkText(e.target.value)} 
+                  />
+                </>
+              )}
               
-              {/* --- 🚨 新增警告提示区 --- */}
+              {/* 🚨 新增警告提示区 */}
               {activeTab === 'picturebook' && warningMessage && (
                 <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>
                   {warningMessage}
                 </div>
               )}
 
-              {/* 🚨 核心改动：禁用按钮的逻辑强化 */}
+              {/* 启动按钮的动态锁定与提示 */}
               <button 
                 onClick={triggerEvaluation} 
                 disabled={loading || (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0))} 
