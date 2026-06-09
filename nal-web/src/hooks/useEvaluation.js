@@ -17,7 +17,8 @@ export function useEvaluation(userRole, usage) {
     return urls;
   };
 
-  const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId }) => {
+  // 🚨 核心改动 1：参数对象中增加 page_texts_json 接收
+  const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, page_texts_json }) => {
     const isPro = userRole === 'pro';
     const isContestant = userRole === 'contestant';
     const hasAddon = usage && usage.pro_credits > 0;
@@ -76,6 +77,11 @@ export function useEvaluation(userRole, usage) {
       // 传递参赛选手是否还有余量，用于后端判断字数和模型
       const hasProLimit = usage && usage.pro_credits > 0;
       formData.append('has_pro_limit', hasProLimit ? "true" : "false");
+
+      // 🚨 核心改动 2：将图文协作描述的 JSON 字符串加入表单发往后端网关
+      if (page_texts_json) {
+        formData.append('page_texts_json', page_texts_json);
+      }
 
       if (activeTab === 'picturebook') {
         formData.append('image_urls', JSON.stringify(publicImageUrls));
