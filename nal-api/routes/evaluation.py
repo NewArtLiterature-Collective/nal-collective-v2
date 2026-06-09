@@ -21,6 +21,7 @@ async def process_evaluation(
     work_text: str = Form(""),
     image_type: str = Form(""),
     image_urls: str = Form("[]"),
+    page_texts_json: str = Form("[]"),
     has_pro_limit: str = Form("false"),
     file: UploadFile = File(None)
 ):
