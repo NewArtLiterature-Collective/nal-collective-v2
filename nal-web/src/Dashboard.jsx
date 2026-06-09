@@ -20,11 +20,6 @@ export default function Dashboard({ session }) {
   //新增：专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
   const [imageTexts, setImageTexts] = useState([]); 
 
-  // 专家模型与引擎配置状态
-  const [models, setModels] = useState([]);
-  const [selectedModelId, setSelectedModelId] = useState('');
-  const [imageType, setImageType] = useState('picturebook'); 
-
   // 参赛作品专属状态
   const [contestText, setContestText] = useState('');
   const [contestImages, setContestImages] = useState([]);
@@ -33,6 +28,11 @@ export default function Dashboard({ session }) {
   // 评审进度相关
   const [userSubmissions, setUserSubmissions] = useState([]); 
   const [isRefreshing, setIsRefreshing] = useState(false); 
+
+  // 专家模型与引擎配置状态
+  const [models, setModels] = useState([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [imageType, setImageType] = useState('picturebook'); 
 
   // 🚨 核心修复：防止 undefined 穿透
   // 初始化时就为所有可能的细分字段提供默认值 0
@@ -55,22 +55,13 @@ export default function Dashboard({ session }) {
   }
 
   // 2. 赛事门票动态防线：老用户的历史 paid_contest_id 会在赛季更替时自动失效
-  // 注意：这里假设 currentContestId 已经在外部或上下文中定义，为保持原有代码不报错保留
-  const currentContestId = "2026_contest"; // 补充一个默认防崩常量
+  const currentContestId = "2026_contest"; // 默认防崩长效常量
   const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
                               rawUserMetadata.paid_contest_id === currentContestId;
 
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
-
-  //动态限额：插画 Pro 最多 10 张，绘本 Pro 最多 50 张
-  const maxImageCount = (() => {
-    if (imageType === 'illustration') {
-      return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
-    }
-    return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); // Picturebook
-  })();
 
   // 3. 额度动态洗白
   const displayUsage = {
@@ -82,6 +73,14 @@ export default function Dashboard({ session }) {
   const hasAddon = !isProExpired && (displayUsage.pro_credits > 0);
     
   const isEligibleForContest = isContestant || isPro;
+
+  // 🚨 修复调整：将依赖状态的计算平移到所有依赖项声明完毕的下方，彻底根除变量未初始化引用的死锁
+  const maxImageCount = (() => {
+    if (imageType === 'illustration') {
+      return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
+    }
+    return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); // Picturebook
+  })();
 
   // 精确映射 CSV 的四阶梯资源限制
   const currentLimits = (() => {
@@ -278,7 +277,7 @@ export default function Dashboard({ session }) {
       const imageUrls = [];
       for (const file of contestImages) {
         const fileExt = file.name.split('.').pop();
-        const fileName = `${session.user.id}_${Date.now()}.${fileExt}`;
+        const fileName = `${session?.user?.id}_${Date.now()}.${fileExt}`;
         const { error: uploadError } = await supabase.storage.from('contest_works').upload(fileName, file);
         if (uploadError) throw uploadError;
         const { data } = supabase.storage.from('contest_works').getPublicUrl(fileName);
@@ -286,8 +285,8 @@ export default function Dashboard({ session }) {
       }
 
       const { error: dbError } = await supabase.from('contest_submissions').insert({
-        user_id: session.user.id,
-        user_email: session.user.email,
+        user_id: session?.user?.id,
+        user_email: session?.user?.email,
         text_content: contestText,
         image_urls: imageUrls,
         status: 'pending'
@@ -413,7 +412,8 @@ export default function Dashboard({ session }) {
                     
           {/* 用户账号信息与安全退出区 */}
           <div style={styles.userSection}>
-            <div style={styles.roleLabel}>{session.user.email}</div>
+            {/* 🚨 核心修复：新用户异步会话未就绪时可选链防御，防止 undefined.email 致命崩溃 */}
+            <div style={styles.roleLabel}>{session?.user?.email || '加载中...'}</div>
             <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>退出登录</button>
           </div>
         </div>
@@ -793,7 +793,7 @@ const styles = {
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
   statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, 
 
-  // 🚨 改动 3：追加学术底色卡片样式
+  // 追加学术底色卡片样式
   descCard: {backgroundColor: '#f0fdf4', borderLeft: '5px solid #16a34a', padding: '16px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 2px 8px rgba(22, 163, 74, 0.03)'},
   descTitle: {color: '#15803d', fontSize: '14px', fontWeight: 'bold', display: 'block', marginBottom: '6px'},
   descText: {color: '#1e293b', fontSize: '13px', margin: 0, lineHeight: '1.6'},
