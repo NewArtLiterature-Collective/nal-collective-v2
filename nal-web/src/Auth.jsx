@@ -1,8 +1,23 @@
-// Auth.jsx 修改版
+// Auth.jsx 修改版 (SVG 图标版)
 import React, { useState } from 'react';
 import { supabase } from './supabaseClient';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import logo from './assets/nal_logo.png';
+
+// --- 提取通用的 SVG 图标组件，保持代码整洁 ---
+const EyeOpenIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+    <circle cx="12" cy="12" r="3"></circle>
+  </svg>
+);
+
+const EyeClosedIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+    <line x1="1" y1="1" x2="23" y2="23"></line>
+  </svg>
+);
 
 export default function Auth() {
   const [searchParams] = useSearchParams();
@@ -18,7 +33,7 @@ export default function Auth() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   
-  // 🚨 新增：控制密码和确认密码显示状态的 state
+  // 控制密码显示的 state
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -44,7 +59,6 @@ export default function Auth() {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         
-        // 修改点 1: 成功注册后清空密码，让用户在登录时重新输入
         setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
         setPassword('');
         setConfirmPassword('');
@@ -56,7 +70,6 @@ export default function Auth() {
         setSuccessMsg('📧 重置邮件已发送！请检查您的收件箱。');
       }
     } catch (error) {
-      // 修改点 2: 捕获未注册用户的错误并返回自定义提示
       if (error.message.includes("Invalid login credentials")) {
         setErrorMsg('未注册用户，请先注册');
       } else {
@@ -101,7 +114,7 @@ export default function Auth() {
                   <label style={styles.label}>输入密码</label>
                   {authMode === 'login' && <button type="button" onClick={() => setAuthMode('reset')} style={styles.inlineLink}>忘记密码？</button>}
                 </div>
-                {/* 🚨 修改：将密码输入框包裹在 relative div 中，并增加显示/隐藏按钮 */}
+                
                 <div style={{ position: 'relative', width: '100%' }}>
                   <input 
                     type={showPassword ? "text" : "password"} 
@@ -111,12 +124,14 @@ export default function Auth() {
                     placeholder="至少 6 位字符" 
                     required 
                   />
+                  {/* 🚨 修改：替换为 SVG 图标 */}
                   <button 
                     type="button" 
                     onClick={() => setShowPassword(!showPassword)}
                     style={styles.eyeBtn}
+                    title={showPassword ? "隐藏密码" : "显示密码"}
                   >
-                    {showPassword ? '🙈' : '👁️'}
+                    {showPassword ? <EyeClosedIcon /> : <EyeOpenIcon />}
                   </button>
                 </div>
               </div>
@@ -124,7 +139,6 @@ export default function Auth() {
               {authMode === 'signup' && (
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>确认密码</label>
-                  {/* 🚨 修改：同样为确认密码增加显示/隐藏功能 */}
                   <div style={{ position: 'relative', width: '100%' }}>
                     <input 
                       type={showConfirmPassword ? "text" : "password"} 
@@ -134,12 +148,14 @@ export default function Auth() {
                       placeholder="请再次输入密码" 
                       required 
                     />
+                    {/* 🚨 修改：替换为 SVG 图标 */}
                     <button 
                       type="button" 
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                       style={styles.eyeBtn}
+                      title={showConfirmPassword ? "隐藏密码" : "显示密码"}
                     >
-                      {showConfirmPassword ? '🙈' : '👁️'}
+                      {showConfirmPassword ? <EyeClosedIcon /> : <EyeOpenIcon />}
                     </button>
                   </div>
                 </div>
@@ -158,12 +174,10 @@ export default function Auth() {
         <div style={styles.footer}>
           <button 
             onClick={() => { 
-              // 修改点 3: 切换注册/登录模式时，同步清空密码字段
               setAuthMode(authMode === 'login' ? 'signup' : 'login'); 
               setErrorMsg(''); 
               setPassword('');
               setConfirmPassword('');
-              // 🚨 新增：切换模式时，重置密码显示状态
               setShowPassword(false);
               setShowConfirmPassword(false);
             }} 
@@ -191,13 +205,26 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: '20px' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
   label: { fontSize: '14px', fontWeight: '600', color: '#374151' },
-  input: { padding: '12px 16px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '15px', outline: 'none' },
+  input: { padding: '12px 16px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '15px', outline: 'none', color: '#1f2937' },
   inlineLink: { background: 'none', border: 'none', color: '#4f46e5', fontSize: '12px', cursor: 'pointer' },
   submitBtn: { padding: '14px', backgroundColor: '#111827', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' },
   errorBox: { padding: '12px', backgroundColor: '#fef2f2', color: '#b91c1c', borderRadius: '8px', fontSize: '13px' },
   successBox: { padding: '12px', backgroundColor: '#ecfdf5', color: '#047857', borderRadius: '8px', fontSize: '13px' },
   footer: { marginTop: '25px', textAlign: 'center' },
   switchBtn: { background: 'none', border: 'none', color: '#4f46e5', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  // 🚨 新增：小眼睛按钮的样式
-  eyeBtn: { position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: 0 }
+  // 🚨 样式微调：为了让 SVG 完美居中并具有良好的交互反馈
+  eyeBtn: { 
+    position: 'absolute', 
+    right: '12px', 
+    top: '50%', 
+    transform: 'translateY(-50%)', 
+    background: 'none', 
+    border: 'none', 
+    cursor: 'pointer', 
+    padding: '4px',
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'center',
+    outline: 'none'
+  }
 };
