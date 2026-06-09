@@ -17,6 +17,10 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  
+  // 🚨 新增：控制密码和确认密码显示状态的 state
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // --- 核心逻辑 ---
   const handleAuth = async (e) => {
@@ -97,13 +101,47 @@ export default function Auth() {
                   <label style={styles.label}>输入密码</label>
                   {authMode === 'login' && <button type="button" onClick={() => setAuthMode('reset')} style={styles.inlineLink}>忘记密码？</button>}
                 </div>
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={styles.input} placeholder="至少 6 位字符" required />
+                {/* 🚨 修改：将密码输入框包裹在 relative div 中，并增加显示/隐藏按钮 */}
+                <div style={{ position: 'relative', width: '100%' }}>
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    value={password} 
+                    onChange={(e) => setPassword(e.target.value)} 
+                    style={{ ...styles.input, width: '100%', boxSizing: 'border-box', paddingRight: '40px' }} 
+                    placeholder="至少 6 位字符" 
+                    required 
+                  />
+                  <button 
+                    type="button" 
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={styles.eyeBtn}
+                  >
+                    {showPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
               </div>
 
               {authMode === 'signup' && (
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>确认密码</label>
-                  <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} style={styles.input} placeholder="请再次输入密码" required />
+                  {/* 🚨 修改：同样为确认密码增加显示/隐藏功能 */}
+                  <div style={{ position: 'relative', width: '100%' }}>
+                    <input 
+                      type={showConfirmPassword ? "text" : "password"} 
+                      value={confirmPassword} 
+                      onChange={(e) => setConfirmPassword(e.target.value)} 
+                      style={{ ...styles.input, width: '100%', boxSizing: 'border-box', paddingRight: '40px' }} 
+                      placeholder="请再次输入密码" 
+                      required 
+                    />
+                    <button 
+                      type="button" 
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      style={styles.eyeBtn}
+                    >
+                      {showConfirmPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
                 </div>
               )}
             </>
@@ -125,6 +163,9 @@ export default function Auth() {
               setErrorMsg(''); 
               setPassword('');
               setConfirmPassword('');
+              // 🚨 新增：切换模式时，重置密码显示状态
+              setShowPassword(false);
+              setShowConfirmPassword(false);
             }} 
             style={styles.switchBtn}
           >
@@ -156,5 +197,7 @@ const styles = {
   errorBox: { padding: '12px', backgroundColor: '#fef2f2', color: '#b91c1c', borderRadius: '8px', fontSize: '13px' },
   successBox: { padding: '12px', backgroundColor: '#ecfdf5', color: '#047857', borderRadius: '8px', fontSize: '13px' },
   footer: { marginTop: '25px', textAlign: 'center' },
-  switchBtn: { background: 'none', border: 'none', color: '#4f46e5', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }
+  switchBtn: { background: 'none', border: 'none', color: '#4f46e5', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
+  // 🚨 新增：小眼睛按钮的样式
+  eyeBtn: { position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: 0 }
 };
