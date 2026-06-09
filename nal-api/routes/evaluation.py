@@ -173,12 +173,24 @@ async def process_evaluation(
                 urls_list = json.loads(image_urls)
             except:
                 urls_list = []
+            # 🚨 新增：解析图文协作描述
+            try:
+                page_texts = json.loads(page_texts_json)
+            except:
+                page_texts = None
+
+            # 判断是否享有高级权限（Pro 或 大赛选手）
+            is_premium_user = (role == "pro" or role == "contestant")
+            # 只有高级用户才能触发分页绑定模式，普通用户强行阻断传 None
+            final_page_texts = page_texts if is_premium_user else None
             
             report = await VisionLLMService.evaluate_visual_work(
                 target_model=target_model,
                 image_type=image_type,
                 image_urls=urls_list,
-                work_text=extracted_text
+                work_text=extracted_text,
+                page_texts=final_page_texts, # 🚨 传入对齐的文本数组
+                is_pro=is_premium_user       # 🚨 传入高级身份标识，以适用动态上限和抽样算法
             )
 
     except Exception as e:
