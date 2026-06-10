@@ -73,7 +73,7 @@ async def contest_pipeline(submission_id: str):
         images = work.get("image_urls", [])
 
         # --- Agent A: Gatekeeper (校验) ---
-        if len(text) < 800 or len(images) < 1:
+        if len(text) < 500 or len(images) < 1:
             await update_status(submission_id, "invalid", "未达参赛门槛（800字+1幅插画）")
             return
 
