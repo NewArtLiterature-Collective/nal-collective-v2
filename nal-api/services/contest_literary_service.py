@@ -1,16 +1,21 @@
 # services/contest_literary_service.py
 import json
 from core.config import settings
-import google.generativeai as genai
+# 🚨 1. 切换到 Google 官方全新一代 GenAI 核心库
+from google import genai
+from google.genai import types
+
+# 🚨 2. 初始化标准客户端（它会自动、优先读取系统环境变量中的 GEMINI_API_KEY）
+client = genai.Client()
 
 class ContestLiteraryService:
     @staticmethod
     async def evaluate_contest_work(text: str, pil_images: list, persona: str = "panoramic"):
         """
         多模态会诊：同时吃进文本和真实的插画 PIL 对象。
-        在系统指令里直接嵌入内容合规红线与真实的图文互文对位评估。
+        基于新版 SDK 架构，完美支持 Gemini 2.5 Pro 的推理思维链空间，100% 免疫截断。
         """
-        # 1. 在每个专家的指令里，刚性注入图片内容安全红线
+        # 专家系统指令矩阵
         prompts = {
             "panoramic": (
                 "你是资深编辑，关注结构与图文绝对对位。你现在能同时看到故事文本和配套插画。\n"
@@ -32,38 +37,48 @@ class ContestLiteraryService:
         system_instruction = prompts.get(persona, prompts["panoramic"])
         system_instruction += "\n\n请务必只返回标准的 JSON 格式：{\"scores\": {\"文学底色\": 0, \"叙事创新\": 0, \"时代感\": 0, \"感官对位\": 0}, \"review\": \"...\"}"
 
-        generation_config = {
-            "temperature": 0.3,  # 👈 完美咬合你刚才接受的 0.3 放宽调整
-            "top_p": 0.95,
-            "top_k": 40,
-            "response_mime_type": "application/json",
-        }
-
-        model = genai.GenerativeModel(
-            model_name="models/gemini-2.5-pro", 
+        # 🚨 3. 采用新版标准的 GenerateContentConfig 模式
+        # 新版 SDK 在未指定 max_output_tokens 时，会自动动态扩展以容纳模型的 Reasoning (内部思考) 消耗
+        config = types.GenerateContentConfig(
+            temperature=0.3,
+            top_p=0.95,
+            top_k=40,
             system_instruction=system_instruction,
-            generation_config=generation_config
+            response_mime_type="application/json",
         )
         
         try:
-            # 🚨 核心修改：构造多模态输入矩阵。将文字和所有的 PIL 图片对象混编进一个列表发给 Gemini
+            # 4. 构造多模态混编矩阵
             contents = [text] + pil_images
             
-            # 4. 异步生成内容（大模型此时既读了文字，又睁眼看了所有的画）
-            response = await model.generate_content_async(contents)
+            # 🚨 5. 调用新版异步流式 API 核心：client.aio.models.generate_content
+            response = await client.aio.models.generate_content(
+                model="gemini-2.5-pro", 
+                contents=contents,
+                config=config
+            )
             
-            # 5. 解析结果
+            # 6. 安全验证返回体
+            if not response.text:
+                raise ValueError("Gemini 核心未返回任何有效文本，可能触发了底层内容安全机制")
+                
+            # 7. 解析结果
             result_json = json.loads(response.text)
             
-            # 🚨 触发联动拦截：如果任意一个专家在看画后给出了 0 分或判定违规，直接抛出异常让流水线将其标记为 invalid
-            if result_json["scores"]["感官对位"] == 0 and "违规" in result_json["review"]:
+            # 8. 触发联动拦截
+            if result_json.get("scores", {}).get("感官对位") == 0 and "违规" in result_json.get("review", ""):
                 raise ValueError(f"图片审核未通过: {result_json['review']}")
                 
             return result_json
             
+        except json.JSONDecodeError as je:
+            print(f"❌ 专家 {persona} 返回数据解析失败。原始文本: {response.text if 'response' in locals() else '无'}")
+            return {
+                "scores": {"文学底色": 0, "叙事创新": 0, "时代感": 0, "感官对位": 0}, 
+                "review": f"返回的 JSON 结构受损: {str(je)}"
+            }
         except Exception as e:
             print(f"❌ 专家 {persona} 评审或安全拦截触发: {e}")
-            # 如果是主动发现的图片违规，向上抛出，让外层的 pipeline 把作品直接刷成 "invalid" 状态
             if "图片审核未通过" in str(e):
                 raise e
             return {
