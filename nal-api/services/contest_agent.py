@@ -72,6 +72,13 @@ async def contest_pipeline(submission_id: str):
         text = work.get("text_content", "")
         images = work.get("image_urls", [])
 
+        # 🚨 核心排错法宝：把 Python 看到的数据直接打印在屏幕上！
+        print(f"🛠️ [DEBUG] 正在校验作品 {submission_id} ...")
+        print(f"🛠️ [DEBUG] 实际读取到的字数: {len(text)}")
+        print(f"🛠️ [DEBUG] 实际读取到的图片数: {len(images)}")
+        print(f"🛠️ [DEBUG] 文本前 20 个字: {text[:20]}...")
+        print(f"🛠️ [DEBUG] 图片数组长这样: {images}")
+        
         # --- Agent A: Gatekeeper (校验) ---
         if len(text) < 500 or len(images) < 1:
             await update_status(submission_id, "invalid", "未达参赛门槛（需至少500字 + 1幅插画）")
