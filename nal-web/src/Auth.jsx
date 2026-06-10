@@ -62,6 +62,10 @@ export default function Auth() {
         setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
         setPassword('');
         setConfirmPassword('');
+        // 🚨 核心改动：注册成功后，关闭密码显示，并强制将界面切换回登录模式
+        setShowPassword(false);
+        setShowConfirmPassword(false);
+        setAuthMode('login'); 
       } else if (authMode === 'reset') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${window.location.origin}/login`,
@@ -124,7 +128,6 @@ export default function Auth() {
                     placeholder="至少 6 位字符" 
                     required 
                   />
-                  {/* 🚨 修改：替换为 SVG 图标 */}
                   <button 
                     type="button" 
                     onClick={() => setShowPassword(!showPassword)}
@@ -148,7 +151,6 @@ export default function Auth() {
                       placeholder="请再次输入密码" 
                       required 
                     />
-                    {/* 🚨 修改：替换为 SVG 图标 */}
                     <button 
                       type="button" 
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -212,7 +214,6 @@ const styles = {
   successBox: { padding: '12px', backgroundColor: '#ecfdf5', color: '#047857', borderRadius: '8px', fontSize: '13px' },
   footer: { marginTop: '25px', textAlign: 'center' },
   switchBtn: { background: 'none', border: 'none', color: '#4f46e5', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  // 🚨 样式微调：为了让 SVG 完美居中并具有良好的交互反馈
   eyeBtn: { 
     position: 'absolute', 
     right: '12px', 
