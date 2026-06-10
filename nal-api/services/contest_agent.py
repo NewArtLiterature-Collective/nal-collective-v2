@@ -74,7 +74,7 @@ async def contest_pipeline(submission_id: str):
 
         # --- Agent A: Gatekeeper (校验) ---
         if len(text) < 500 or len(images) < 1:
-            await update_status(submission_id, "invalid", "未达参赛门槛（800字+1幅插画）")
+            await update_status(submission_id, "invalid", "未达参赛门槛（需至少500字 + 1幅插画）")
             return
 
         # 🚨 核心新增：统一全异步下载图片资产（只下载一次！）
