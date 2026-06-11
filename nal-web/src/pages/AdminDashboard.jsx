@@ -1,6 +1,6 @@
 // src/pages/AdminDashboard.jsx
 import React from 'react';
-import { supabase } from '../utils/supabaseClient';
+import { supabase } from '../supabaseClient';
 
 export default function AdminDashboard() {
   
