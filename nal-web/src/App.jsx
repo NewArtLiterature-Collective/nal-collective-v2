@@ -10,7 +10,7 @@ import Gallery from './Gallery'
 // 🚨 导入后台专用的组件
 // 注意：如果你将这两个文件放在了 components 或 pages 文件夹下，请对应修改这里的路径（例如 './components/AdminGuard'）
 import AdminGuard from './components/AdminGuard' 
-import AdminDashboard from './pages/AdminDashboard'
+import AdminDashboard from './AdminDashboard'
 
 // 🚨 参赛者路由守卫：确保未登录用户无法进入 Dashboard
 function ProtectedRoute({ session, children }) {
