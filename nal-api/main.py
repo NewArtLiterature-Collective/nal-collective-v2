@@ -3,6 +3,7 @@ import stripe
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import settings
+from routers import admin
 
 # 导入你的路由模块
 from routes.evaluation import router as evaluation_router
