@@ -20,6 +20,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin.router)
+
 # --- 2. 初始化 Stripe ---
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
