@@ -11,3 +11,5 @@ python-docx
 stripe
 python-multipart
 Pillow>=10.0.0
+numpy
+pandas
