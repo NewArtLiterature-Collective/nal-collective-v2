@@ -21,27 +21,37 @@ export default function AdminDashboard() {
   // 3. 初始化：拉取待评审统计、展厅作品列表及当前时间设置
   useEffect(() => {
     fetchDashboardData();
+    // 🌟 开启 Supabase Realtime 监听大阵
     const subscription = supabase
-      .channel('contest-dashboard-radar') // 频道名字可以随便起
+      .channel('contest-dashboard-radar')
       .on(
         'postgres_changes', 
         { 
-          event: '*', // 监听一切动作 (INSERT新增, UPDATE修改, DELETE删除)
+          event: 'UPDATE', // 只监听数据的更新操作
           schema: 'public', 
           table: 'contest_submissions' 
         }, 
         (payload) => {
-          // 当频道里传来广播时，触发这里的回调函数
-          const time = new Date().toLocaleTimeString();
-          console.log(`[${time}] 📡 接收到数据库实时广播:`, payload);
+          const targetId = payload.new.id.substring(0, 8);
           
-          // 可以在控制台打印一下，营造赛博朋克感
-          if (payload.eventType === 'UPDATE' && payload.new.status === 'success') {
-             addLog(`🔔 [实时战报] 作品 ${payload.new.id.substring(0,8)} 已评审完毕！入库成功。`);
+          // 🎯 状态 1：当 AI 引擎开始“夺锁”处理时
+          if (payload.old.status === 'pending' && payload.new.status === 'processing') {
+             addLog(`⏳ [AI 引擎] 已锁定作品 ${targetId}，正在进行多模态解析...`);
+             // 只要状态变成 processing，待审数量就应该立刻减 1
+             fetchDashboardData(); 
+          }
+          
+          // 🎯 状态 2：当 AI 引擎处理完毕并打分时
+          if (payload.new.status === 'success' && payload.old.status !== 'success') {
+             addLog(`✅ [实时战报] 作品 ${targetId} 评审完毕！入库成功。`);
+             fetchDashboardData();
           }
 
-          // 最稳妥的做法：一旦听到风吹草动，立刻重新拉取全局数据，刷新界面
-          fetchDashboardData();
+          // 🎯 状态 3：当作品因为没图或字数不够被踢回时
+          if (payload.new.status === 'invalid') {
+             addLog(`❌ [拦截] 作品 ${targetId} 未达参赛门槛，已自动拦截。`);
+             fetchDashboardData();
+          }
         }
       )
       .subscribe();
