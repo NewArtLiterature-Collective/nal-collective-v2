@@ -44,7 +44,7 @@ export default function AdminDashboard() {
           // 🎯 状态 2：当 AI 引擎处理完毕并打分时
           if (payload.new.status === 'success' && payload.old.status !== 'success') {
              addLog(`✅ [实时战报] 作品 ${targetId} 评审完毕！入库成功。`);
-             fetchDashboardData();
+             setTimeout(fetchDashboardData, 500); // 👈 延迟 0.5 秒拉取，保证数据绝对准确
           }
 
           // 🎯 状态 3：当作品因为没图或字数不够被踢回时
@@ -63,11 +63,11 @@ export default function AdminDashboard() {
   }, []);
  const fetchDashboardData = async () => {
     try {
-      // 1. 侦测 pending 作品
+      // 1. 侦测 pending 作品 (🚨 已经解除了注释！)
       const { count: pendingCount, error: pendingError } = await supabase
         .from('contest_submissions')
         .select('*', { count: 'exact', head: true })
-        // .eq('status', 'pending');
+        .eq('status', 'pending');
       
       if (pendingError) {
         console.error("🚨 抓取待审数据被拦截:", pendingError.message);
@@ -106,6 +106,7 @@ export default function AdminDashboard() {
       console.error('初始化管理台数据遇到致命级错误:', err);
     }
   };
+  
   // 4. 核心调度：保存时空大闸时间
   const handleSaveTime = async () => {
     try {
