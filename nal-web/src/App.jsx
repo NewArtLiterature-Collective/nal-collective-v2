@@ -5,9 +5,14 @@ import { supabase } from './supabaseClient'
 import Home from './Home'
 import Auth from './Auth'
 import Dashboard from './Dashboard'
-import Gallery from './Gallery' // ✅ 1. 导入展厅组件
+import Gallery from './Gallery'
 
-// 🚨 路由守卫：确保未登录用户无法进入 Dashboard
+// 🚨 导入后台专用的组件
+// 注意：如果你将这两个文件放在了 components 或 pages 文件夹下，请对应修改这里的路径（例如 './components/AdminGuard'）
+import AdminGuard from './AdminGuard' 
+import AdminDashboard from './AdminDashboard'
+
+// 🚨 参赛者路由守卫：确保未登录用户无法进入 Dashboard
 function ProtectedRoute({ session, children }) {
   const location = useLocation();
   if (!session) {
@@ -16,7 +21,7 @@ function ProtectedRoute({ session, children }) {
   return children;
 }
 
-// 🚨 登录页逻辑包装
+// 🚨 参赛者登录页逻辑包装
 function LoginWrapper({ session }) {
   const location = useLocation();
   if (session) {
@@ -54,16 +59,16 @@ function App() {
         {/* 1. 公共主页 */}
         <Route path="/" element={<Home />} />
         
-        {/* ✅ 2. 公共展厅（传递 session 用于判断导航状态） */}
+        {/* 2. 公共展厅（传递 session 用于判断前台导航栏的登录状态） */}
         <Route path="/gallery" element={<Gallery session={session} />} />
         
-        {/* 3. 认证页 */}
+        {/* 3. 前台认证页 (参赛者专属) */}
         <Route 
           path="/login" 
           element={<LoginWrapper session={session} />} 
         />
         
-        {/* 4. 受保护的工作台 */}
+        {/* 4. 受保护的选手工作台 */}
         <Route 
           path="/dashboard" 
           element={
@@ -72,8 +77,19 @@ function App() {
             </ProtectedRoute>
           } 
         />
+
+        {/* 🚨 5. NAL 中央管理台 (完全独立的管理员路由与守卫) */}
+        {/* 这里不需要传入普通的 session，AdminGuard 内部会自行接管高权限身份的校验 */}
+        <Route 
+          path="/admin" 
+          element={
+            <AdminGuard>
+              <AdminDashboard />
+            </AdminGuard>
+          } 
+        />
         
-        {/* 兜底 */}
+        {/* 兜底：访问不存在的路径一律退回首页 */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
