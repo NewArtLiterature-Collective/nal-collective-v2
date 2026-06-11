@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../utils/supabaseClient'; // 替换为你自己的 supabase 初始化路径
+import { supabase } from '../supabaseClient'; // 替换为你自己的 supabase 初始化路径
 
 export default function AdminGuard({ children }) {
   const [session, setSession] = useState(null);
