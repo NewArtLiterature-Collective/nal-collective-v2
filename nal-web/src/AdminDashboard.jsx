@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; // 确保路径与你的项目一致
 
 export default function AdminDashboard() {
+  const API_BASE = 'https://v2.nal-ai.org/admin';
+  
   // 1. 状态矩阵
   const [galleryTime, setGalleryTime] = useState({ start: '', end: '' });
   const [pendingCount, setPendingCount] = useState(0);
@@ -60,7 +62,7 @@ export default function AdminDashboard() {
     try {
       addLog("⏳ 正在同步时空大闸至云端...");
       // 调用我们在路由器里写好的 FastAPI 后端接口（假设基准地址为 /api）
-      const res = await fetch('/api/admin/settings/gallery-time', {
+      const res = await fetch('${API_BASE}/admin/settings/gallery-time', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ start_time: galleryTime.start, end_time: galleryTime.end })
@@ -80,7 +82,7 @@ export default function AdminDashboard() {
     setIsReviewing(true);
     addLog("⚡ 正在向 FastAPI 中控台发送唤醒神令...");
     try {
-      const res = await fetch('/api/admin/engine/start-review', { method: 'POST' });
+      const res = await fetch('${API_BASE}/admin/engine/start-review', { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success') {
         addLog("🤖 [SUCCESS] 后台 AI 评审 Agent 已成功占领内存，正在监听轮询兜底器...");
@@ -99,7 +101,7 @@ export default function AdminDashboard() {
     setIsCurating(true);
     addLog("📊 正在下达离线全局总决算指令...");
     try {
-      const res = await fetch('/api/admin/engine/run-curation', { method: 'POST' });
+      const res = await fetch('${API_BASE}/admin/engine/run-curation', { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success') {
         addLog("🏆 [SUCCESS] curator_script.py 执行完毕！Top 5% 门槛分数已自动划定，金标写入完成。");
