@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; // 确保路径与你的项目一致
 
 export default function AdminDashboard() {
-  const API_BASE = 'https://v2.nal-ai.org/admin';
+  const API_BASE = 'https://nal-api-backend.onrender.com';
   
   // 1. 状态矩阵
   const [galleryTime, setGalleryTime] = useState({ start: '', end: '' });
