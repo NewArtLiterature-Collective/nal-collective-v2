@@ -21,8 +21,36 @@ export default function AdminDashboard() {
   // 3. 初始化：拉取待评审统计、展厅作品列表及当前时间设置
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+    const subscription = supabase
+      .channel('contest-dashboard-radar') // 频道名字可以随便起
+      .on(
+        'postgres_changes', 
+        { 
+          event: '*', // 监听一切动作 (INSERT新增, UPDATE修改, DELETE删除)
+          schema: 'public', 
+          table: 'contest_submissions' 
+        }, 
+        (payload) => {
+          // 当频道里传来广播时，触发这里的回调函数
+          const time = new Date().toLocaleTimeString();
+          console.log(`[${time}] 📡 接收到数据库实时广播:`, payload);
+          
+          // 可以在控制台打印一下，营造赛博朋克感
+          if (payload.eventType === 'UPDATE' && payload.new.status === 'success') {
+             addLog(`🔔 [实时战报] 作品 ${payload.new.id.substring(0,8)} 已评审完毕！入库成功。`);
+          }
 
+          // 最稳妥的做法：一旦听到风吹草动，立刻重新拉取全局数据，刷新界面
+          fetchDashboardData();
+        }
+      )
+      .subscribe();
+
+    // 🧹 安全收尾：如果管理员离开或关闭了这个页面，立刻切断监听，防止内存泄漏
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, []);
  const fetchDashboardData = async () => {
     try {
       // 1. 侦测 pending 作品
