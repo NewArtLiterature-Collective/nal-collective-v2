@@ -29,7 +29,7 @@ export default function AdminDashboard() {
       const { count: pendingCount, error: pendingError } = await supabase
         .from('contest_submissions')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending');
+        // .eq('status', 'pending');
       
       if (pendingError) {
         console.error("🚨 抓取待审数据被拦截:", pendingError.message);
