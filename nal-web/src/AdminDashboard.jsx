@@ -23,28 +23,40 @@ export default function AdminDashboard() {
     fetchDashboardData();
   }, []);
 
-  const fetchDashboardData = async () => {
+ const fetchDashboardData = async () => {
     try {
-      // 拉取待评审作品数量
-      const { count } = await supabase
+      // 1. 侦测 pending 作品
+      const { count: pendingCount, error: pendingError } = await supabase
         .from('contest_submissions')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
-      setPendingCount(count || 0);
+      
+      if (pendingError) {
+        console.error("🚨 抓取待审数据被拦截:", pendingError.message);
+      }
+      setPendingCount(pendingCount || 0);
 
-      // 拉取所有已评审成功的作品，供策展人拣选
-      const { data: submissions } = await supabase
+      // 2. 侦测 success 作品
+      const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
         .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank')
         .eq('status', 'success')
         .order('ai_total_score', { ascending: false });
+
+      if (successError) {
+        console.error("🚨 抓取展厅数据被拦截:", successError.message);
+      }
       setWorks(submissions || []);
 
-      // 拉取当前的时间大闸设置
-      const { data: settings } = await supabase
+      // 3. 侦测系统时间设置
+      const { data: settings, error: settingsError } = await supabase
         .from('site_settings')
         .select('gallery_start_time, gallery_end_time')
         .maybeSingle();
+      
+      if (settingsError) {
+        console.error("🚨 抓取大闸时间失败:", settingsError.message);
+      }
       
       if (settings) {
         setGalleryTime({
@@ -53,10 +65,9 @@ export default function AdminDashboard() {
         });
       }
     } catch (err) {
-      console.error('初始化管理台数据失败:', err);
+      console.error('初始化管理台数据遇到致命级错误:', err);
     }
   };
-
   // 4. 核心调度：保存时空大闸时间
   const handleSaveTime = async () => {
     try {
