@@ -72,20 +72,30 @@ async def contest_pipeline(submission_id: str):
         text = work.get("text_content", "")
         images = work.get("image_urls", [])
 
+        images = work.get("image_urls", [])
+        if images is None: images = [] # 兜底：防止数据库里存的是 null
+
         # 🚨 核心排错法宝：把 Python 看到的数据直接打印在屏幕上！
         print(f"🛠️ [DEBUG] 正在校验作品 {submission_id} ...")
         print(f"🛠️ [DEBUG] 实际读取到的字数: {len(text)}")
         print(f"🛠️ [DEBUG] 实际读取到的图片数: {len(images)}")
         print(f"🛠️ [DEBUG] 文本前 20 个字: {text[:20]}...")
         print(f"🛠️ [DEBUG] 图片数组长这样: {images}")
-        
+
         # --- Agent A: Gatekeeper (校验) ---
         if len(text) < 500 or len(images) < 1:
-            await update_status(submission_id, "invalid", "未达参赛门槛（需至少500字 + 1幅插画）")
+            # 顺便把具体的死因写回数据库，方便你在前端直接看到
+            error_detail = f"未达参赛门槛（系统检测到字数: {len(text)}, 图片数: {len(images)}）"
+            await update_status(submission_id, "invalid", error_detail)
             return
 
+        # --- Agent A: Gatekeeper (校验) ---
+        #if len(text) < 500 or len(images) < 1:
+        #    await update_status(submission_id, "invalid", "未达参赛门槛（需至少500字 + 1幅插画）")
+        #    return
+
         # 🚨 核心新增：统一全异步下载图片资产（只下载一次！）
-        download_tasks = [download_image(url) for url in image_urls]
+        download_tasks = [download_image(url) for url in images]
         pil_images = await asyncio.gather(*download_tasks)
         # 过滤掉下载失败的坏图
         valid_images = [img for img in pil_images if img is not None]
@@ -100,9 +110,9 @@ async def contest_pipeline(submission_id: str):
         
         # 并发执行三方评审
         tasks = [
-            ContestLiteraryService.evaluate_contest_work(text, "panoramic"),
-            ContestLiteraryService.evaluate_contest_work(text, "nal_chief"),
-            ContestLiteraryService.evaluate_contest_work(text, "li_lifang")
+            ContestLiteraryService.evaluate_contest_work(text, valid_images, "panoramic"),
+            ContestLiteraryService.evaluate_contest_work(text, valid_images, "nal_chief"),
+            ContestLiteraryService.evaluate_contest_work(text, valid_images, "li_lifang")
         ]
         results = await asyncio.gather(*tasks)
         
