@@ -13,11 +13,13 @@ export default function Dashboard({ session }) {
   const [workText, setWorkText] = useState('');
   const [selectedImages, setSelectedImages] = useState([]);
   const [selectedDocx, setSelectedDocx] = useState(null); 
-  // 🚨 核心新增：全局赛事开关。true 为有赛事，false 为无赛事
-  // 后续管理员可以在 Supabase 新建一个 site_settings 表，通过一条数据实时控制这个 client 端状态
-  const [isContestActive, setIsContestActive] = useState(true);
+  
+  // 🚨 核心新增：全局赛事开关及文案状态
+  const [isContestActive, setIsContestActive] = useState(false);
+  const [contestName, setContestName] = useState('');
+  const [contestDescription, setContestDescription] = useState('');
 
-  //新增：专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
+  //专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
   const [imageTexts, setImageTexts] = useState([]); 
 
   // 参赛作品专属状态
@@ -34,8 +36,7 @@ export default function Dashboard({ session }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [imageType, setImageType] = useState('picturebook'); 
 
-  // 🚨 核心修复：防止 undefined 穿透
-  // 初始化时就为所有可能的细分字段提供默认值 0
+  // 防止 undefined 穿透
   const initialMeta = session?.user?.user_metadata || {};
   const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
   
@@ -54,8 +55,8 @@ export default function Dashboard({ session }) {
     }
   }
 
-  // 2. 赛事门票动态防线：老用户的历史 paid_contest_id 会在赛季更替时自动失效
-  const currentContestId = "2026_contest"; // 默认防崩长效常量
+  // 2. 赛事门票动态防线
+  const currentContestId = "2026_contest"; 
   const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
                               rawUserMetadata.paid_contest_id === currentContestId;
 
@@ -69,34 +70,29 @@ export default function Dashboard({ session }) {
     pro_credits: (isProExpired && usage.pro_credits >= 9999) ? 0 : Math.max(0, Number(usage.pro_credits || 0))
   };
 
-  // 4. 特权卡槽熔断：有高级额度才给高级卡槽，额度为 0 立刻退回基础免费卡槽，没有中间灰色地带
+  // 4. 特权卡槽熔断
   const hasAddon = !isProExpired && (displayUsage.pro_credits > 0);
     
   const isEligibleForContest = isContestant || isPro;
 
-  // 🚨 修复调整：将依赖状态的计算平移到所有依赖项声明完毕的下方，彻底根除变量未初始化引用的死锁
   const maxImageCount = (() => {
     if (imageType === 'illustration') {
       return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
     }
-    return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); // Picturebook
+    return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); 
   })();
 
-  // 精确映射 CSV 的四阶梯资源限制
   const currentLimits = (() => {
      if (isPro) return { count: maxImageCount, bytes: 100 * 1024 * 1024, mb: 5, display: '100MB' };
      if (isContestant || hasAddon) return { count: maxImageCount, bytes: 150 * 1024, mb: 1.5, display: '150KB' };
      return { count: maxImageCount, bytes: 50 * 1024, mb: 1, display: '50KB' };
   })();
 
-  // 这样下面的代码依然可以使用这些变量名，且它们是实时的
   const maxDocxSize = currentLimits.bytes;
   const maxImageSizeMB = currentLimits.mb;
   const maxDocSizeDisplay = currentLimits.display;
 
   const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
-  
-  // 🚨 还原初代调用方式：将带有完整默认值的 usage 传给 useEvaluation，防止其内部读取 undefined
   const { loading, report, evaluate } = useEvaluation(userRole, usage); 
 
   // --- 2. 初始化与监听逻辑 ---
@@ -120,36 +116,38 @@ export default function Dashboard({ session }) {
     
     if (user) {
       let meta = user.user_metadata || {};
-      
-      // 新用户自愈机制
       if (meta.flash_left === undefined) {
         const { data, error } = await supabase.auth.updateUser({
-          data: { flash_left: 5 } // 仅初始化基础 flash 额度，不触碰 pro
+          data: { flash_left: 5 } 
         });
-        
         if (!error && data?.user) {
           meta = data.user.user_metadata;
         }
       }
-
       setRawUserMetadata(meta);
-      // 🚨 无论数据库有没有该字段，严格填充所有细分 pro 字段为 0
-     setUsage({
-      flash: meta.flash_left !== undefined ? meta.flash_left : 5,
-      pro_credits: meta.pro_credits || 0
-    });
+      setUsage({
+        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
+        pro_credits: meta.pro_credits || 0
+      });
     }
   };
 
+  // 🚨 核心改动：同步拉取赛事的名称与描述
   const fetchSiteSettings = async () => {
     try {
       const { data, error } = await supabase
         .from('site_settings')
-        .select('is_contest_active')
-        .single(); // 利用单例约束，直接取单行数据
+        .select('is_contest_active, contest_name, contest_description')
+        .single(); 
         
       if (!error && data) {
         setIsContestActive(data.is_contest_active);
+        setContestName(data.contest_name || 'NAL 官方征文大赛');
+        setContestDescription(data.contest_description || '具体章程与评审机制正在获取中...');
+        // 自动将默认页切换到赛事动态（如果是第一次访问且赛事激活）
+        if (data.is_contest_active && activeTab === 'text') {
+           setActiveTab('dynamics');
+        }
       }
     } catch (err) {
       console.error("⚠️ 读取全局配置失败:", err);
@@ -197,7 +195,6 @@ export default function Dashboard({ session }) {
     setImageTexts(prev => prev.filter((_, i) => i !== index));
   };
   
-  // 新增：处理特定页面的文字输入
   const handleImageTextChange = (index, text) => {
     const newTexts = [...imageTexts];
     newTexts[index] = text;
@@ -206,15 +203,12 @@ export default function Dashboard({ session }) {
 
   const handleImageChange = useCallback((e) => {
     const files = Array.from(e.target.files);
-
-    // 🚨 修正：将新选择的图片追加到现有列表，而不是直接覆盖
     setSelectedImages(prev => {
       const newList = [...prev, ...files];
       if (newList.length > maxImageCount) {
         alert(`数量超限！当前账户最多允许上传 ${maxImageCount} 张图片。`);
-        return prev; // 保持原样
+        return prev; 
       }
-      
       const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
       if (oversizedFiles.length > 0) {
         alert(`文件过大！当前账户单张图片大小限制为 ${maxImageSizeMB}MB。`);
@@ -228,13 +222,12 @@ export default function Dashboard({ session }) {
   const handleDocxChange = useCallback((e) => {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
-      
       if (file.size > maxDocxSize) {
         return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
       }
       setSelectedDocx(file);
     }
-  }, [maxDocxSize, maxDocSizeDisplay]); // 👈 关键：限额更新时刷新此函数
+  }, [maxDocxSize, maxDocSizeDisplay]); 
   
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
@@ -246,19 +239,15 @@ export default function Dashboard({ session }) {
   };
 
   const triggerEvaluation = async () => {
-    // 🚨 根据业务逻辑：只有专业用户才封装逐页描述传给后端，普通用户传 null 以退化为全局描述
     const pageTextsJson = isPro ? JSON.stringify(imageTexts) : null;
-    
     const success = await evaluate({
       activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId,
       page_texts_json: pageTextsJson
     });
-    
     setTimeout(refreshUserMetadata, 1500);
 
     if (success) {
       setWorkText(''); 
-      // 🚨 评审成功后，自动清空已加载的文件和图片
       setSelectedImages([]);
       setImageTexts([]);
       setSelectedDocx(null);
@@ -320,7 +309,6 @@ export default function Dashboard({ session }) {
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
 
-  // --- 🚨 图文协作核心业务大闸 (严格贴合双轨制新规) ---
   let isPictureBookValid = true;
   let requiredTextCount = 0;
   let filledTextCount = 0;
@@ -328,34 +316,24 @@ export default function Dashboard({ session }) {
 
   if (activeTab === 'picturebook' && selectedImages.length > 0) {
     const count = selectedImages.length;
-    
     if (isPro) {
-      // 分支 1：专业用户强制卡点
       filledTextCount = imageTexts.filter(t => t && t.trim().length > 0).length;
-
       if (imageType === 'picturebook') {
-        // 绘本规则：阶梯式覆盖率
-        if (count <= 10) {
-          requiredTextCount = Math.ceil(count * 0.8); // 80%
-        } else if (count <= 30) {
-          requiredTextCount = Math.ceil(count * 0.6); // 60%
-        } else {
-          requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); // 40% 或最低15页
-        }
+        if (count <= 10) requiredTextCount = Math.ceil(count * 0.8); 
+        else if (count <= 30) requiredTextCount = Math.ceil(count * 0.6); 
+        else requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); 
 
         if (filledTextCount < requiredTextCount) {
           isPictureBookValid = false;
           warningMessage = `🚨 绘本专业评审要求：当前上传 ${count} 跨页，基于出版标准，您至少需要填写 ${requiredTextCount} 页的分镜文本（已填 ${filledTextCount} 页）。`;
         }
       } else {
-        // 插画规则：专业用户强制每个页面输入
         if (filledTextCount < count) {
           isPictureBookValid = false;
           warningMessage = `🚨 插画专业评审要求：专业账户必须为每一幅上传的插画填写专属的内容或审美理念描述（已填 ${filledTextCount} / ${count} 幅）。`;
         }
       }
     } else {
-      // 分支 2：普通用户完全不强制文字，可以无文字评审
       isPictureBookValid = true;
     }
   }
@@ -375,28 +353,36 @@ export default function Dashboard({ session }) {
       <aside style={styles.sidebar}>
         <div>
           <div style={styles.sidebarHeader} onClick={() => window.location.reload()}>
-            {/* 确保你顶部 import logo from './assets/nal_logo.png' 引入的名字叫 logo */}
             <img src={logo} alt="NAL Logo" style={styles.sidebarLogoImg} />
             <h2 style={styles.logo}>NAL Collective</h2>
           </div>
           <nav style={styles.nav}>
+            {/* 🚨 核心改动：无论是否买票，只要赛事激活，所有人都能看到动态门户 */}
+            {isContestActive && (
+              <button 
+                onClick={() => setActiveTab('dynamics')} 
+                style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}
+              >
+                🔥 大赛官方动态
+              </button>
+            )}
+
             <button onClick={() => setActiveTab('guide')} style={activeTab === 'guide' ? styles.navActive : styles.navBtn}>💡 创作指导</button>
             <button onClick={() => setActiveTab('text')} style={activeTab === 'text' ? styles.navActive : styles.navBtn}>📝 文字评审</button>
             <button onClick={() => setActiveTab('picturebook')} style={activeTab === 'picturebook' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
-            {/* 🚨 修正：必须同时满足【全局有赛事】且【用户有资格】时，才对外展示大奖赛提交入口 */}
+            
             {(isContestActive && isEligibleForContest) && (
-              <button onClick={() => setActiveTab('contest')} style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}>🏆 提交参赛作品</button>
+              <button onClick={() => setActiveTab('contest')} style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}>🏆 提交参赛作品</button>
             )}
           </nav>
         </div>
-<div style={{ marginTop: 'auto' }}>
-          {/* 动态卡片：有赛事显示大赛，无赛事退化为常规资源中心 */}
+        
+        <div style={{ marginTop: 'auto' }}>
           <div style={styles.upgradeBox}>
-            {/* 🚨 修正：根据赛事状态动态切换标题 */}
-            <h4 style={styles.upgradeTitle}>{isContestActive ? "NAL“童心”征文大赛" : "NAL 专属资源中心"}</h4>
+            {/* 🚨 动态渲染赛事名称 */}
+            <h4 style={styles.upgradeTitle}>{isContestActive ? (contestName || "NAL官方征文大赛") : "NAL 专属资源中心"}</h4>
             
-            {/* 🚨 核心修正：只有全局有赛事时，才渲染大赛报名按钮或资格提示。无赛事时完全不显示 */}
             {isContestActive && (
               (isContestant || isPro) ? (
                 <div style={{ color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold' }}>
@@ -407,18 +393,15 @@ export default function Dashboard({ session }) {
               )
             )}
             
-            {/* 只有非 Pro 用户在资源耗尽时，才需要加油包（日常/大赛均通用） */}
             {(!isPro && usage.flash <= 0 && usage.pro_credits <= 0) && (
               <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
             )}
             
-            {/* 已经是 Pro 的用户，不再显示升级按钮（日常/大赛均通用） */}
             {!isPro && (
               <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
             )}
           </div>
                     
-          {/* 用户账号信息与安全退出区 */}
           <div style={styles.userSection}>
             <div style={styles.roleLabel}>{session?.user?.email || '加载中...'}</div>
             <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>退出登录</button>
@@ -427,10 +410,9 @@ export default function Dashboard({ session }) {
       </aside>
 
       <main style={styles.main}>
-        
-        {/* 全局常驻顶部导航栏 */}
         <div style={styles.header}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
+            {activeTab === 'dynamics' && '🔥 大赛官方动态'}
             {activeTab === 'contest' && '🏆 参赛作品提交'}
             {activeTab === 'guide' && '💡 创作指导'}
             {activeTab === 'text' && '📝 文字评审'}
@@ -442,8 +424,6 @@ export default function Dashboard({ session }) {
                <span style={styles.statusLabel}>当前引擎</span>
                <span style={styles.statusValue}>{engineName}</span>
              </div>
-
-             {/* 阶梯资源动态显示 */}
              {isPro ? (
                <div style={styles.statusItem}>
                  <span style={styles.statusLabel}>Pro 额度</span>
@@ -470,11 +450,50 @@ export default function Dashboard({ session }) {
         </div>
 
         <div style={styles.content}>
-          {activeTab === 'contest' ? (
-            <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
+          {/* 🌟 核心增设：赛事动态宣发展示面板 */}
+          {activeTab === 'dynamics' ? (
+            <div style={{
+              padding: '40px', borderRadius: '16px',
+              background: 'linear-gradient(145deg, #111827 0%, #1f2937 100%)',
+              border: '1px solid #374151', color: '#f3f4f6',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
+            }}>
+              <div style={{ display: 'inline-block', padding: '6px 16px', background: '#ef4444', color: '#fff', fontSize: '13px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '20px' }}>
+                🔥 官方征稿进行中
+              </div>
               
+              <h2 style={{ fontSize: '32px', color: '#fbbf24', margin: '0 0 20px 0', fontWeight: '900', letterSpacing: '-0.5px' }}>
+                {contestName || 'NAL 年度文学大赏'}
+              </h2>
+              
+              <div style={{ 
+                fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', 
+                background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', 
+                whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' 
+              }}>
+                {contestDescription || '具体章程与评审机制正在获取中...'}
+              </div>
+
+              <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
+                <button 
+                  onClick={() => {
+                    if (isEligibleForContest) setActiveTab('contest');
+                    else handlePayment('contestant');
+                  }}
+                  style={{ 
+                    padding: '16px 32px', background: '#10b981', color: '#fff', 
+                    fontWeight: 'bold', border: 'none', borderRadius: '8px', 
+                    cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' 
+                  }}
+                >
+                  {isEligibleForContest ? "⚡ 您已获资格，前往投稿通道" : "🚀 立即报名获取参赛资格"}
+                </button>
+              </div>
+            </div>
+
+          ) : activeTab === 'contest' ? (
+            <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
-                
                 <div style={{ marginTop: '0px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
                   <textarea 
@@ -586,12 +605,8 @@ export default function Dashboard({ session }) {
               </div>
             </div>
           ) : (
-            
-            // 非参赛模块界面 
             <div style={{ ...styles.reportBox, margin: 0 }}>
-              
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                
                 {activeTab !== 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
@@ -652,13 +667,10 @@ export default function Dashboard({ session }) {
 
               {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
-                  
-                  {/* --- 🚨 核心改动：多模态图文输入区 (根据身份动态切换 UI) --- */}
                   {selectedImages.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px' }}>
                       {selectedImages.map((file, index) => {
                         if (isPro) {
-                          // 专业用户渲染卡片式输入 UI
                           return (
                             <div key={index} style={{ 
                               display: 'flex', gap: '15px', padding: '15px', 
@@ -693,7 +705,6 @@ export default function Dashboard({ session }) {
                             </div>
                           );
                         } else {
-                          // 普通用户退化为简单列表 UI
                           return (
                             <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
                               <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
@@ -732,7 +743,6 @@ export default function Dashboard({ session }) {
                 </div>
               )}
               
-              {/* 🚨 核心改动：专业用户采用卡片逐页文本框，因此在此处隐藏全局文本框；普通用户依然沿用此全局文本框作为可选填 */}
               {!(activeTab === 'picturebook' && isPro) && (
                 <>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
@@ -749,14 +759,12 @@ export default function Dashboard({ session }) {
                 </>
               )}
               
-              {/* 🚨 新增警告提示区 */}
               {activeTab === 'picturebook' && warningMessage && (
                 <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>
                   {warningMessage}
                 </div>
               )}
 
-              {/* 启动按钮的动态锁定与提示 */}
               <button 
                 onClick={triggerEvaluation} 
                 disabled={loading || (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0))} 
@@ -772,7 +780,7 @@ export default function Dashboard({ session }) {
           )}
         </div>
 
-        {report && activeTab !== 'contest' && (
+        {report && activeTab !== 'contest' && activeTab !== 'dynamics' && (
           <div style={styles.reportBox}>
             <h3 style={{marginTop: 0, fontSize: '18px', borderBottom: '1px solid #eee', paddingBottom: '10px'}}>🏛️ NAL 专家分析结果</h3>
             <div style={styles.reportTxt}>{report}</div>
@@ -810,24 +818,16 @@ const styles = {
   roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
-
   logoContainer: {display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px 16px', borderBottom: '1px solid rgba(0, 0, 0, 0.05)'},
   logoImage: {width: '140px', height: 'auto', objectFit: 'contain'},
-  logo: {fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', letterSpacing: '-0.5px', margin: 0},
-  // 🚨 新增：侧边栏 Logo 头部的横向 Flex 排版
   sidebarHeader: {display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 16px', cursor: 'pointer', borderBottom: '1px solid rgba(0, 0, 0, 0.05)', marginBottom: '15px'},
-  // 🚨 新增：侧边栏图形高度控制
   sidebarLogoImg: {height: '32px', width: 'auto', objectFit: 'contain'},
-  
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
   statusRow: { display: 'flex', gap: '30px', alignItems: 'center' },
   statusItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }, 
-
-  // 追加学术底色卡片样式
   descCard: {backgroundColor: '#f0fdf4', borderLeft: '5px solid #16a34a', padding: '16px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 2px 8px rgba(22, 163, 74, 0.03)'},
   descTitle: {color: '#15803d', fontSize: '14px', fontWeight: 'bold', display: 'block', marginBottom: '6px'},
   descText: {color: '#1e293b', fontSize: '13px', margin: 0, lineHeight: '1.6'},
-  
   statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
   statusValue: { fontSize: '15px', fontWeight: 'bold', color: '#111827' },
   statusEmpty: { fontSize: '15px', fontWeight: 'bold', color: '#ef4444' },
