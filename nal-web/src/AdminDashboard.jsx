@@ -106,7 +106,10 @@ export default function AdminDashboard() {
       // 调用我们在路由器里写好的 FastAPI 后端接口（假设基准地址为 /api）
       const res = await fetch(`${API_BASE}/admin/settings/gallery-time`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        hheaders: {
+          'Content-Type': 'application/json',
+          'x-admin-key': import.meta.env.ADMIN_SECRET_KEY  // 👈 加这行
+        },
         body: JSON.stringify({ start_time: galleryTime.start, end_time: galleryTime.end })
       });
       const data = await res.json();
@@ -127,7 +130,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/start-review`, {
           method: 'POST',
           headers: {
-            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
+            'x-admin-key': import.meta.env.ADMIN_SECRET_KEY
           }
       });
       const data = await res.json();
@@ -148,7 +151,12 @@ export default function AdminDashboard() {
     setIsCurating(true);
     addLog("📊 正在下达离线全局总决算指令...");
     try {
-      const res = await fetch(`${API_BASE}/admin/engine/run-curation`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/admin/engine/run-curation`, {
+          method: 'POST',
+          headers: {
+            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY  // 👈 加这行
+          }
+      });
       const data = await res.json();
       if (data.status === 'success') {
         addLog("🏆 [SUCCESS] curator_script.py 执行完毕！Top 5% 门槛分数已自动划定，金标写入完成。");
