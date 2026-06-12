@@ -14,12 +14,12 @@ export default function Dashboard({ session }) {
   const [selectedImages, setSelectedImages] = useState([]);
   const [selectedDocx, setSelectedDocx] = useState(null); 
   
-  // 🚨 核心新增：全局赛事开关及文案状态
+  // 🌟 全局赛事开关及文案状态
   const [isContestActive, setIsContestActive] = useState(false);
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
 
-  //专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
+  // 专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
   const [imageTexts, setImageTexts] = useState([]); 
 
   // 参赛作品专属状态
@@ -132,7 +132,7 @@ export default function Dashboard({ session }) {
     }
   };
 
-  // 🚨 核心改动：同步拉取赛事的名称与描述
+  // 🌟 核心同步调度：拉取赛事详情并重置引导页
   const fetchSiteSettings = async () => {
     try {
       const { data, error } = await supabase
@@ -142,10 +142,11 @@ export default function Dashboard({ session }) {
         
       if (!error && data) {
         setIsContestActive(data.is_contest_active);
-        setContestName(data.contest_name || 'NAL 官方征文大赛');
+        setContestName(data.contest_name || 'NAL 官方精选文学赏');
         setContestDescription(data.contest_description || '具体章程与评审机制正在获取中...');
-        // 自动将默认页切换到赛事动态（如果是第一次访问且赛事激活）
-        if (data.is_contest_active && activeTab === 'text') {
+        
+        // 门禁：入馆时，无论赛事是否开启，都自动切到“大赛官方动态”展示平台名号
+        if (activeTab === 'text') {
            setActiveTab('dynamics');
         }
       }
@@ -357,15 +358,13 @@ export default function Dashboard({ session }) {
             <h2 style={styles.logo}>NAL Collective</h2>
           </div>
           <nav style={styles.nav}>
-            {/* 🚨 核心改动：无论是否买票，只要赛事激活，所有人都能看到动态门户 */}
-            {isContestActive && (
-              <button 
-                onClick={() => setActiveTab('dynamics')} 
-                style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}
-              >
-                🔥 大赛官方动态
-              </button>
-            )}
+            {/* 🚨 优化核心：大赛官方动态按钮永久常驻，去除 isContestActive 开关 */}
+            <button 
+              onClick={() => setActiveTab('dynamics')} 
+              style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}
+            >
+              🔥 大赛官方动态
+            </button>
 
             <button onClick={() => setActiveTab('guide')} style={activeTab === 'guide' ? styles.navActive : styles.navBtn}>💡 创作指导</button>
             <button onClick={() => setActiveTab('text')} style={activeTab === 'text' ? styles.navActive : styles.navBtn}>📝 文字评审</button>
@@ -380,7 +379,6 @@ export default function Dashboard({ session }) {
         
         <div style={{ marginTop: 'auto' }}>
           <div style={styles.upgradeBox}>
-            {/* 🚨 动态渲染赛事名称 */}
             <h4 style={styles.upgradeTitle}>{isContestActive ? (contestName || "NAL官方征文大赛") : "NAL 专属资源中心"}</h4>
             
             {isContestActive && (
@@ -450,7 +448,7 @@ export default function Dashboard({ session }) {
         </div>
 
         <div style={styles.content}>
-          {/* 🌟 核心增设：赛事动态宣发展示面板 */}
+          {/* 🌟 核心改进：大赛动态展示面板，依据全局开关进行条件渲染 */}
           {activeTab === 'dynamics' ? (
             <div style={{
               padding: '40px', borderRadius: '16px',
@@ -458,37 +456,62 @@ export default function Dashboard({ session }) {
               border: '1px solid #374151', color: '#f3f4f6',
               boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
             }}>
-              <div style={{ display: 'inline-block', padding: '6px 16px', background: '#ef4444', color: '#fff', fontSize: '13px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '20px' }}>
-                🔥 官方征稿进行中
+              {/* 依据开关动态变换状态徽章颜色与文本 */}
+              <div style={{ 
+                display: 'inline-block', 
+                padding: '6px 16px', 
+                background: isContestActive ? '#ef4444' : '#475569', 
+                color: '#fff', 
+                fontSize: '13px', 
+                fontWeight: 'bold', 
+                borderRadius: '6px', 
+                marginBottom: '20px' 
+              }}>
+                {isContestActive ? "🔥 官方征稿进行中" : "🌙 赛事周期已休眠"}
               </div>
               
+              {/* 始终向用户高亮呈现当前被录入的赛事名称 */}
               <h2 style={{ fontSize: '32px', color: '#fbbf24', margin: '0 0 20px 0', fontWeight: '900', letterSpacing: '-0.5px' }}>
                 {contestName || 'NAL 年度文学大赏'}
               </h2>
               
-              <div style={{ 
-                fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', 
-                background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', 
-                whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' 
-              }}>
-                {contestDescription || '具体章程与评审机制正在获取中...'}
-              </div>
+              {isContestActive ? (
+                /* 分支 A：当前赛事已激活 —— 解封具体章程及投递按钮 */
+                <>
+                  <div style={{ 
+                    fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', 
+                    background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', 
+                    whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' 
+                  }}>
+                    {contestDescription || '具体章程与评审机制正在获取中...'}
+                  </div>
 
-              <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
-                <button 
-                  onClick={() => {
-                    if (isEligibleForContest) setActiveTab('contest');
-                    else handlePayment('contestant');
-                  }}
-                  style={{ 
-                    padding: '16px 32px', background: '#10b981', color: '#fff', 
-                    fontWeight: 'bold', border: 'none', borderRadius: '8px', 
-                    cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' 
-                  }}
-                >
-                  {isEligibleForContest ? "⚡ 您已获资格，前往投稿通道" : "🚀 立即报名获取参赛资格"}
-                </button>
-              </div>
+                  <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
+                    <button 
+                      onClick={() => {
+                        if (isEligibleForContest) setActiveTab('contest');
+                        else handlePayment('contestant');
+                      }}
+                      style={{ 
+                        padding: '16px 32px', background: '#10b981', color: '#fff', 
+                        fontWeight: 'bold', border: 'none', borderRadius: '8px', 
+                        cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' 
+                      }}
+                    >
+                      {isEligibleForContest ? "⚡ 您已获资格，前往投稿通道" : "🚀 立即报名获取参赛资格"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                /* 分支 B：当前赛事处于关闭状态 —— 隐藏内容并输出降级提示 */
+                <div style={{ 
+                  fontSize: '15px', color: '#9ca3af', lineHeight: '1.8',
+                  background: 'rgba(0,0,0,0.15)', padding: '25px', borderRadius: '12px', 
+                  border: '1px dashed #4b5563', textAlign: 'center'
+                }}>
+                  💡 本届文学赛事目前处于未激活或筹备休眠期。征稿详细章程、特定评审限制及报名系统已被隐藏，请静待 NAL 评审委员会的重新启封。
+                </div>
+              )}
             </div>
 
           ) : activeTab === 'contest' ? (
@@ -642,7 +665,7 @@ export default function Dashboard({ session }) {
                       onChange={(e) => setImageType(e.target.value)}
                       style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
                     >
-                      <option value="picturebook">绘本分镜分析</option>
+                      <option value="picturebook">绘本分镜 analysis</option>
                       <option value="illustration">单幅插画审美</option>
                     </select>
                   </div>
