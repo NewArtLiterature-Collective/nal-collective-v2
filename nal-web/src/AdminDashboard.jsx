@@ -108,7 +108,7 @@ export default function AdminDashboard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-key': import.meta.env.ADMIN_SECRET_KEY
+          'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
         },
         body: JSON.stringify({ start_time: galleryTime.start, end_time: galleryTime.end })
       });
@@ -130,7 +130,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/start-review`, {
           method: 'POST',
           headers: {
-            'x-admin-key': import.meta.env.ADMIN_SECRET_KEY
+            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
           }
       });
       const data = await res.json();
@@ -154,7 +154,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/run-curation`, {
           method: 'POST',
           headers: {
-            'x-admin-key': import.meta.env.ADMIN_SECRET_KEY
+            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
           }
       });
       const data = await res.json();
