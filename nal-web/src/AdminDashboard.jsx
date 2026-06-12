@@ -124,7 +124,12 @@ export default function AdminDashboard() {
     setIsReviewing(true);
     addLog("⚡ 正在向 FastAPI 中控台发送唤醒神令...");
     try {
-      const res = await fetch(`${API_BASE}/admin/engine/start-review`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/admin/engine/start-review`, {
+          method: 'POST',
+          headers: {
+            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
+          }
+      });
       const data = await res.json();
       if (data.status === 'success') {
         addLog("🤖 [SUCCESS] 后台 AI 评审 Agent 已成功占领内存，正在监听轮询兜底器...");
