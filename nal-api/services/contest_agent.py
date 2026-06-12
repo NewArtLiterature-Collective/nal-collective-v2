@@ -163,11 +163,6 @@ async def run_batch_review():
         
     except Exception as e:
         print(f"🚨 批处理引擎发生致命错误: {e}")
-        
-    finally:
-        # 3. 终极收尾：无论成功还是报错，彻底退出 Python 进程，释放资源
-        print("👋 正在释放云端服务器内存，脚本安全退出。")
-        sys.exit(0)
 
 if __name__ == "__main__":
     # 删除了轮询的 main_worker，直接执行批处理任务
