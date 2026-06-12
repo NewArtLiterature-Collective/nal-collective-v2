@@ -31,28 +31,20 @@ export default function AdminDashboard() {
           schema: 'public', 
           table: 'contest_submissions' 
         }, 
-        (payload) => {
-          const targetId = payload.new.id.substring(0, 8);
-          
-          // 🎯 状态 1：当 AI 引擎开始“夺锁”处理时
-          if (payload.old.status === 'pending' && payload.new.status === 'processing') {
-             addLog(`⏳ [AI 引擎] 已锁定作品 ${targetId}，正在进行多模态解析...`);
-             // 只要状态变成 processing，待审数量就应该立刻减 1
-             fetchDashboardData(); 
-          }
-          
-          // 🎯 状态 2：当 AI 引擎处理完毕并打分时
-          if (payload.new.status === 'success' && payload.old.status !== 'success') {
-             addLog(`✅ [实时战报] 作品 ${targetId} 评审完毕！入库成功。`);
-             setTimeout(fetchDashboardData, 500); // 👈 延迟 0.5 秒拉取，保证数据绝对准确
-          }
+       (payload) => {
+         const targetId = payload.new.id.substring(0, 8);
+         const newStatus = payload.new.status;
 
-          // 🎯 状态 3：当作品因为没图或字数不够被踢回时
-          if (payload.new.status === 'invalid') {
-             addLog(`❌ [拦截] 作品 ${targetId} 未达参赛门槛，已自动拦截。`);
-             fetchDashboardData();
-          }
-        }
+         if (newStatus === 'processing') {
+           addLog(`⏳ [AI 引擎] 已锁定作品 ${targetId}，正在解析...`);
+         } else if (newStatus === 'success') {
+           addLog(`✅ [实时战报] 作品 ${targetId} 评审完毕！`);
+         } else if (newStatus === 'invalid') {
+          addLog(`❌ [拦截] 作品 ${targetId} 未达参赛门槛。`);
+         }
+         // 无论哪种状态变更，都触发数据刷新
+         setTimeout(fetchDashboardData, 300);
+       }
       )
       .subscribe();
 
@@ -64,15 +56,15 @@ export default function AdminDashboard() {
  const fetchDashboardData = async () => {
     try {
       // 1. 侦测 pending 作品 (🚨 已经解除了注释！)
-      const { count: pendingCount, error: pendingError } = await supabase
-        .from('contest_submissions')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending');
-      
+      const { count: fetchedCount, error: pendingError } = await supabase
+      .from('contest_submissions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+
       if (pendingError) {
         console.error("🚨 抓取待审数据被拦截:", pendingError.message);
       }
-      setPendingCount(pendingCount || 0);
+      setPendingCount(fetchedCount ?? 0);
 
       // 2. 侦测 success 作品
       const { data: submissions, error: successError } = await supabase
