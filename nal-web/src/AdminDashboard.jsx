@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; // 确保路径与你的项目一致
 
 export default function AdminDashboard() {
-  console.log('ENV CHECK:', import.meta.env.VITE_ADMIN_SECRET_KEY); // 👈 临时加这行
   const API_BASE = 'https://nal-api-backend.onrender.com';
-  //const ADMIN_KEY = 'fq8pJ5M-VwzAyx5TYhxBilmVb25iHIPLlavDPhcCDLU';
+  const ADMIN_KEY = 'fq8pJ5M-VwzAyx5TYhxBilmVb25iHIPLlavDPhcCDLU';
   
   // 1. 状态矩阵
   const [galleryTime, setGalleryTime] = useState({ start: '', end: '' });
@@ -110,7 +109,7 @@ export default function AdminDashboard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
+          'x-admin-key': ADMIN_KEY
         },
         body: JSON.stringify({ start_time: galleryTime.start, end_time: galleryTime.end })
       });
@@ -132,7 +131,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/start-review`, {
           method: 'POST',
           headers: {
-            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
+            'x-admin-key': ADMIN_KEY
           }
       });
       const data = await res.json();
@@ -156,7 +155,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/run-curation`, {
           method: 'POST',
           headers: {
-            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY
+            'x-admin-key': ADMIN_KEY
           }
       });
       const data = await res.json();
