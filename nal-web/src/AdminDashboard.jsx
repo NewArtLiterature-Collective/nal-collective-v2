@@ -177,7 +177,7 @@ export default function AdminDashboard() {
         .from('site_settings')
         .update({ 
           current_contest_id: selectedContestId,
-          is_contest_active: true -- 交割时默认直接点亮前台大闸
+          is_contest_active: true // 交割时默认直接点亮前台大闸
         })
         .eq('id', 1)
         .select();
