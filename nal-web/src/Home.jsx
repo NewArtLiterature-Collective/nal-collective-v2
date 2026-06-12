@@ -6,10 +6,10 @@ import { supabase } from './supabaseClient';
 export default function Home() {
   const navigate = useNavigate();
   
-  // 核心控制状态
+  // 核心控制状态矩阵
   const [isContestActive, setIsContestActive] = useState(true);
-  const [contestName, setContestName] = useState('');
-  const [contestDescription, setContestDescription] = useState('');
+  const [currentContestId, setCurrentContestId] = useState('');
+  const [contests, setContests] = useState([]); // 🌟 存储全量赛事列表
   
   // 控制右上角动态下拉菜单的展开与收起
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -17,7 +17,7 @@ export default function Home() {
   useEffect(() => {
     const fetchSiteSettings = async () => {
       try {
-        // 🚨 阶梯 1：从总控配置中拉取信号指针
+        // 阶梯 1：优先拉取全局总控表，获取当前的激活状态以及指向主赛场的指针
         const { data: settings, error: sErr } = await supabase
           .from('site_settings')
           .select('is_contest_active, current_contest_id')
@@ -26,26 +26,20 @@ export default function Home() {
           
         if (!sErr && settings) {
           setIsContestActive(settings.is_contest_active);
-          
-          // 🚨 阶梯 2：如果有当前主赛季指针，立刻去全新的 contests 赛事表中抓取核心资产
-          if (settings.current_contest_id) {
-            const { data: contestData, error: cErr } = await supabase
-              .from('contests')
-              .select('name, description')
-              .eq('id', settings.current_contest_id)
-              .maybeSingle();
-              
-            if (!cErr && contestData) {
-              setContestName(contestData.name || 'NAL 官方征文大赛');
-              setContestDescription(contestData.description || '暂无详细征稿章程大纲描述。');
-            }
-          } else {
-            setContestName('NAL 官方征文大赛');
-            setContestDescription('暂无详细征稿章程大纲描述。');
-          }
+          setCurrentContestId(settings.current_contest_id || '');
+        }
+
+        // 阶梯 2：无条件抓取系统中已经创生的所有赛事资产，按时间倒序排列
+        const { data: contestList, error: cErr } = await supabase
+          .from('contests')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!cErr && contestList) {
+          setContests(contestList);
         }
       } catch (err) {
-        console.error("⚠️ 首页联合检索全局赛事配置失败:", err);
+        console.error("⚠️ 首页多赛季生命周期联合检索失败:", err);
       }
     };
     
@@ -78,33 +72,56 @@ export default function Home() {
               大赛动态 <span style={{ fontSize: '10px' }}>{isDropdownOpen ? '▲' : '▼'}</span>
             </span>
 
-            {/* 下拉菜单面板 */}
+            {/* 🌟 核心改进：条件嵌套的多赛季Dropdown大屏 */}
             {isDropdownOpen && (
               <div style={styles.dropdownMenu}>
-                {/* 已经完美关联上新创赛事表的数据标题 */}
-                <h4 style={styles.dropdownTitle}>
-                  {contestName}
-                </h4>
-                
-                {isContestActive ? (
-                  /* 激活状态 */
-                  <>
-                    <div style={styles.dropdownDivider}></div>
-                    <p style={styles.dropdownDesc}>
-                      {contestDescription}
-                    </p>
-                    <button 
-                      onClick={() => { setIsDropdownOpen(false); navigate('/login?intent=contestant'); }}
-                      style={styles.dropdownBtn}
-                    >
-                      🚀 立即报名参赛
-                    </button>
-                  </>
+                {contests.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: '#6b7280', padding: '10px 0' }}>暂无任何赛事记录</div>
                 ) : (
-                  /* 历史或筹备状态 */
-                  <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '6px' }}>
-                    🌙 赛事通道已封存休眠
-                  </div>
+                  contests.map((c, idx) => {
+                    // 精准判定：只有当赛事ID命中全局激活指针，且全站总控制大闸打开时，才算真正激活
+                    const isCurrentActive = c.id === currentContestId && isContestActive;
+                    
+                    return (
+                      <div key={c.id} style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                        {/* 始终呈现赛事的名称 —— 激活高亮亮金，非激活灰白暗示历史 */}
+                        <h4 style={{
+                          ...styles.dropdownTitle,
+                          color: isCurrentActive ? '#fbbf24' : '#9ca3af',
+                          fontWeight: isCurrentActive ? 'bold' : '500',
+                          fontSize: isCurrentActive ? '14px' : '13px'
+                        }}>
+                          {c.name} {isCurrentActive && " 🟢 [火热征稿中]"}
+                        </h4>
+                        
+                        {isCurrentActive ? (
+                          /* 分支 A：只有被推举激活的当前赛事，才解封展示核心章程细节及行动按钮 */
+                          <>
+                            <div style={styles.dropdownDivider}></div>
+                            <p style={styles.dropdownDesc}>
+                              {c.description || '暂无详细征稿章程大纲描述。'}
+                            </p>
+                            <button 
+                              onClick={() => { setIsDropdownOpen(false); navigate('/login?intent=contestant'); }}
+                              style={styles.dropdownBtn}
+                            >
+                              🚀 立即报名参赛
+                            </button>
+                          </>
+                        ) : (
+                          /* 分支 B：非当前激活的其它存量赛事，仅仅干净显示名字，下方输出微缩休眠标识 */
+                          <div style={{ fontSize: '11px', color: '#4b5563', marginTop: '4px' }}>
+                            🌙 赛事通道已封存休眠
+                          </div>
+                        )}
+                        
+                        {/* 列表项之间的细致分割线 */}
+                        {idx !== contests.length - 1 && (
+                          <div style={{ width: '100%', height: '1px', backgroundColor: '#1f2937', margin: '14px 0' }}></div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             )}
@@ -162,6 +179,7 @@ export default function Home() {
         <h2 style={styles.sectionTitle}>选择您的创作通行证</h2>
         <div style={styles.pricingGrid}>
           
+          {/* 普通用户卡片 */}
           <div style={styles.pricingCard}>
             <h3 style={styles.planName}><span role="img" aria-label="free">☕</span> 普通用户</h3>
             <div style={styles.planPrice}>免费体验</div>
@@ -175,6 +193,7 @@ export default function Home() {
             <button onClick={() => navigate('/login')} style={styles.planBtnFree}>立即注册</button>
           </div>
 
+          {/* 参赛选手卡片 */}
           {isContestActive && (
             <div style={{...styles.pricingCard, border: '2px solid #4f46e5', transform: 'scale(1.05)', zIndex: 10}}>
               <div style={styles.popularBadge}>2026 评审季推荐</div>
@@ -191,6 +210,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* 专业会员卡片 */}
           <div style={{...styles.pricingCard, background: '#111827', color: 'white'}}>
             <h3 style={{...styles.planName, color: '#a78bfa'}}><span role="img" aria-label="pro">✨</span> 专业会员</h3>
             <div style={styles.planPrice}>￥500 <span style={{...styles.priceUnit, color: '#9ca3af'}}>/ 年</span></div>
@@ -207,6 +227,7 @@ export default function Home() {
         </div>
       </section>
 
+      {/* 🧱 积木 5：页脚 */}
       <footer style={styles.footer}>
         <p>© 2026 NewArtLiterature Collective. All rights reserved.</p>
         <p style={{fontSize: '12px', marginTop: '8px', color: '#6b7280'}}>数字时代的文学审美与插画艺术先锋</p>
@@ -217,6 +238,8 @@ export default function Home() {
 
 const styles = {
   container: { fontFamily: 'system-ui, sans-serif', color: '#111827', overflowX: 'hidden' },
+  
+  // 🏢 导航栏
   navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 50px', backgroundColor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, borderBottom: '1px solid #f3f4f6' },
   navLogoContainer: { display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' },
   navLogoImg: { height: '38px', width: 'auto', objectFit: 'contain' },
@@ -224,10 +247,14 @@ const styles = {
   navLinks: { display: 'flex', gap: '30px', alignItems: 'center' },
   navLink: { color: '#4b5563', fontWeight: '500', cursor: 'pointer', fontSize: '15px', userSelect: 'none' },
   loginBtn: { padding: '10px 24px', backgroundColor: '#111827', color: 'white', borderRadius: '10px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
+  
+  // 🚀 主视觉迎宾区
   hero: { minHeight: '85vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb', paddingTop: '100px', padding: '20px', textAlign: 'center' },
   heroLogoImg: { width: '180px', height: 'auto', marginBottom: '24px', objectFit: 'contain' },
   heroTitle: { fontSize: '54px', fontWeight: '800', lineHeight: '1.2', marginBottom: '24px', maxWidth: '900px', background: 'linear-gradient(to right, #111827, #4f46e5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: '-1px' },
   heroSubtitle: { fontSize: '22px', color: '#6b7280', fontWeight: '500', letterSpacing: '1px' },
+  
+  // 🧩 特性版块
   section: { padding: '100px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: 'white' },
   sectionTitle: { fontSize: '36px', fontWeight: 'bold', marginBottom: '60px', textAlign: 'center' },
   grid: { display: 'flex', gap: '30px', maxWidth: '1200px', width: '100%', flexWrap: 'wrap', justifyContent: 'center' },
@@ -235,6 +262,8 @@ const styles = {
   featureIcon: { fontSize: '40px', marginBottom: '20px' },
   featureTitle: { fontSize: '22px', fontWeight: 'bold', marginBottom: '15px' },
   featureDesc: { color: '#6b7280', lineHeight: '1.6' },
+  
+  // 💰 计费版块
   pricingGrid: { display: 'flex', gap: '30px', maxWidth: '1100px', width: '100%', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' },
   pricingCard: { flex: '1 1 300px', padding: '40px', backgroundColor: 'white', borderRadius: '24px', border: '1px solid #e5e7eb', position: 'relative', transition: 'all 0.3s ease' },
   popularBadge: { position: 'absolute', top: '-15px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#4f46e5', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' },
@@ -245,8 +274,11 @@ const styles = {
   planBtnFree: { width: '100%', padding: '14px', backgroundColor: '#f3f4f6', color: '#111827', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   planBtnContest: { width: '100%', padding: '14px', backgroundColor: '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   planBtnPro: { width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#a78bfa', border: '2px solid #a78bfa', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  
+  // 🗺️ 页脚
   footer: { padding: '60px 40px', textAlign: 'center', backgroundColor: '#111827', color: '#9ca3af', borderTop: '1px solid #374151' },
 
+  // 🌟 优化升级后的下拉大菜单样式：增加了最大高度限制和横向纵向滚动支持，防止赛事过多撑爆视窗
   dropdownMenu: { 
     position: 'absolute', 
     top: 'calc(100% + 15px)', 
@@ -255,14 +287,16 @@ const styles = {
     border: '1px solid #374151', 
     borderRadius: '12px', 
     padding: '18px', 
-    width: '320px', 
+    width: '340px', 
     boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)', 
     zIndex: 500,
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'flex-start'
+    alignItems: 'flex-start',
+    maxHeight: '450px', // 👈 动态熔断阀门
+    overflowY: 'auto'    // 👈 允许内部长列表滑动
   },
-  dropdownTitle: { margin: 0, fontSize: '15px', color: '#fbbf24', fontWeight: 'bold', textAlign: 'left', lineHeight: '1.4' },
+  dropdownTitle: { margin: 0, textAlign: 'left', lineHeight: '1.4' },
   dropdownDivider: { width: '100%', height: '1px', backgroundColor: '#1f2937', margin: '10px 0' },
   dropdownDesc: { margin: '0 0 14px 0', color: '#d8dee9', fontSize: '12px', lineHeight: '1.6', textAlign: 'left', whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto', width: '100%' },
   dropdownBtn: { width: '100%', padding: '10px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', textAlign: 'center', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)' }
