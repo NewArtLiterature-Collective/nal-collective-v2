@@ -264,10 +264,16 @@ export default function AdminDashboard() {
             <button 
               onClick={handleStartReviewEngine} 
               disabled={isReviewing || pendingCount === 0}
-              style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+              style={{ 
+                padding: '12px 24px', 
+                backgroundColor: isReviewing ? '#5e81ac' : pendingCount === 0 ? '#2d6a4f' : '#5e81ac', 
+                color: '#fff', border: 'none', 
+                cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', 
+                fontWeight: 'bold' 
+              }}
             >
-              {isReviewing ? "🤖 专家组会诊中..." : "⚡ 启动全量离线评审"}
-            </button>
+              {isReviewing ? "🤖 专家组会诊中..." : pendingCount === 0 ? "✅ 评审已全部完成" : "⚡ 启动全量离线评审"}
+            </button> 
             <button 
               onClick={handleRunGlobalCuration} 
               disabled={isCurating || works.length === 0}
