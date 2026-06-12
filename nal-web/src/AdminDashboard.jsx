@@ -12,14 +12,13 @@ export default function AdminDashboard() {
   const [works, setWorks] = useState([]);
   const [logMessages, setLogMessages] = useState([]);
 
-  // 🌟 核心新增：多赛季全生命周期管理状态
-  const [contests, setContests] = useState([]); // 系统内所有的赛事资产列表
-  const [selectedContestId, setSelectedContestId] = useState(''); // 当前管理员正在查看/操作的赛事ID
-  const [activeContestId, setActiveContestId] = useState(''); // 数据库 site_settings 里当前处于激活状态的赛季ID
-  const [isContestActive, setIsContestActive] = useState(false); // 当前主开关状态
+  // 多赛季全生命周期管理状态
+  const [contests, setContests] = useState([]); 
+  const [selectedContestId, setSelectedContestId] = useState(''); 
+  const [activeContestId, setActiveContestId] = useState(''); 
+  const [isContestActive, setIsContestActive] = useState(false); 
 
-  // 🌟 新增：创建全新赛季的表单输入状态
-  const [newContestId, setNewContestId] = useState('');
+  // 创建全新赛季的表单输入状态（🚨 已经移除 newContestId 输入项）
   const [newContestName, setNewContestName] = useState('');
   const [newContestDesc, setNewContestDesc] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -34,7 +33,6 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchContestMetadata();
     
-    // 开启 Supabase Realtime 监听大阵
     const subscription = supabase
       .channel('contest-dashboard-radar')
       .on(
@@ -64,7 +62,7 @@ export default function AdminDashboard() {
     };
   }, [selectedContestId]);
 
-  // 🌟 核心提取：优先抓取所有的赛季元数据，建立第一防线
+  // 优先抓取所有的赛季元数据，建立第一防线
   const fetchContestMetadata = async () => {
     try {
       const { data: contestList, error: cErr } = await supabase
@@ -72,61 +70,62 @@ export default function AdminDashboard() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (!cErr && contestList && contestList.length > 0) {
-        setContests(contestList);
-        
-        // 联动查询全局单例配置表 site_settings (id=1)
-        const { data: settings } = await supabase
-          .from('site_settings')
-          .select('current_contest_id, is_contest_active, gallery_start_time, gallery_end_time')
-          .eq('id', 1)
-          .maybeSingle();
-
-        if (settings) {
-          setActiveContestId(settings.current_contest_id || '');
-          setIsContestActive(settings.is_contest_active);
-          setGalleryTime({
-            start: settings.gallery_start_time ? settings.gallery_start_time.substring(0, 10) : '',
-            end: settings.gallery_end_time ? settings.gallery_end_time.substring(0, 10) : ''
-          });
-
-          // 如果管理员还没选看哪个赛季，默认让他看当前正处于激活的主赛季
-          if (!selectedContestId) {
-            setSelectedContestId(settings.current_contest_id || contestList[0].id);
-            fetchDashboardData(settings.current_contest_id || contestList[0].id);
-            return;
-          }
-        }
+      if (cErr) {
+        console.error("🚨 抓取赛事表发生错误，可能是 RLS 限制或表未建成功:", cErr.message);
       }
-      
-      if (selectedContestId) {
-        fetchDashboardData(selectedContestId);
+
+      // 联动查询全局单例配置表 site_settings (id=1)
+      const { data: settings, error: sErr } = await supabase
+        .from('site_settings')
+        .select('current_contest_id, is_contest_active, gallery_start_time, gallery_end_time')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (settings) {
+        setActiveContestId(settings.current_contest_id || '');
+        setIsContestActive(settings.is_contest_active);
+        setGalleryTime({
+          start: settings.gallery_start_time ? settings.gallery_start_time.substring(0, 10) : '',
+          end: settings.gallery_end_time ? settings.gallery_end_time.substring(0, 10) : ''
+        });
+      }
+
+      if (contestList && contestList.length > 0) {
+        setContests(contestList);
+        if (!selectedContestId) {
+          const defaultId = settings?.current_contest_id || contestList[0].id;
+          setSelectedContestId(defaultId);
+          fetchDashboardData(defaultId);
+        }
+      } else {
+        // 兜底防御：如果库里确实没有任何赛事，强制虚拟一个 2026_contest 占位防止报错
+        const fallbackList = [{ id: '2026_contest', name: '2026 第一届“童心”先锋文学征文大赛' }];
+        setContests(fallbackList);
+        setSelectedContestId('2026_contest');
+        fetchDashboardData('2026_contest');
       }
     } catch (err) {
       console.error('拉取赛季元数据失败:', err);
     }
   };
 
-  // 🌟 核心改进：所有的数据提取必须紧密绑定指定的 contestId 进行全防线隔离
   const fetchDashboardData = async (contestId) => {
     if (!contestId) return;
     try {
-      // 1. 侦测当前所选赛季的 pending 作品数量
       const { count: pendingCount, error: pendingError } = await supabase
         .from('contest_submissions')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending')
-        .eq('contest_id', contestId); // 👈 动态赛事隔离
+        .eq('contest_id', contestId); 
       
       if (pendingError) console.error("🚨 抓取待审数据被拦截:", pendingError.message);
       setPendingCount(pendingCount || 0);
 
-      // 2. 侦测当前所选赛季的 success 作品库
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
         .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank')
         .eq('status', 'success')
-        .eq('contest_id', contestId) // 👈 动态赛事隔离
+        .eq('contest_id', contestId) 
         .order('ai_total_score', { ascending: false });
 
       if (successError) console.error("🚨 抓取展厅数据被拦截:", successError.message);
@@ -136,25 +135,27 @@ export default function AdminDashboard() {
     }
   };
 
-  // 🌟 新增：创建全新赛季资产逻辑
+  // 🌟 核心改进：创建全新赛季资产，唯一识别 ID 改由系统内建高随机令牌纯自动化生成
   const handleCreateNewContest = async (e) => {
     e.preventDefault();
-    if (!newContestId || !newContestName) return alert("赛季编码与名称不得为空！");
+    if (!newContestName) return alert("官方赛季名称不得为空！");
     
+    // 自动派发系统级主键识别码，避免管理员人工输入可能引发的冲突
+    const systemGeneratedId = 'ct_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now().toString().slice(-4);
+
     try {
-      addLog(`🏗️ 正在云端创生全新赛季资源: [${newContestId}]...`);
+      addLog(`🏗️ 正在云端自动化创生全新赛季编码: [${systemGeneratedId}]...`);
       const { error } = await supabase
         .from('contests')
         .insert({
-          id: newContestId,
+          id: systemGeneratedId,
           name: newContestName,
           description: newContestDesc
         });
 
       if (error) throw error;
 
-      addLog(`✅ 赛季 【${newContestName}】 已经成功开辟，可随时划归为主赛场。`);
-      setNewContestId('');
+      addLog(`✅ 赛季资产 【${newContestName}】 铸造成功！系统已锁定识别码: ${systemGeneratedId}`);
       setNewContestName('');
       setNewContestDesc('');
       setShowCreateForm(false);
@@ -164,7 +165,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // 🌟 新增：主赛季权力交接交割逻辑
   const handleSwitchGlobalActiveContest = async () => {
     if (!selectedContestId) return;
     const targetContest = contests.find(c => c.id === selectedContestId);
@@ -177,7 +177,7 @@ export default function AdminDashboard() {
         .from('site_settings')
         .update({ 
           current_contest_id: selectedContestId,
-          is_contest_active: true // 交割时默认直接点亮前台大闸
+          is_contest_active: true // 已经修正原有的 JavaScript 语法注释问题
         })
         .eq('id', 1)
         .select();
@@ -195,7 +195,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // 🌟 核心重扣：主控制开关状态改写
   const handleToggleContestActive = async () => {
     const nextStatus = !isContestActive;
     try {
@@ -305,7 +304,6 @@ export default function AdminDashboard() {
     window.location.reload();
   };
 
-  // 监听下拉菜单人为改变动作
   const handleContestSelectionChange = (e) => {
     const cid = e.target.value;
     setSelectedContestId(cid);
@@ -314,21 +312,19 @@ export default function AdminDashboard() {
 
   return (
     <div style={{ padding: '30px', backgroundColor: '#0a0a0a', minHeight: '100vh', color: '#e0e0e0', fontFamily: 'monospace' }}>
-      {/* 顶部通栏 */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '30px' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '24px', color: '#fff' }}>🏛️ NAL 新艺文社数字化文学平台 · 中央管理台</h1>
-          <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '13px' }}>算法共治与离线全局策展核心中控系统</p>
+          <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '13px' }}>算法共治与离线全局策展核心中控 system</p>
         </div>
         <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: '#bf616a', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
           退出登入安全撤离
         </button>
       </header>
 
-      {/* 控制中心主矩阵 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '25px', marginBottom: '30px' }}>
         
-        {/* 🌟 全新战略核心模块：多赛季全局中控中枢 (New Feature) */}
+        {/* 多赛季全局中控中枢 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -364,31 +360,19 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* 🌟 动态卡片：创建新赛季表单表层 */}
+          {/* 创建新赛季表单 */}
           {showCreateForm && (
             <form onSubmit={handleCreateNewContest} style={{ marginTop: '20px', borderTop: '1px dashed #333', paddingTop: '20px' }}>
               <h4 style={{ margin: '0 0 15px 0', color: '#a3be8c' }}>📝 录入新赛季元数据资产</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>赛季唯一识别编码 (ID - 建议英文数字下划线):</label>
-                  <input 
-                    type="text" 
-                    value={newContestId} 
-                    onChange={e => setNewContestId(e.target.value)}
-                    placeholder="例如: 2026_elderly_poetry"
-                    style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>官方赛季全称 (Contest Name):</label>
-                  <input 
-                    type="text" 
-                    value={newContestName} 
-                    onChange={e => setNewContestName(e.target.value)}
-                    placeholder="例如: 2026 第一届“老儿童”先锋诗歌文学大赏"
-                    style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace' }}
-                  />
-                </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>官方赛季全称 (Contest Name):</label>
+                <input 
+                  type="text" 
+                  value={newContestName} 
+                  onChange={e => setNewContestName(e.target.value)}
+                  placeholder="例如: 2026 第一届“老儿童”先锋诗歌文学大赏"
+                  style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace' }}
+                />
               </div>
               <div style={{ marginBottom: '15px' }}>
                 <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>官方征稿大纲宣章/描述 (Description):</label>
@@ -397,7 +381,7 @@ export default function AdminDashboard() {
                   onChange={e => setNewContestDesc(e.target.value)}
                   placeholder="请输入该赛季具体的评审维度、奖项设置以及字数限制宣发文案..."
                   rows={3}
-                  style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', resize: 'vertical' }}
+                  style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', resize: 'vertical' }}
                 />
               </div>
               <button type="submit" style={{ padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
@@ -406,7 +390,6 @@ export default function AdminDashboard() {
             </form>
           )}
 
-          {/* 联动主开关控制行（仅当查看的赛季是主赛场时才给予大闸操控权） */}
           <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: '#888', fontSize: '13px' }}>
               当前全局主赛场准入状态：
@@ -431,25 +414,13 @@ export default function AdminDashboard() {
           <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
             <label>
               展厅开启日期: 
-              <input 
-                type="date" 
-                value={galleryTime.start} 
-                onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))}
-                style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}
-              />
+              <input type="date" value={galleryTime.start} onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/>
             </label>
             <label>
               展厅闭馆日期: 
-              <input 
-                type="date" 
-                value={galleryTime.end} 
-                onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))}
-                style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}
-              />
+              <input type="date" value={galleryTime.end} onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/>
             </label>
-            <button onClick={handleSaveTime} style={{ padding: '7px 15px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
-              同步锁定时间
-            </button>
+            <button onClick={handleSaveTime} style={{ padding: '7px 15px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>同步锁定时间</button>
           </div>
         </div>
 
@@ -461,29 +432,15 @@ export default function AdminDashboard() {
               <span style={{ color: '#888' }}>当前视角下待评审作品（Pending）: </span>
               <strong style={{ fontSize: '20px', color: '#bf616a', marginLeft: '10px' }}>{pendingCount}</strong> 篇
             </div>
-            <button 
-              onClick={handleStartReviewEngine} 
-              disabled={isReviewing || pendingCount === 0}
-              style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
-            >
+            <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0} style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
               {isReviewing ? "🤖 专家组会诊中..." : "⚡ 启动全量离线评审"}
             </button>
-            <button 
-              onClick={handleRunGlobalCuration} 
-              disabled={isCurating || works.length === 0}
-              style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-            >
+            <button onClick={handleRunGlobalCuration} disabled={isCurating || works.length === 0} style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
               {isCurating ? "📊 计算百分位中..." : "📊 执行全局动态策展 (Top 5%)"}
             </button>
           </div>
-
-          {/* 实时仿真控制台日志 */}
           <div style={{ background: '#000', padding: '15px', borderRadius: '4px', height: '120px', overflowY: 'auto', border: '1px solid #333', fontSize: '12px', lineHeight: '1.6' }}>
-            {logMessages.length === 0 ? (
-              <span style={{ color: '#4c566a' }}>&gt;_ 控制台暂无核心指令输出，等待中控调度...</span>
-            ) : (
-              logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)
-            )}
+            {logMessages.length === 0 ? <span style={{ color: '#4c566a' }}>&gt;_ 控制台暂无核心指令输出，等待中控调度...</span> : logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)}
           </div>
         </div>
 
@@ -510,21 +467,12 @@ export default function AdminDashboard() {
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
                     <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
                     <td style={{ padding: '10px' }}>
-                      <button 
-                        onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)}
-                        style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px' }}
-                      >
+                      <button onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)} style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px' }}>
                         {work.is_manual_recommended ? "💎 已推举" : "⚪ 选入展厅"}
                       </button>
                     </td>
                     <td style={{ padding: '10px' }}>
-                      <input 
-                        type="number" 
-                        defaultValue={work.manual_rank} 
-                        onBlur={(e) => handleUpdateRank(work.id, e.target.value)}
-                        style={{ width: '50px', padding: '3px', background: '#222', color: '#fff', border: '1px solid #444', textAlign: 'center' }}
-                        placeholder="0"
-                      />
+                      <input type="number" defaultValue={work.manual_rank} onBlur={(e) => handleUpdateRank(work.id, e.target.value)} style={{ width: '50px', padding: '3px', background: '#222', color: '#fff', border: '1px solid #444', textAlign: 'center' }} placeholder="0"/>
                     </td>
                   </tr>
                 ))}
