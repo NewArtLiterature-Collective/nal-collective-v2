@@ -6,11 +6,13 @@ import { supabase } from './supabaseClient';
 export default function Home() {
   const navigate = useNavigate();
   
-  // 🌟 状态扩展：除了开关，同时容纳赛事的名称与文案
+  // 核心控制状态
   const [isContestActive, setIsContestActive] = useState(true);
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  
+  // 🌟 新增：控制右上角动态下拉菜单的展开与收起
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   useEffect(() => {
     const fetchSiteSettings = async () => {
@@ -22,13 +24,11 @@ export default function Home() {
           
         if (!error && data) {
           setIsContestActive(data.is_contest_active);
-          setContestName(data.contest_name || 'NAL 年度精选文学赏');
+          setContestName(data.contest_name || 'NAL 官方征文大赛');
           setContestDescription(data.contest_description || '');
         }
       } catch (err) {
         console.error("⚠️ 首页获取全局赛事配置失败:", err);
-      } finally {
-        setIsLoading(false);
       }
     };
     
@@ -44,8 +44,54 @@ export default function Home() {
           <div style={styles.logo}>NAL Collective</div>
         </div>
         <div style={styles.navLinks}>
-          {/* 🚨 核心改动：解除隐藏封印，永远展示大赛动态入口 */}
-          <span style={{...styles.navLink, color: '#fbbf24', fontWeight: 'bold'}}>大赛动态</span>
+          
+          {/* 🌟 核心改动：大赛动态交互锚点，变为常驻的相对定位下拉容器 */}
+          <div style={{ position: 'relative' }}>
+            <span 
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)} 
+              style={{ 
+                ...styles.navLink, 
+                color: isContestActive ? '#fbbf24' : '#4b5563', 
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              大赛动态 <span style={{ fontSize: '10px' }}>{isDropdownOpen ? '▲' : '▼'}</span>
+            </span>
+
+            {/* 🌟 条件渲染的绝对定位下拉菜单面板 */}
+            {isDropdownOpen && (
+              <div style={styles.dropdownMenu}>
+                {/* 始终呈现赛事名称 */}
+                <h4 style={styles.dropdownTitle}>
+                  {contestName || 'NAL 年度精选文学赏'}
+                </h4>
+                
+                {isContestActive ? (
+                  /* 分支 A：激活状态下的赛事，点击展开后输出核心文案详情及参赛通道 */
+                  <>
+                    <div style={styles.dropdownDivider}></div>
+                    <p style={styles.dropdownDesc}>
+                      {contestDescription || '暂无详细征稿章程大纲描述。'}
+                    </p>
+                    <button 
+                      onClick={() => { setIsDropdownOpen(false); navigate('/login?intent=contestant'); }}
+                      style={styles.dropdownBtn}
+                    >
+                      🚀 立即报名参赛
+                    </button>
+                  </>
+                ) : (
+                  /* 分支 B：已有的休眠或历史赛事，仅展示名称，下方输出内敛微缩标签 */
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '6px' }}>
+                    🌙 赛事通道已封存休眠
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           
           <span 
             onClick={() => navigate('/gallery')} 
@@ -71,80 +117,6 @@ export default function Home() {
           NewArtLiterature - Collective 新艺文社数字化平台
         </p>
       </header>
-
-      {/* 🧱 积木 2.5：🌟 全局常驻的大赛动态门户 (Contest Portal) 🌟 */}
-      <section style={{ padding: '80px 20px', backgroundColor: '#0a0a0a', color: '#fff', textAlign: 'center' }}>
-        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-          
-          {isLoading ? (
-            <div style={{ padding: '40px', color: '#64748b' }}>
-              <span style={{ animation: 'pulse 1.5s infinite' }}>📡 正在同步 NAL 最新赛事数据...</span>
-            </div>
-          ) : (
-            <>
-              {/* 核心逻辑 1：无论赛事是否激活，永远高亮展示主赛事名称 */}
-              <h2 style={{ fontSize: '38px', color: '#fbbf24', marginBottom: '30px', fontWeight: '900', letterSpacing: '-1px' }}>
-                {contestName || 'NAL 年度精选文学赏'}
-              </h2>
-
-              {isContestActive ? (
-                /* 核心逻辑 2：激活状态（展示火热的标签、具体章程与入口） */
-                <div style={{
-                  backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '16px', 
-                  padding: '40px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)', transition: 'all 0.3s ease'
-                }}>
-                  <div style={{ display: 'inline-block', padding: '6px 16px', background: '#ef4444', color: '#fff', fontSize: '14px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '25px' }}>
-                    🔥 官方征稿火热进行中
-                  </div>
-                  
-                  <div style={{
-                    fontSize: '16px', lineHeight: '2.0', color: '#d8dee9', textAlign: 'left', 
-                    whiteSpace: 'pre-wrap', marginBottom: '35px', backgroundColor: 'rgba(0,0,0,0.2)', 
-                    padding: '25px', borderRadius: '12px'
-                  }}>
-                    {contestDescription}
-                  </div>
-                  
-                  <button
-                    onClick={() => navigate('/login?intent=contestant')}
-                    style={{
-                      padding: '16px 40px', backgroundColor: '#10b981', color: '#fff',
-                      border: 'none', borderRadius: '8px', fontSize: '18px', fontWeight: 'bold',
-                      cursor: 'pointer', boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)'
-                    }}
-                  >
-                    🚀 进入系统 · 立即投稿
-                  </button>
-                </div>
-              ) : (
-                /* 核心逻辑 3：休眠状态（隐藏章程，显示高冷占位提示） */
-                <div style={{
-                  backgroundColor: 'rgba(255,255,255,0.02)', border: '1px dashed #333', 
-                  borderRadius: '16px', padding: '50px 30px'
-                }}>
-                  <div style={{ fontSize: '20px', color: '#6b7280', marginBottom: '15px', fontWeight: 'bold' }}>
-                    🌙 赛事周期已休眠 / 筹备中
-                  </div>
-                  <p style={{ color: '#4b5563', lineHeight: '1.8', margin: '0 auto', maxWidth: '500px' }}>
-                    本届文学赛事目前暂未开放征稿。详情章程与评审通道已封存。<br/>
-                    请持续关注 NAL 评审委员会的官方公告，新的文学纪元正在酝酿。
-                  </p>
-                  <button
-                    onClick={() => navigate('/login')}
-                    style={{
-                      marginTop: '30px', padding: '12px 28px', backgroundColor: 'transparent',
-                      color: '#6b7280', border: '1px solid #4b5563', borderRadius: '8px',
-                      cursor: 'pointer', fontSize: '15px', fontWeight: 'bold'
-                    }}
-                  >
-                    前往个人中心
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </section>
 
       {/* 🧱 积木 3：核心价值区 (Features) */}
       <section style={styles.section}>
@@ -226,15 +198,6 @@ export default function Home() {
         <p>© 2026 NewArtLiterature Collective. All rights reserved.</p>
         <p style={{fontSize: '12px', marginTop: '8px', color: '#6b7280'}}>数字时代的文学审美与插画艺术先锋</p>
       </footer>
-
-      {/* 内部闪烁效果 CSS */}
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.05); }
-          100% { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </div>
   );
 }
@@ -248,7 +211,7 @@ const styles = {
   navLogoImg: { height: '38px', width: 'auto', objectFit: 'contain' },
   logo: { fontSize: '22px', fontWeight: 'bold', color: '#4f46e5', letterSpacing: '-0.5px' },
   navLinks: { display: 'flex', gap: '30px', alignItems: 'center' },
-  navLink: { color: '#4b5563', fontWeight: '500', cursor: 'pointer', fontSize: '15px', transition: 'color 0.2s' },
+  navLink: { color: '#4b5563', fontWeight: '500', cursor: 'pointer', fontSize: '15px', userSelect: 'none' },
   loginBtn: { padding: '10px 24px', backgroundColor: '#111827', color: 'white', borderRadius: '10px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
   
   // 🚀 主视觉迎宾区
@@ -279,5 +242,26 @@ const styles = {
   planBtnPro: { width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#a78bfa', border: '2px solid #a78bfa', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   
   // 🗺️ 页脚
-  footer: { padding: '60px 40px', textAlign: 'center', backgroundColor: '#111827', color: '#9ca3af', borderTop: '1px solid #374151' }
+  footer: { padding: '60px 40px', textAlign: 'center', backgroundColor: '#111827', color: '#9ca3af', borderTop: '1px solid #374151' },
+
+  // 🌟 新增：绝对定位的暗黑极客风格下拉菜单矩阵 (精妙咬合右上角，完全不吃页面空间)
+  dropdownMenu: { 
+    position: 'absolute', 
+    top: 'calc(100% + 15px)', 
+    right: '0', 
+    backgroundColor: '#111827', 
+    border: '1px solid #374151', 
+    borderRadius: '12px', 
+    padding: '18px', 
+    width: '320px', 
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)', 
+    zIndex: 500,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start'
+  },
+  dropdownTitle: { margin: 0, fontSize: '15px', color: '#fbbf24', fontWeight: 'bold', textAlign: 'left', lineHeight: '1.4' },
+  dropdownDivider: { width: '100%', height: '1px', backgroundColor: '#1f2937', margin: '10px 0' },
+  dropdownDesc: { margin: '0 0 14px 0', color: '#d8dee9', fontSize: '12px', lineHeight: '1.6', textAlign: 'left', whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto', width: '100%' },
+  dropdownBtn: { width: '100%', padding: '10px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', textAlign: 'center', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)' }
 };
