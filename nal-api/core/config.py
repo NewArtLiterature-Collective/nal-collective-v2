@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str
     STRIPE_WEBHOOK_SECRET: str
 
+    ADMIN_SECRET_KEY: str
+
     # 🚨 这是解决 "Extra inputs are not permitted" 的关键
     model_config = SettingsConfigDict(
         env_file=".env",
