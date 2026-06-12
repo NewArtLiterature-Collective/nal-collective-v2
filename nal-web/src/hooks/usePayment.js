@@ -50,5 +50,5 @@ export function usePayment() {
     }
   };
 
-  return { payLoading, loadingPlan, handlePayment };
+  return { payLoading, loadingPlan, handlePayment, setPayLoading };
 }
