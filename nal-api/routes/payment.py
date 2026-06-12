@@ -62,6 +62,9 @@ async def stripe_webhook(request: Request):
             # 将 Stripe 对象转为标准字典
             session_obj = event['data']['object']
             session_dict = session_obj.to_dict() 
+
+            if session_dict.get('payment_status') != 'paid':
+                return {"status": "skipped"}
             
             metadata = session_dict.get('metadata', {})
             user_id = metadata.get('user_id')
