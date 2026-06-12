@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
 from pydantic import BaseModel
 from services.user_service import supabase_admin
 from services.contest_agent import run_batch_review
-from services.curator_script import run_curation  # 如果有的话
+from services.curator_script import auto_curate_top_percent
 from core.config import settings
 
 router = APIRouter(prefix="/admin", tags=["Admin Control"])
@@ -48,7 +48,7 @@ async def start_review_engine(
 # 3. 全局策展
 def run_curator_script():
     print("📊 接收到中控台指令，正在执行 Top 5% 全局策展...")
-    asyncio.run(run_curation())  # 替换 subprocess
+    auto_curate_top_percent()
 
 @router.post("/engine/run-curation")
 async def run_global_curation(
