@@ -27,11 +27,13 @@ def run_contest_agent():
     # 使用 subprocess 启动你之前写好的守护进程
     # 注意：在正式服务器上，这通常由 systemd 或 Docker 管理，这里提供一个 API 触发的快捷方式
     print("⚡ 接收到中控台指令，正在唤醒 AI 评审引擎...")
-    subprocess.Popen(["python", "-m", "services.contest_agent"])
+    # subprocess.Popen(["python", "-m", "services.contest_agent"])
+    asyncio.run(run_batch_review())
 
 @router.post("/engine/start-review")
 async def start_review_engine(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_contest_agent)
+    return {"status": "success", "msg": "评审引擎已在后台启动"}
     x_admin_key: str = Header(None)
 ):
     if x_admin_key != settings.ADMIN_SECRET_KEY:
