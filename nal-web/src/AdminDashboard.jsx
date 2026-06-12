@@ -106,9 +106,9 @@ export default function AdminDashboard() {
       // 调用我们在路由器里写好的 FastAPI 后端接口（假设基准地址为 /api）
       const res = await fetch(`${API_BASE}/admin/settings/gallery-time`, {
         method: 'POST',
-        hheaders: {
+        headers: {
           'Content-Type': 'application/json',
-          'x-admin-key': import.meta.env.ADMIN_SECRET_KEY  // 👈 加这行
+          'x-admin-key': import.meta.env.ADMIN_SECRET_KEY
         },
         body: JSON.stringify({ start_time: galleryTime.start, end_time: galleryTime.end })
       });
@@ -154,7 +154,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/run-curation`, {
           method: 'POST',
           headers: {
-            'x-admin-key': import.meta.env.VITE_ADMIN_SECRET_KEY  // 👈 加这行
+            'x-admin-key': import.meta.env.ADMIN_SECRET_KEY
           }
       });
       const data = await res.json();
