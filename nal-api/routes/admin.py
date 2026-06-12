@@ -32,6 +32,10 @@ def run_contest_agent():
 @router.post("/engine/start-review")
 async def start_review_engine(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_contest_agent)
+    x_admin_key: str = Header(None)
+):
+    if x_admin_key != settings.ADMIN_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="无权限")
     return {"status": "success", "msg": "评审引擎已在后台启动，请留意数据库状态变化。"}
 
 # 3. 调度核心：执行全局动态策展 (Top 5%)
