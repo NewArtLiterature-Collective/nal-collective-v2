@@ -13,9 +13,9 @@ export default function AdminDashboard() {
   const [logMessages, setLogMessages] = useState([]);
 
   export default function AdminDashboard() {
-  console.log('ENV CHECK:', import.meta.env.VITE_ADMIN_SECRET_KEY); // 👈 临时加这行
-  const API_BASE = 'https://nal-api-backend.onrender.com';
-
+    console.log('ENV CHECK:', import.meta.env.VITE_ADMIN_SECRET_KEY); // 👈 临时加这行
+    const API_BASE = 'https://nal-api-backend.onrender.com';
+  };
   // 2. 模拟终端日志打印器
   const addLog = (msg) => {
     const time = new Date().toLocaleTimeString();
