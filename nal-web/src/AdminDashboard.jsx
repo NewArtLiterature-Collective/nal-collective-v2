@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient';
 export default function AdminDashboard() {
   const API_BASE = 'https://nal-api-backend.onrender.com';
   
-  // 1. 状态矩阵
+  // 1. 系统核心基础状态矩阵
   const [galleryTime, setGalleryTime] = useState({ start: '', end: '' });
   const [pendingCount, setPendingCount] = useState(0);
   const [isReviewing, setIsReviewing] = useState(false);
@@ -12,19 +12,29 @@ export default function AdminDashboard() {
   const [works, setWorks] = useState([]);
   const [logMessages, setLogMessages] = useState([]);
 
-  // 🌟 新增：赛事管理核心状态
-  const [isContestActive, setIsContestActive] = useState(false);
-  const [contestName, setContestName] = useState('');
-  const [contestDescription, setContestDescription] = useState('');
-  const [isSavingDetails, setIsSavingDetails] = useState(false);
+  // 🌟 核心新增：多赛季全生命周期管理状态
+  const [contests, setContests] = useState([]); // 系统内所有的赛事资产列表
+  const [selectedContestId, setSelectedContestId] = useState(''); // 当前管理员正在查看/操作的赛事ID
+  const [activeContestId, setActiveContestId] = useState(''); // 数据库 site_settings 里当前处于激活状态的赛季ID
+  const [isContestActive, setIsContestActive] = useState(false); // 当前主开关状态
 
+  // 🌟 新增：创建全新赛季的表单输入状态
+  const [newContestId, setNewContestId] = useState('');
+  const [newContestName, setNewContestName] = useState('');
+  const [newContestDesc, setNewContestDesc] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // 2. 模拟终端日志打印器
   const addLog = (msg) => {
     const time = new Date().toLocaleTimeString();
     setLogMessages(prev => [`[${time}] ${msg}`, ...prev]);
   };
 
+  // 3. 初始化实时监听与核心加载大阵
   useEffect(() => {
-    fetchDashboardData();
+    fetchContestMetadata();
+    
+    // 开启 Supabase Realtime 监听大阵
     const subscription = supabase
       .channel('contest-dashboard-radar')
       .on(
@@ -32,17 +42,18 @@ export default function AdminDashboard() {
         { event: 'UPDATE', schema: 'public', table: 'contest_submissions' }, 
         (payload) => {
           const targetId = payload.new.id.substring(0, 8);
+          
           if (payload.old.status === 'pending' && payload.new.status === 'processing') {
              addLog(`⏳ [AI 引擎] 已锁定作品 ${targetId}，正在进行多模态解析...`);
-             fetchDashboardData(); 
+             fetchDashboardData(selectedContestId); 
           }
           if (payload.new.status === 'success' && payload.old.status !== 'success') {
              addLog(`✅ [实时战报] 作品 ${targetId} 评审完毕！入库成功。`);
-             setTimeout(fetchDashboardData, 500); 
+             setTimeout(() => fetchDashboardData(selectedContestId), 500); 
           }
           if (payload.new.status === 'invalid') {
              addLog(`❌ [拦截] 作品 ${targetId} 未达参赛门槛，已自动拦截。`);
-             fetchDashboardData();
+             fetchDashboardData(selectedContestId);
           }
         }
       )
@@ -51,88 +62,157 @@ export default function AdminDashboard() {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, []);
+  }, [selectedContestId]);
 
-  const fetchDashboardData = async () => {
+  // 🌟 核心提取：优先抓取所有的赛季元数据，建立第一防线
+  const fetchContestMetadata = async () => {
     try {
+      const { data: contestList, error: cErr } = await supabase
+        .from('contests')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!cErr && contestList && contestList.length > 0) {
+        setContests(contestList);
+        
+        // 联动查询全局单例配置表 site_settings (id=1)
+        const { data: settings } = await supabase
+          .from('site_settings')
+          .select('current_contest_id, is_contest_active, gallery_start_time, gallery_end_time')
+          .eq('id', 1)
+          .maybeSingle();
+
+        if (settings) {
+          setActiveContestId(settings.current_contest_id || '');
+          setIsContestActive(settings.is_contest_active);
+          setGalleryTime({
+            start: settings.gallery_start_time ? settings.gallery_start_time.substring(0, 10) : '',
+            end: settings.gallery_end_time ? settings.gallery_end_time.substring(0, 10) : ''
+          });
+
+          // 如果管理员还没选看哪个赛季，默认让他看当前正处于激活的主赛季
+          if (!selectedContestId) {
+            setSelectedContestId(settings.current_contest_id || contestList[0].id);
+            fetchDashboardData(settings.current_contest_id || contestList[0].id);
+            return;
+          }
+        }
+      }
+      
+      if (selectedContestId) {
+        fetchDashboardData(selectedContestId);
+      }
+    } catch (err) {
+      console.error('拉取赛季元数据失败:', err);
+    }
+  };
+
+  // 🌟 核心改进：所有的数据提取必须紧密绑定指定的 contestId 进行全防线隔离
+  const fetchDashboardData = async (contestId) => {
+    if (!contestId) return;
+    try {
+      // 1. 侦测当前所选赛季的 pending 作品数量
       const { count: pendingCount, error: pendingError } = await supabase
         .from('contest_submissions')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending');
+        .eq('status', 'pending')
+        .eq('contest_id', contestId); // 👈 动态赛事隔离
+      
       if (pendingError) console.error("🚨 抓取待审数据被拦截:", pendingError.message);
       setPendingCount(pendingCount || 0);
 
+      // 2. 侦测当前所选赛季的 success 作品库
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
         .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank')
         .eq('status', 'success')
+        .eq('contest_id', contestId) // 👈 动态赛事隔离
         .order('ai_total_score', { ascending: false });
+
       if (successError) console.error("🚨 抓取展厅数据被拦截:", successError.message);
       setWorks(submissions || []);
-
-      // 🌟 获取时间大闸的同时，一并拉取全局赛事状态
-      const { data: settings, error: settingsError } = await supabase
-        .from('site_settings')
-        .select('gallery_start_time, gallery_end_time, is_contest_active, contest_name, contest_description')
-        .maybeSingle();
-      
-      if (settingsError) console.error("🚨 抓取全局系统设置失败:", settingsError.message);
-      
-      if (settings) {
-        setGalleryTime({
-          start: settings.gallery_start_time ? settings.gallery_start_time.substring(0, 10) : '',
-          end: settings.gallery_end_time ? settings.gallery_end_time.substring(0, 10) : ''
-        });
-        // 装填赛事状态
-        setIsContestActive(settings.is_contest_active || false);
-        setContestName(settings.contest_name || '');
-        setContestDescription(settings.contest_description || '');
-      }
     } catch (err) {
-      console.error('初始化管理台数据遇到致命级错误:', err);
+      console.error('初始化管理台数据遇到严重错误:', err);
     }
   };
 
-  // 🌟 核心控制：赛事总开关 (精确命中 id=1)
+  // 🌟 新增：创建全新赛季资产逻辑
+  const handleCreateNewContest = async (e) => {
+    e.preventDefault();
+    if (!newContestId || !newContestName) return alert("赛季编码与名称不得为空！");
+    
+    try {
+      addLog(`🏗️ 正在云端创生全新赛季资源: [${newContestId}]...`);
+      const { error } = await supabase
+        .from('contests')
+        .insert({
+          id: newContestId,
+          name: newContestName,
+          description: newContestDesc
+        });
+
+      if (error) throw error;
+
+      addLog(`✅ 赛季 【${newContestName}】 已经成功开辟，可随时划归为主赛场。`);
+      setNewContestId('');
+      setNewContestName('');
+      setNewContestDesc('');
+      setShowCreateForm(false);
+      fetchContestMetadata();
+    } catch (err) {
+      alert("创生新赛季失败: " + err.message);
+    }
+  };
+
+  // 🌟 新增：主赛季权力交接交割逻辑
+  const handleSwitchGlobalActiveContest = async () => {
+    if (!selectedContestId) return;
+    const targetContest = contests.find(c => c.id === selectedContestId);
+    if (!targetContest) return;
+
+    try {
+      addLog(`🎯 正在执行全局赛季权力交割，正在将主赛场更替为: 【${targetContest.name}】...`);
+      
+      const { data, error } = await supabase
+        .from('site_settings')
+        .update({ 
+          current_contest_id: selectedContestId,
+          is_contest_active: true -- 交割时默认直接点亮前台大闸
+        })
+        .eq('id', 1)
+        .select();
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        setActiveContestId(selectedContestId);
+        setIsContestActive(true);
+        addLog(`🎉 全局交割完美闭环！全网前台已同步聚焦于主赛场：【${targetContest.name}】`);
+        alert(`已成功将【${targetContest.name}】推举为当前全网唯一激活赛事！`);
+      }
+    } catch (err) {
+      addLog(`❌ 全局赛季交割失败: ${err.message}`);
+    }
+  };
+
+  // 🌟 核心重扣：主控制开关状态改写
   const handleToggleContestActive = async () => {
     const nextStatus = !isContestActive;
     try {
-      addLog(`🎛️ 正在将赛事全局开关调整为: ${nextStatus ? '🟢 开启' : '🔴 休眠'}...`);
-      const { error } = await supabase
+      addLog(`🎛️ 正在将当前主赛事的准入大闸调整为: ${nextStatus ? '🟢 开启' : '🔴 关闭'}...`);
+      const { data, error } = await supabase
         .from('site_settings')
         .update({ is_contest_active: nextStatus })
-        .eq('id', 1);
+        .eq('id', 1)
+        .select();
 
-      if (!error) {
-        setIsContestActive(nextStatus);
-        addLog(`✅ 赛事全局开关已成功同步至云端！状态：${nextStatus ? '激活' : '休眠'}`);
-      } else throw error;
+      if (error) throw error;
+      if (data && data.length > 0) {
+        setIsContestActive(data[0].is_contest_active);
+        addLog(`✅ 赛事大闸同步成功！当前全网准入状态：${data[0].is_contest_active ? '激活征稿中' : '休眠闭馆中'}`);
+      }
     } catch (err) {
-      addLog(`❌ 切换赛事开关失败: ${err.message}`);
-    }
-  };
-
-  // 🌟 核心控制：保存赛事名称与文案 (精确命中 id=1)
-  const handleSaveContestDetails = async () => {
-    setIsSavingDetails(true);
-    addLog("⏳ 正在向云端数据库写入赛事文案资产...");
-    try {
-      const { error } = await supabase
-        .from('site_settings')
-        .update({
-          contest_name: contestName,
-          contest_description: contestDescription
-        })
-        .eq('id', 1);
-
-      if (!error) {
-        addLog(`✅ 赛事基本信息锁定成功！当前主赛事：【${contestName}】`);
-        alert("赛事管理配置已成功锁定！");
-      } else throw error;
-    } catch (err) {
-      addLog(`❌ 赛事信息同步失败: ${err.message}`);
-    } finally {
-      setIsSavingDetails(false);
+      addLog(`❌ 切换大闸开关失败: ${err.message}`);
     }
   };
 
@@ -161,12 +241,13 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_BASE}/admin/engine/start-review`, { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success') {
-        addLog("🤖 [SUCCESS] 后台 AI 评审 Agent 已成功占领内存，开始批处理...");
+        addLog("🤖 [SUCCESS] 后台 AI 评审 Agent 已成功占领内存，开始顺序消耗当前待审队列...");
       }
     } catch (err) {
       addLog(`❌ 引擎唤醒失败: ${err.message}`);
     } finally {
       setIsReviewing(false);
+      setTimeout(() => fetchDashboardData(selectedContestId), 3000); 
     }
   };
 
@@ -176,12 +257,14 @@ export default function AdminDashboard() {
     try {
       const res = await fetch(`${API_BASE}/admin/engine/run-curation`, { method: 'POST' });
       const data = await res.json();
-      if (data.status === 'success') addLog("🏆 [SUCCESS] Top 5% 门槛分数已自动划定，金标写入完成。");
+      if (data.status === 'success') {
+        addLog("🏆 [SUCCESS] curator_script.py 执行完毕！Top 5% 门槛分数已自动划定，金标写入完成。");
+      }
     } catch (err) {
       addLog(`❌ 动态策展执行失败: ${err.message}`);
     } finally {
       setIsCurating(false);
-      fetchDashboardData();
+      fetchDashboardData(selectedContestId);
     }
   };
 
@@ -192,9 +275,10 @@ export default function AdminDashboard() {
         .from('contest_submissions')
         .update({ is_manual_recommended: nextStatus })
         .eq('id', id);
+
       if (!error) {
-        addLog(`💎 作品 [${id.substring(0,8)}] 主编推荐已变更为: ${nextStatus ? '开启' : '关闭'}`);
-        fetchDashboardData();
+        addLog(`💎 作品 [${id.substring(0,8)}] 主编推荐状态已变更为: ${nextStatus ? '开启' : '关闭'}`);
+        fetchDashboardData(selectedContestId);
       }
     } catch (err) {
       addLog(`❌ 手动推举失败: ${err.message}`);
@@ -207,7 +291,10 @@ export default function AdminDashboard() {
         .from('contest_submissions')
         .update({ manual_rank: parseInt(rankValue, 10) || 0 })
         .eq('id', id);
-      if (!error) addLog(`🎯 作品 [${id.substring(0,8)}] 展厅展示权重已修正为: ${rankValue}`);
+
+      if (!error) {
+        addLog(`🎯 作品 [${id.substring(0,8)}] 展厅展示权重已修正为: ${rankValue}`);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -218,8 +305,16 @@ export default function AdminDashboard() {
     window.location.reload();
   };
 
+  // 监听下拉菜单人为改变动作
+  const handleContestSelectionChange = (e) => {
+    const cid = e.target.value;
+    setSelectedContestId(cid);
+    fetchDashboardData(cid);
+  };
+
   return (
     <div style={{ padding: '30px', backgroundColor: '#0a0a0a', minHeight: '100vh', color: '#e0e0e0', fontFamily: 'monospace' }}>
+      {/* 顶部通栏 */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '30px' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '24px', color: '#fff' }}>🏛️ NAL 新艺文社数字化文学平台 · 中央管理台</h1>
@@ -230,110 +325,171 @@ export default function AdminDashboard() {
         </button>
       </header>
 
+      {/* 控制中心主矩阵 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '25px', marginBottom: '30px' }}>
         
-        {/* 🌟 模块 1：赛事全局主控开关 */}
+        {/* 🌟 全新战略核心模块：多赛季全局中控中枢 (New Feature) */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isContestActive ? '20px' : '0px' }}>
-            <h3 style={{ margin: 0, color: '#d8dee9', display: 'flex', alignItems: 'center', gap: '8px' }}>🎛️ 核心赛事准入控制中枢</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ color: isContestActive ? '#a3be8c' : '#bf616a', fontWeight: 'bold' }}>
-                {isContestActive ? "[ ACTIVE / 赛事进行中 ]" : "[ SLEEP / 赛事关闭中 ]"}
-              </span>
-              <button 
-                onClick={handleToggleContestActive} 
-                style={{ 
-                  padding: '6px 16px', 
-                  backgroundColor: isContestActive ? '#bf616a' : '#a3be8c', 
-                  color: isContestActive ? '#fff' : '#000', 
-                  border: 'none', 
-                  cursor: 'pointer', 
-                  fontWeight: 'bold' 
-                }}
+              <h3 style={{ margin: 0, color: '#ebcb8b' }}>📅 当前调度赛季视角:</h3>
+              <select 
+                value={selectedContestId}
+                onChange={handleContestSelectionChange}
+                style={{ padding: '8px 12px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', cursor: 'pointer', fontSize: '14px' }}
               >
-                {isContestActive ? "强行封印赛事" : "一键激活赛事"}
+                {contests.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.id === activeContestId ? " 🟢 [当前全网激活]" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              {selectedContestId !== activeContestId && (
+                <button 
+                  onClick={handleSwitchGlobalActiveContest}
+                  style={{ padding: '8px 16px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  🚀 将此赛季推举为当前全网主赛场
+                </button>
+              )}
+              <button 
+                onClick={() => setShowCreateForm(!showCreateForm)}
+                style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                {showCreateForm ? "收起筹备面板" : "➕ 筹备全新的文学赛季"}
               </button>
             </div>
           </div>
 
-          {/* 🌟 模块 1.5：赛事详情配置窗口 (仅在激活时展开) */}
-          {isContestActive && (
-            <div style={{ borderTop: '1px solid #2d323b', paddingTop: '20px', marginTop: '10px' }}>
-              <h4 style={{ margin: '0 0 15px 0', color: '#ebcb8b' }}>📝 数字化赛事详情设定</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          {/* 🌟 动态卡片：创建新赛季表单表层 */}
+          {showCreateForm && (
+            <form onSubmit={handleCreateNewContest} style={{ marginTop: '20px', borderTop: '1px dashed #333', paddingTop: '20px' }}>
+              <h4 style={{ margin: '0 0 15px 0', color: '#a3be8c' }}>📝 录入新赛季元数据资产</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
                 <div>
-                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>当前主赛事名称 (Contest Name):</label>
+                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>赛季唯一识别编码 (ID - 建议英文数字下划线):</label>
                   <input 
-                    type="text"
-                    value={contestName}
-                    onChange={e => setContestName(e.target.value)}
-                    placeholder="例如：2026 第一届『老儿童』先锋文学大赏..."
-                    style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace' }}
+                    type="text" 
+                    value={newContestId} 
+                    onChange={e => setNewContestId(e.target.value)}
+                    placeholder="例如: 2026_elderly_poetry"
+                    style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>赛事征稿宣章/描述 (Contest Description):</label>
-                  <textarea 
-                    value={contestDescription}
-                    onChange={e => setContestDescription(e.target.value)}
-                    placeholder="请输入赛事章程、评审门槛等基础描述文案..."
-                    rows={3}
-                    style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', resize: 'vertical' }}
+                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>官方赛季全称 (Contest Name):</label>
+                  <input 
+                    type="text" 
+                    value={newContestName} 
+                    onChange={e => setNewContestName(e.target.value)}
+                    placeholder="例如: 2026 第一届“老儿童”先锋诗歌文学大赏"
+                    style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace' }}
                   />
-                </div>
-                <div>
-                  <button 
-                    onClick={handleSaveContestDetails}
-                    disabled={isSavingDetails || !contestName}
-                    style={{ padding: '8px 20px', backgroundColor: '#ebcb8b', color: '#000', border: 'none', cursor: (!contestName || isSavingDetails) ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
-                  >
-                    {isSavingDetails ? "📡 同步中..." : "保存赛事详情"}
-                  </button>
                 </div>
               </div>
-            </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>官方征稿大纲宣章/描述 (Description):</label>
+                <textarea 
+                  value={newContestDesc} 
+                  onChange={e => setNewContestDesc(e.target.value)}
+                  placeholder="请输入该赛季具体的评审维度、奖项设置以及字数限制宣发文案..."
+                  rows={3}
+                  style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', resize: 'vertical' }}
+                />
+              </div>
+              <button type="submit" style={{ padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+                🔨 确认向数据库铸造新赛季
+              </button>
+            </form>
           )}
+
+          {/* 联动主开关控制行（仅当查看的赛季是主赛场时才给予大闸操控权） */}
+          <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#888', fontSize: '13px' }}>
+              当前全局主赛场准入状态：
+              <strong style={{ color: isContestActive ? '#a3be8c' : '#bf616a' }}>
+                {isContestActive ? "🟢 征稿全面开启中" : "🔴 准入大闸封印中"}
+              </strong>
+            </span>
+            {selectedContestId === activeContestId && (
+              <button 
+                onClick={handleToggleContestActive}
+                style={{ padding: '5px 15px', backgroundColor: isContestActive ? '#bf616a' : '#a3be8c', color: isContestActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+              >
+                {isContestActive ? "强行封印当前赛事大闸" : "一键激活当前赛事大闸"}
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* 模块 2：赛事时空大闸 */}
+        {/* 模块 1：赛事时空大闸 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
           <h3 style={{ margin: '0 0 15px 0', color: '#ebcb8b', display: 'flex', alignItems: 'center', gap: '8px' }}>⏳ 赛事时空大闸（Exhibition Time-Gate）</h3>
           <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
             <label>
               展厅开启日期: 
-              <input type="date" value={galleryTime.start} onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/>
+              <input 
+                type="date" 
+                value={galleryTime.start} 
+                onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))}
+                style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}
+              />
             </label>
             <label>
               展厅闭馆日期: 
-              <input type="date" value={galleryTime.end} onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/>
+              <input 
+                type="date" 
+                value={galleryTime.end} 
+                onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))}
+                style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}
+              />
             </label>
-            <button onClick={handleSaveTime} style={{ padding: '7px 15px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>同步锁定时间</button>
+            <button onClick={handleSaveTime} style={{ padding: '7px 15px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+              同步锁定时间
+            </button>
           </div>
         </div>
 
-        {/* 模块 3：评审引擎与全局策展调度 */}
+        {/* 模块 2：评审引擎与全局策展调度 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
           <h3 style={{ margin: '0 0 15px 0', color: '#88c0d0' }}>⚡ 评审引擎与全局选拔中控</h3>
           <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginBottom: '20px' }}>
             <div style={{ background: '#222', padding: '10px 20px', borderLeft: '4px solid #bf616a' }}>
-              <span style={{ color: '#888' }}>当前池内待评审作品（Pending）: </span>
+              <span style={{ color: '#888' }}>当前视角下待评审作品（Pending）: </span>
               <strong style={{ fontSize: '20px', color: '#bf616a', marginLeft: '10px' }}>{pendingCount}</strong> 篇
             </div>
-            <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0} style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
+            <button 
+              onClick={handleStartReviewEngine} 
+              disabled={isReviewing || pendingCount === 0}
+              style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+            >
               {isReviewing ? "🤖 专家组会诊中..." : "⚡ 启动全量离线评审"}
             </button>
-            <button onClick={handleRunGlobalCuration} disabled={isCurating || works.length === 0} style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+            <button 
+              onClick={handleRunGlobalCuration} 
+              disabled={isCurating || works.length === 0}
+              style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+            >
               {isCurating ? "📊 计算百分位中..." : "📊 执行全局动态策展 (Top 5%)"}
             </button>
           </div>
+
+          {/* 实时仿真控制台日志 */}
           <div style={{ background: '#000', padding: '15px', borderRadius: '4px', height: '120px', overflowY: 'auto', border: '1px solid #333', fontSize: '12px', lineHeight: '1.6' }}>
-            {logMessages.length === 0 ? <span style={{ color: '#4c566a' }}>&gt;_ 控制台暂无核心指令输出，等待中控调度...</span> : logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)}
+            {logMessages.length === 0 ? (
+              <span style={{ color: '#4c566a' }}>&gt;_ 控制台暂无核心指令输出，等待中控调度...</span>
+            ) : (
+              logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)
+            )}
           </div>
         </div>
 
-        {/* 模块 4：展厅人工推举与权重拣选 */}
+        {/* 模块 3：展厅人工推举与权重拣选 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
-          <h3 style={{ margin: '0 0 15px 0', color: '#b48ead' }}>🏆 展厅作品库选拔（已评审通过共 {works.length} 篇）</h3>
+          <h3 style={{ margin: '0 0 15px 0', color: '#b48ead' }}>🏆 展厅作品库选拔（当前视角通过共 {works.length} 篇）</h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
               <thead>
@@ -354,12 +510,21 @@ export default function AdminDashboard() {
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
                     <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
                     <td style={{ padding: '10px' }}>
-                      <button onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)} style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px' }}>
+                      <button 
+                        onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)}
+                        style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px' }}
+                      >
                         {work.is_manual_recommended ? "💎 已推举" : "⚪ 选入展厅"}
                       </button>
                     </td>
                     <td style={{ padding: '10px' }}>
-                      <input type="number" defaultValue={work.manual_rank} onBlur={(e) => handleUpdateRank(work.id, e.target.value)} style={{ width: '50px', padding: '3px', background: '#222', color: '#fff', border: '1px solid #444', textAlign: 'center' }} placeholder="0"/>
+                      <input 
+                        type="number" 
+                        defaultValue={work.manual_rank} 
+                        onBlur={(e) => handleUpdateRank(work.id, e.target.value)}
+                        style={{ width: '50px', padding: '3px', background: '#222', color: '#fff', border: '1px solid #444', textAlign: 'center' }}
+                        placeholder="0"
+                      />
                     </td>
                   </tr>
                 ))}
