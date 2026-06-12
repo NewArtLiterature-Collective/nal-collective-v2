@@ -15,6 +15,8 @@ class TimeSettings(BaseModel):
 
 # 复用的鉴权检查
 def verify_admin(x_admin_key: str):
+    print(f"🔑 收到的 admin key: [{x_admin_key}]")  # 临时加这行
+    print(f"🔑 期望的 admin key: [{settings.ADMIN_SECRET_KEY}]")  # 临时加这行
     if x_admin_key != settings.ADMIN_SECRET_KEY:
         raise HTTPException(status_code=403, detail="无权限")
 
