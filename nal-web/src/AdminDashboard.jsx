@@ -101,7 +101,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // 🌟 将当前选中的赛季的时间数据注入到大闸输入框中
   const syncTimeState = (contestId, list) => {
     const target = list.find(c => c.id === contestId);
     if (target) {
@@ -186,7 +185,6 @@ export default function AdminDashboard() {
     } catch (err) { addLog(`❌ 切换失败: ${err.message}`); }
   };
 
-  // 🌟 核心改进：直接将三种时间状态直写至对应的赛季资产表中
   const handleSaveTime = async () => {
     try {
       addLog("⏳ 正在同步截稿时间与展厅大闸至云端...");
@@ -313,18 +311,53 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* 🌟 核心改进：赛事时空大闸加入了完整的截稿时间控制 */}
+        {/* 🌟 核心排版改进：将截稿死线与展厅时空大闸分为两行排列 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
-          <h3 style={{ margin: '0 0 15px 0', color: '#ebcb8b', display: 'flex', alignItems: 'center', gap: '8px' }}>⏳ 赛事生命周期与展厅时空大闸</h3>
-          <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ color: '#d08770', fontWeight: 'bold' }}>
-              🔴 截稿死线 (截止后转入死库评审): 
-              <input type="datetime-local" value={galleryTime.deadline} onChange={e => setGalleryTime(prev => ({ ...prev, deadline: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/>
-            </label>
-            <span style={{color: '#444'}}>|</span>
-            <label>展厅启封: <input type="date" value={galleryTime.start} onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/></label>
-            <label>展厅闭馆: <input type="date" value={galleryTime.end} onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))} style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444' }}/></label>
-            <button onClick={handleSaveTime} style={{ padding: '7px 15px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>云端同步锁定</button>
+          <h3 style={{ margin: '0 0 20px 0', color: '#ebcb8b', display: 'flex', alignItems: 'center', gap: '8px' }}>⏳ 赛事生命周期与展厅时空大闸</h3>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            {/* 第一行：截稿防线 */}
+            <div style={{ display: 'flex', alignItems: 'center', paddingBottom: '15px', borderBottom: '1px dashed #333' }}>
+              <label style={{ color: '#d08770', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
+                🔴 前台截稿死线 (截止后转入死库评审，不可提交新稿): 
+                <input 
+                  type="datetime-local" 
+                  value={galleryTime.deadline} 
+                  onChange={e => setGalleryTime(prev => ({ ...prev, deadline: e.target.value }))} 
+                  style={{ marginLeft: '15px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px' }}
+                />
+              </label>
+            </div>
+
+            {/* 第二行：展厅大闸 */}
+            <div style={{ display: 'flex', gap: '25px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ color: '#a3be8c', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
+                🏛️ 展厅启封日期: 
+                <input 
+                  type="date" 
+                  value={galleryTime.start} 
+                  onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))} 
+                  style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px' }}
+                />
+              </label>
+              
+              <label style={{ color: '#a3be8c', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
+                展厅闭馆日期: 
+                <input 
+                  type="date" 
+                  value={galleryTime.end} 
+                  onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))} 
+                  style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px' }}
+                />
+              </label>
+
+              <button 
+                onClick={handleSaveTime} 
+                style={{ marginLeft: 'auto', padding: '8px 20px', backgroundColor: '#a3be8c', color: '#000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                云端同步锁定
+              </button>
+            </div>
           </div>
         </div>
 
@@ -367,12 +400,12 @@ export default function AdminDashboard() {
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
                     <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
                     <td style={{ padding: '10px' }}>
-                      <button onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)} style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px' }}>
+                      <button onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)} style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', borderRadius: '4px' }}>
                         {work.is_manual_recommended ? "💎 已推举" : "⚪ 选入展厅"}
                       </button>
                     </td>
                     <td style={{ padding: '10px' }}>
-                      <input type="number" defaultValue={work.manual_rank} onBlur={(e) => handleUpdateRank(work.id, e.target.value)} style={{ width: '50px', padding: '3px', background: '#222', color: '#fff', border: '1px solid #444', textAlign: 'center' }} placeholder="0"/>
+                      <input type="number" defaultValue={work.manual_rank} onBlur={(e) => handleUpdateRank(work.id, e.target.value)} style={{ width: '50px', padding: '4px', background: '#222', color: '#fff', border: '1px solid #444', textAlign: 'center', borderRadius: '4px' }} placeholder="0"/>
                     </td>
                   </tr>
                 ))}
