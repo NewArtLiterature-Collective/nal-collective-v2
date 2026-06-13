@@ -105,7 +105,8 @@ export default function AdminDashboard() {
     const target = list.find(c => c.id === contestId);
     if (target) {
       setGalleryTime({
-        deadline: target.submission_deadline ? target.submission_deadline.substring(0, 16) : '',
+        // 🌟 核心修正：substring 截取前 10 位 (YYYY-MM-DD)，剔除时分干扰
+        deadline: target.submission_deadline ? target.submission_deadline.substring(0, 10) : '',
         start: target.gallery_start_time ? target.gallery_start_time.substring(0, 10) : '',
         end: target.gallery_end_time ? target.gallery_end_time.substring(0, 10) : ''
       });
@@ -228,7 +229,7 @@ export default function AdminDashboard() {
   const handleToggleManualRecommend = async (id, currentStatus) => {
     try {
       const nextStatus = !currentStatus;
-      const { data, error } = await supabase.from('contest_submissions').update({ is_manual_recommended: nextStatus }).eq('id', id).select();
+      const { data, error = null } = await supabase.from('contest_submissions').update({ is_manual_recommended: nextStatus }).eq('id', id).select();
       if (error) throw error;
       if (!data || data.length === 0) { addLog(`❌ 推举失败：权限拦截。`); return; }
       addLog(`💎 作品 [${id.substring(0,8)}] 推举已变更为: ${nextStatus ? '开启' : '关闭'}`);
@@ -311,7 +312,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* 🌟 核心排版改进：将截稿死线与展厅时空大闸分为两行排列 */}
+        {/* 赛事时空大闸 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
           <h3 style={{ margin: '0 0 20px 0', color: '#ebcb8b', display: 'flex', alignItems: 'center', gap: '8px' }}>⏳ 赛事生命周期与展厅时空大闸</h3>
           
@@ -321,10 +322,10 @@ export default function AdminDashboard() {
               <label style={{ color: '#d08770', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
                 🔴 前台截稿死线 (截止后转入死库评审，不可提交新稿): 
                 <input 
-                  type="datetime-local" 
+                  type="date" // 🌟 核心修正：类型调整为 date，彻底移除时分选择
                   value={galleryTime.deadline} 
                   onChange={e => setGalleryTime(prev => ({ ...prev, deadline: e.target.value }))} 
-                  style={{ marginLeft: '15px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px' }}
+                  style={{ marginLeft: '15px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px', fontFamily: 'monospace' }}
                 />
               </label>
             </div>
@@ -337,7 +338,7 @@ export default function AdminDashboard() {
                   type="date" 
                   value={galleryTime.start} 
                   onChange={e => setGalleryTime(prev => ({ ...prev, start: e.target.value }))} 
-                  style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px' }}
+                  style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px', fontFamily: 'monospace' }}
                 />
               </label>
               
@@ -347,7 +348,7 @@ export default function AdminDashboard() {
                   type="date" 
                   value={galleryTime.end} 
                   onChange={e => setGalleryTime(prev => ({ ...prev, end: e.target.value }))} 
-                  style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px' }}
+                  style={{ marginLeft: '10px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px', fontFamily: 'monospace' }}
                 />
               </label>
 
