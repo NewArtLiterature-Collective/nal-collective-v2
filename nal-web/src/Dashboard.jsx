@@ -16,7 +16,7 @@ export default function Dashboard({ session }) {
   
   // 🌟 动态多赛季全局中控状态
   const [isContestActive, setIsContestActive] = useState(false);
-  const [activeContestId, setActiveContestId] = useState(''); // 动态追踪主赛场指针
+  const [activeContestId, setActiveContestId] = useState(''); 
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
 
@@ -93,7 +93,6 @@ export default function Dashboard({ session }) {
 
   // --- 2. 初始化与监听逻辑 ---
 
-  // 🌟 核心改进：极其纯粹的当前赛季数据拉取，不再拉取历史旧赛事的废弃数据
   const fetchUserSubmissions = useCallback(async () => {
     if (!session?.user?.id || !activeContestId) return;
     setIsRefreshing(true);
@@ -102,7 +101,7 @@ export default function Dashboard({ session }) {
       .from('contest_submissions')
       .select('id, status, created_at, ai_total_score, error_msg, exhibition_ready, is_manual_recommended, contest_id') 
       .eq('user_id', session.user.id)
-      .eq('contest_id', activeContestId) // 🚨 绝对隔离：只拉取本届大赛的数据
+      .eq('contest_id', activeContestId) 
       .order('created_at', { ascending: false });
     
     if (data) setUserSubmissions(data);
@@ -163,7 +162,6 @@ export default function Dashboard({ session }) {
     fetchModels();
   }, [userRole, isPro]);
 
-  // 依赖 activeContestId 就绪后，再启动当前赛季的数据拉取和订阅大阵
   useEffect(() => {
     if (activeContestId && session?.user?.id) {
       fetchUserSubmissions();
@@ -289,7 +287,7 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
   };
 
-  // 因为 userSubmissions 已被动态隔离为仅存“本届大赛的数据”，所以 alreadySubmitted 就是极其纯粹的“本届已投”标识
+  // 纯粹的“本届已投”标识
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
 
@@ -341,7 +339,6 @@ export default function Dashboard({ session }) {
             <h2 style={styles.logo}>NAL Collective</h2>
           </div>
           <nav style={styles.nav}>
-            {/* 大赛动态：有大赛才展示 */}
             {isContestActive && (
               <button onClick={() => setActiveTab('dynamics')} style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}>
                 🔥 大赛官方动态
@@ -353,7 +350,6 @@ export default function Dashboard({ session }) {
             <button onClick={() => setActiveTab('picturebook')} style={activeTab === 'picturebook' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
             
-            {/* 🌟 极致克制：只有在赛事激活且拥有门票资格时，投稿入口才会破土而出 */}
             {(isContestActive && isEligibleForContest) && (
               <button 
                 onClick={() => setActiveTab('contest')} 
@@ -442,20 +438,37 @@ export default function Dashboard({ session }) {
               <div style={{ fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' }}>
                 {contestDescription || '具体章程与评审机制正在获取中...'}
               </div>
+              
+              {/* 🌟 核心改进：三重状态智能侦测呈现入口 UI */}
               <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
-                <button 
-                  onClick={() => { if (isEligibleForContest) setActiveTab('contest'); else handlePayment('contestant'); }}
-                  style={{ padding: '16px 32px', background: '#10b981', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
-                >
-                  {isEligibleForContest ? "⚡ 您已获资格，前往投稿通道" : "🚀 立即报名获取参赛资格"}
-                </button>
+                {alreadySubmitted ? (
+                  <button 
+                    onClick={() => setActiveTab('contest')}
+                    style={{ padding: '16px 32px', background: '#4f46e5', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)' }}
+                  >
+                    ✅ 您已提交本届作品，点击查看档案与进度
+                  </button>
+                ) : isEligibleForContest ? (
+                  <button 
+                    onClick={() => setActiveTab('contest')}
+                    style={{ padding: '16px 32px', background: '#10b981', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
+                  >
+                    ⚡ 您已获资格，前往正式投稿通道
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => handlePayment('contestant')}
+                    style={{ padding: '16px 32px', background: '#10b981', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
+                  >
+                    🚀 立即报名获取参赛资格
+                  </button>
+                )}
               </div>
             </div>
           ) : activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
-                {/* 🌟 极致干净的锁死卡片：只要本届投了就不能再改 */}
                 {alreadySubmitted ? (
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
@@ -514,7 +527,6 @@ export default function Dashboard({ session }) {
                 )}
               </div>
 
-              {/* 右侧实时进度，基于双轨门禁标识宣发入选成就 */}
               <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                   <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 本届战绩档案</h4>
