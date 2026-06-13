@@ -267,33 +267,49 @@ export default function AdminDashboard() {
     }
   };
 
+  // 🌟 升级版：带防静默空转侦测的“主编推荐”大闸
   const handleToggleManualRecommend = async (id, currentStatus) => {
     try {
       const nextStatus = !currentStatus;
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('contest_submissions')
         .update({ is_manual_recommended: nextStatus })
-        .eq('id', id);
+        .eq('id', id)
+        .select(); // 👈 核心装甲：强制索要更新后的数据
 
-      if (!error) {
-        addLog(`💎 作品 [${id.substring(0,8)}] 主编推荐状态已变更为: ${nextStatus ? '开启' : '关闭'}`);
-        fetchDashboardData(selectedContestId);
+      if (error) throw error;
+
+      // 🚨 抓包拦截：如果返回空数组，说明被 RLS 权限静默抛弃了
+      if (!data || data.length === 0) {
+        addLog(`❌ 推举失败：未生效！请求被数据库底层 RLS 权限静默拦截。`);
+        return;
       }
+
+      addLog(`💎 作品 [${id.substring(0,8)}] 主编推荐状态已变更为: ${nextStatus ? '开启' : '关闭'}`);
+      fetchDashboardData(selectedContestId); // 刷新当前赛季展厅视图
+      
     } catch (err) {
       addLog(`❌ 手动推举失败: ${err.message}`);
     }
   };
 
+  // 🌟 升级版：带防静默空转侦测的“展厅权重排序”大闸
   const handleUpdateRank = async (id, rankValue) => {
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('contest_submissions')
         .update({ manual_rank: parseInt(rankValue, 10) || 0 })
-        .eq('id', id);
+        .eq('id', id)
+        .select(); // 👈 核心装甲
 
-      if (!error) {
-        addLog(`🎯 作品 [${id.substring(0,8)}] 展厅展示权重已修正为: ${rankValue}`);
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        addLog(`❌ 权重修正失败：请求被数据库底层 RLS 权限静默拦截。`);
+        return;
       }
+
+      addLog(`🎯 作品 [${id.substring(0,8)}] 展厅展示权重已修正为: ${rankValue}`);
     } catch (err) {
       console.error(err);
     }
