@@ -14,12 +14,13 @@ export default function Dashboard({ session }) {
   const [selectedImages, setSelectedImages] = useState([]);
   const [selectedDocx, setSelectedDocx] = useState(null); 
   
-  // 🌟 全局赛事开关及文案状态
+  // 🌟 动态多赛季全局中控状态
   const [isContestActive, setIsContestActive] = useState(false);
+  const [activeContestId, setActiveContestId] = useState(''); // 动态追踪主赛场指针
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
 
-  // 专门存储每一页图文描述的数组（长度与 selectedImages 永远一致）
+  // 专门存储每一页图文描述的数组
   const [imageTexts, setImageTexts] = useState([]); 
 
   // 参赛作品专属状态
@@ -55,10 +56,9 @@ export default function Dashboard({ session }) {
     }
   }
 
-  // 2. 赛事门票动态防线
-  const currentContestId = "2026_contest"; 
+  // 2. 赛事门票动态防线（与当前激活的主赛场 ID 强绑定）
   const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
-                              rawUserMetadata.paid_contest_id === currentContestId;
+                              rawUserMetadata.paid_contest_id === activeContestId;
 
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
@@ -70,15 +70,11 @@ export default function Dashboard({ session }) {
     pro_credits: (isProExpired && usage.pro_credits >= 9999) ? 0 : Math.max(0, Number(usage.pro_credits || 0))
   };
 
-  // 4. 特权卡槽熔断
   const hasAddon = !isProExpired && (displayUsage.pro_credits > 0);
-    
   const isEligibleForContest = isContestant || isPro;
 
   const maxImageCount = (() => {
-    if (imageType === 'illustration') {
-      return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
-    }
+    if (imageType === 'illustration') return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
     return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); 
   })();
 
@@ -97,32 +93,30 @@ export default function Dashboard({ session }) {
 
   // --- 2. 初始化与监听逻辑 ---
 
+  // 🌟 核心改进：极其纯粹的当前赛季数据拉取，不再拉取历史旧赛事的废弃数据
   const fetchUserSubmissions = useCallback(async () => {
-    if (!isEligibleForContest) return;
+    if (!session?.user?.id || !activeContestId) return;
     setIsRefreshing(true);
+    
     const { data } = await supabase
       .from('contest_submissions')
-      .select('id, status, created_at, ai_total_score, error_msg') 
-      .eq('user_id', session?.user?.id)
+      .select('id, status, created_at, ai_total_score, error_msg, exhibition_ready, is_manual_recommended, contest_id') 
+      .eq('user_id', session.user.id)
+      .eq('contest_id', activeContestId) // 🚨 绝对隔离：只拉取本届大赛的数据
       .order('created_at', { ascending: false });
     
     if (data) setUserSubmissions(data);
     setTimeout(() => setIsRefreshing(false), 500); 
-  }, [session?.user?.id, isEligibleForContest]);
+  }, [session?.user?.id, activeContestId]);
 
   const refreshUserMetadata = async () => {
     const { data: { session: currentSession } } = await supabase.auth.refreshSession();
     const user = currentSession?.user || session?.user;
-    
     if (user) {
       let meta = user.user_metadata || {};
       if (meta.flash_left === undefined) {
-        const { data, error } = await supabase.auth.updateUser({
-          data: { flash_left: 5 } 
-        });
-        if (!error && data?.user) {
-          meta = data.user.user_metadata;
-        }
+        const { data, error } = await supabase.auth.updateUser({ data: { flash_left: 5 } });
+        if (!error && data?.user) meta = data.user.user_metadata;
       }
       setRawUserMetadata(meta);
       setUsage({
@@ -132,23 +126,20 @@ export default function Dashboard({ session }) {
     }
   };
 
-  // 🌟 核心同步调度：拉取赛事详情并重置引导页
   const fetchSiteSettings = async () => {
     try {
-      const { data, error } = await supabase
-        .from('site_settings')
-        .select('is_contest_active, contest_name, contest_description')
-        .single(); 
-        
-      if (!error && data) {
-        setIsContestActive(data.is_contest_active);
-        setContestName(data.contest_name || 'NAL 官方精选文学赏');
-        setContestDescription(data.contest_description || '具体章程与评审机制正在获取中...');
-        
-        // 门禁：入馆时，无论赛事是否开启，都自动切到“大赛官方动态”展示平台名号
-        if (activeTab === 'text') {
-           setActiveTab('dynamics');
+      const { data: settings } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle();
+      if (settings) {
+        setIsContestActive(settings.is_contest_active);
+        if (settings.current_contest_id) {
+          setActiveContestId(settings.current_contest_id); 
+          const { data: contestData } = await supabase.from('contests').select('*').eq('id', settings.current_contest_id).maybeSingle();
+          if (contestData) {
+            setContestName(contestData.name);
+            setContestDescription(contestData.description);
+          }
         }
+        if (activeTab === 'text' && settings.is_contest_active) setActiveTab('dynamics');
       }
     } catch (err) {
       console.error("⚠️ 读取全局配置失败:", err);
@@ -158,16 +149,7 @@ export default function Dashboard({ session }) {
   useEffect(() => {
     fetchSiteSettings();
     refreshUserMetadata();
-    fetchUserSubmissions(); 
     
-    const submissionSubscription = supabase
-      .channel('contest_changes')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'contest_submissions', filter: `user_id=eq.${session?.user?.id}` }, 
-        () => fetchUserSubmissions()
-      )
-      .subscribe();
-
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name, description');
       if (data) {
@@ -179,23 +161,26 @@ export default function Dashboard({ session }) {
       }
     };
     fetchModels();
+  }, [userRole, isPro]);
 
-    return () => {
-      supabase.removeChannel(submissionSubscription); 
-    };
-  }, [userRole, isPro, fetchUserSubmissions, session?.user?.id]);
+  // 依赖 activeContestId 就绪后，再启动当前赛季的数据拉取和订阅大阵
+  useEffect(() => {
+    if (activeContestId && session?.user?.id) {
+      fetchUserSubmissions();
+      const submissionSubscription = supabase
+        .channel('contest_changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'contest_submissions', filter: `user_id=eq.${session.user.id}` }, () => fetchUserSubmissions())
+        .subscribe();
+      return () => supabase.removeChannel(submissionSubscription);
+    }
+  }, [activeContestId, session?.user?.id, fetchUserSubmissions]);
 
   // --- 3. 业务处理函数 ---
-
-  const removeContestImage = (index) => {
-    setContestImages(prev => prev.filter((_, i) => i !== index));
-  };
-
+  const removeContestImage = (index) => setContestImages(prev => prev.filter((_, i) => i !== index));
   const removeSelectedImage = (index) => {
     setSelectedImages(prev => prev.filter((_, i) => i !== index));
     setImageTexts(prev => prev.filter((_, i) => i !== index));
   };
-  
   const handleImageTextChange = (index, text) => {
     const newTexts = [...imageTexts];
     newTexts[index] = text;
@@ -223,9 +208,7 @@ export default function Dashboard({ session }) {
   const handleDocxChange = useCallback((e) => {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
-      if (file.size > maxDocxSize) {
-        return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
-      }
+      if (file.size > maxDocxSize) return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
       setSelectedDocx(file);
     }
   }, [maxDocxSize, maxDocSizeDisplay]); 
@@ -233,20 +216,16 @@ export default function Dashboard({ session }) {
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
     const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
-    if (oversizedFiles.length > 0) {
-      return alert(`文件过大！单张插画不得超过 ${maxImageSizeMB}MB。`);
-    }
+    if (oversizedFiles.length > 0) return alert(`文件过大！单张插画不得超过 ${maxImageSizeMB}MB。`);
     setContestImages(prev => [...prev, ...files].slice(0, 2));
   };
 
   const triggerEvaluation = async () => {
     const pageTextsJson = isPro ? JSON.stringify(imageTexts) : null;
     const success = await evaluate({
-      activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId,
-      page_texts_json: pageTextsJson
+      activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, page_texts_json: pageTextsJson
     });
     setTimeout(refreshUserMetadata, 1500);
-
     if (success) {
       setWorkText(''); 
       setSelectedImages([]);
@@ -274,16 +253,19 @@ export default function Dashboard({ session }) {
         imageUrls.push(data.publicUrl);
       }
 
+      const targetContestId = activeContestId || '2026_contest';
+
       const { error: dbError } = await supabase.from('contest_submissions').insert({
         user_id: session?.user?.id,
         user_email: session?.user?.email,
         text_content: contestText,
         image_urls: imageUrls,
-        status: 'pending'
+        status: 'pending',
+        contest_id: targetContestId
       });
       if (dbError) throw dbError;
 
-      alert("🎉 提交成功！评审已自动启动，请在右侧追踪实时进度。");
+      alert("🎉 提交成功！您的作品已封存并进入智能评审大阵，不可修改。请在右侧追踪实时进度。");
       setContestText('');
       setContestImages([]);
       fetchUserSubmissions(); 
@@ -298,8 +280,8 @@ export default function Dashboard({ session }) {
     const badges = {
       pending: { label: '⏳ 待校验', color: '#94a3b8' },
       processing: { label: '🧠 评审中', color: '#4f46e5' },
-      success: { label: '✅ 已入选', color: '#10b981' },
-      selected: { label: '🎉 已入选', color: '#10b981' }, 
+      success: { label: '✅ 评审通过', color: '#10b981' },
+      selected: { label: '🎉 评审通过', color: '#10b981' }, 
       rejected: { label: '🥀 遗憾落选', color: '#64748b' }, 
       invalid: { label: '❌ 未通过', color: '#ef4444' }
     };
@@ -307,6 +289,7 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
   };
 
+  // 因为 userSubmissions 已被动态隔离为仅存“本届大赛的数据”，所以 alreadySubmitted 就是极其纯粹的“本届已投”标识
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
 
@@ -358,21 +341,26 @@ export default function Dashboard({ session }) {
             <h2 style={styles.logo}>NAL Collective</h2>
           </div>
           <nav style={styles.nav}>
-            {/* 🚨 优化核心：大赛官方动态按钮永久常驻，去除 isContestActive 开关 */}
-            <button 
-              onClick={() => setActiveTab('dynamics')} 
-              style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}
-            >
-              🔥 大赛官方动态
-            </button>
-
+            {/* 大赛动态：有大赛才展示 */}
+            {isContestActive && (
+              <button onClick={() => setActiveTab('dynamics')} style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}>
+                🔥 大赛官方动态
+              </button>
+            )}
+            
             <button onClick={() => setActiveTab('guide')} style={activeTab === 'guide' ? styles.navActive : styles.navBtn}>💡 创作指导</button>
             <button onClick={() => setActiveTab('text')} style={activeTab === 'text' ? styles.navActive : styles.navBtn}>📝 文字评审</button>
             <button onClick={() => setActiveTab('picturebook')} style={activeTab === 'picturebook' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
             
+            {/* 🌟 极致克制：只有在赛事激活且拥有门票资格时，投稿入口才会破土而出 */}
             {(isContestActive && isEligibleForContest) && (
-              <button onClick={() => setActiveTab('contest')} style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}>🏆 提交参赛作品</button>
+              <button 
+                onClick={() => setActiveTab('contest')} 
+                style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}
+              >
+                🏆 提交参赛作品
+              </button>
             )}
           </nav>
         </div>
@@ -380,21 +368,16 @@ export default function Dashboard({ session }) {
         <div style={{ marginTop: 'auto' }}>
           <div style={styles.upgradeBox}>
             <h4 style={styles.upgradeTitle}>{isContestActive ? (contestName || "NAL官方征文大赛") : "NAL 专属资源中心"}</h4>
-            
             {isContestActive && (
               (isContestant || isPro) ? (
-                <div style={{ color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold' }}>
-                  ✅ 已获参赛资格
-                </div>
+                <div style={{ color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold' }}>✅ 已获参赛资格</div>
               ) : (
                 <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
               )
             )}
-            
             {(!isPro && usage.flash <= 0 && usage.pro_credits <= 0) && (
               <button onClick={() => handlePayment('addon')} style={styles.addonBtn}>🔋 购买资源加油包</button>
             )}
-            
             {!isPro && (
               <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
             )}
@@ -409,9 +392,9 @@ export default function Dashboard({ session }) {
 
       <main style={styles.main}>
         <div style={styles.header}>
-          <h2 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
+          <h2 style={{ margin: '0', fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
             {activeTab === 'dynamics' && '🔥 大赛官方动态'}
-            {activeTab === 'contest' && '🏆 参赛作品提交'}
+            {activeTab === 'contest' && '🏆 参赛作品提交与进度'}
             {activeTab === 'guide' && '💡 创作指导'}
             {activeTab === 'text' && '📝 文字评审'}
             {activeTab === 'picturebook' && '🎨 绘本插画'}
@@ -448,147 +431,93 @@ export default function Dashboard({ session }) {
         </div>
 
         <div style={styles.content}>
-          {/* 🌟 核心改进：大赛动态展示面板，依据全局开关进行条件渲染 */}
           {activeTab === 'dynamics' ? (
-            <div style={{
-              padding: '40px', borderRadius: '16px',
-              background: 'linear-gradient(145deg, #111827 0%, #1f2937 100%)',
-              border: '1px solid #374151', color: '#f3f4f6',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
-            }}>
-              {/* 依据开关动态变换状态徽章颜色与文本 */}
-              <div style={{ 
-                display: 'inline-block', 
-                padding: '6px 16px', 
-                background: isContestActive ? '#ef4444' : '#475569', 
-                color: '#fff', 
-                fontSize: '13px', 
-                fontWeight: 'bold', 
-                borderRadius: '6px', 
-                marginBottom: '20px' 
-              }}>
-                {isContestActive ? "🔥 官方征稿进行中" : "🌙 赛事周期已休眠"}
+            <div style={{ padding: '40px', borderRadius: '16px', background: 'linear-gradient(145deg, #111827 0%, #1f2937 100%)', border: '1px solid #374151', color: '#f3f4f6', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
+              <div style={{ display: 'inline-block', padding: '6px 16px', background: '#ef4444', color: '#fff', fontSize: '13px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '20px' }}>
+                🔥 官方征稿进行中
               </div>
-              
-              {/* 始终向用户高亮呈现当前被录入的赛事名称 */}
               <h2 style={{ fontSize: '32px', color: '#fbbf24', margin: '0 0 20px 0', fontWeight: '900', letterSpacing: '-0.5px' }}>
                 {contestName || 'NAL 年度文学大赏'}
               </h2>
-              
-              {isContestActive ? (
-                /* 分支 A：当前赛事已激活 —— 解封具体章程及投递按钮 */
-                <>
-                  <div style={{ 
-                    fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', 
-                    background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', 
-                    whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' 
-                  }}>
-                    {contestDescription || '具体章程与评审机制正在获取中...'}
-                  </div>
-
-                  <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
-                    <button 
-                      onClick={() => {
-                        if (isEligibleForContest) setActiveTab('contest');
-                        else handlePayment('contestant');
-                      }}
-                      style={{ 
-                        padding: '16px 32px', background: '#10b981', color: '#fff', 
-                        fontWeight: 'bold', border: 'none', borderRadius: '8px', 
-                        cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' 
-                      }}
-                    >
-                      {isEligibleForContest ? "⚡ 您已获资格，前往投稿通道" : "🚀 立即报名获取参赛资格"}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                /* 分支 B：当前赛事处于关闭状态 —— 隐藏内容并输出降级提示 */
-                <div style={{ 
-                  fontSize: '15px', color: '#9ca3af', lineHeight: '1.8',
-                  background: 'rgba(0,0,0,0.15)', padding: '25px', borderRadius: '12px', 
-                  border: '1px dashed #4b5563', textAlign: 'center'
-                }}>
-                  💡 本届文学赛事目前处于未激活或筹备休眠期。征稿详细章程、特定评审限制及报名系统已被隐藏，请静待 NAL 评审委员会的重新启封。
-                </div>
-              )}
+              <div style={{ fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' }}>
+                {contestDescription || '具体章程与评审机制正在获取中...'}
+              </div>
+              <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
+                <button 
+                  onClick={() => { if (isEligibleForContest) setActiveTab('contest'); else handlePayment('contestant'); }}
+                  style={{ padding: '16px 32px', background: '#10b981', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
+                >
+                  {isEligibleForContest ? "⚡ 您已获资格，前往投稿通道" : "🚀 立即报名获取参赛资格"}
+                </button>
+              </div>
             </div>
-
           ) : activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
+              
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
-                <div style={{ marginTop: '0px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
-                  <textarea 
-                    style={{
-                      ...styles.textarea, 
-                      height: '380px', 
-                      width: '100%', 
-                      boxSizing: 'border-box',
-                      backgroundColor: '#f9fafb',
-                      resize: 'none'
-                    }}
-                    placeholder="在此粘贴您的参赛作品文字内容..."
-                    value={contestText}
-                    onChange={(e) => {
-                      if (e.target.value.length <= 800) setContestText(e.target.value);
-                    }}
-                  />
-                  <div style={{ textAlign: 'right', fontSize: '12px', color: contestText.length >= 800 ? '#ef4444' : '#94a3b8', marginTop: '5px' }}>
-                    {contestText.length} / 800 字
+                {/* 🌟 极致干净的锁死卡片：只要本届投了就不能再改 */}
+                {alreadySubmitted ? (
+                  <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
+                    <h3 style={{ color: '#1e293b', marginBottom: '15px', fontSize: '20px' }}>作品大典已封存，进入评审程序</h3>
+                    <p style={{ color: '#64748b', fontSize: '15px', lineHeight: '1.8', maxWidth: '400px', margin: '0 auto' }}>
+                      您已成功提交本届赛事的参赛作品。<br/>
+                      为保证全量策展与 AI 离线评审的绝对公平，<strong style={{color: '#ef4444'}}>所有选手限投一次且提交后不可修改、不可撤回</strong>。<br/>
+                      请在右侧实时关注作品的入展状态。
+                    </p>
                   </div>
-                </div>
-
-                <div style={{ marginTop: '20px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>
-                    作品插画 (需 1-2 幅，单张限制 <strong>{maxImageSizeMB}MB</strong>)
-                  </label>
-                  
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {contestImages.map((file, index) => (
-                      <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
-                          🖼️ {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
-                        </span>
-                        <button 
-                          onClick={() => removeContestImage(index)}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                        >
-                          移除
-                        </button>
+                ) : (
+                  <>
+                    <div style={{ marginTop: '0px' }}>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
+                      <textarea 
+                        style={{ ...styles.textarea, height: '380px', width: '100%', boxSizing: 'border-box', backgroundColor: '#f9fafb', resize: 'none' }}
+                        placeholder="在此粘贴您的参赛作品文字内容..."
+                        value={contestText}
+                        onChange={(e) => { if (e.target.value.length <= 800) setContestText(e.target.value); }}
+                      />
+                      <div style={{ textAlign: 'right', fontSize: '12px', color: contestText.length >= 800 ? '#ef4444' : '#94a3b8', marginTop: '5px' }}>
+                        {contestText.length} / 800 字
                       </div>
-                    ))}
-                    
-                    {contestImages.length < 2 && (
-                      <div style={{...styles.uploadArea, padding: '15px'}}>
-                        <input type="file" id="c-img" hidden multiple accept="image/*" onChange={handleContestImageUpload} />
-                        <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>
-                          {contestImages.length === 0 ? "➕ 上传第一幅插画" : "➕ 上传第二幅插画"}
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                    </div>
 
-                <button 
-                  onClick={submitContestWork} 
-                  disabled={isSubmitting || alreadySubmitted} 
-                  style={{
-                    ...styles.submitBtn, 
-                    width: '100%', 
-                    marginTop: '30px', 
-                    backgroundColor: alreadySubmitted ? '#94a3b8' : '#4f46e5',
-                    cursor: alreadySubmitted ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {isSubmitting ? "正在上传..." : (alreadySubmitted ? "🔒 您已提交作品" : "📤 确认提交参赛作品")}
-                </button>
-                {alreadySubmitted && <p style={{fontSize: '11px', color: '#94a3b8', textAlign: 'center', marginTop: '10px'}}>注：目前每位参赛选手限提交一次作品。</p>}
+                    <div style={{ marginTop: '20px' }}>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>
+                        作品插画 (需 1-2 幅，单张限制 <strong>{maxImageSizeMB}MB</strong>)
+                      </label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {contestImages.map((file, index) => (
+                          <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
+                            <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                              🖼️ {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
+                            </span>
+                            <button onClick={() => removeContestImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>移除</button>
+                          </div>
+                        ))}
+                        {contestImages.length < 2 && (
+                          <div style={{...styles.uploadArea, padding: '15px'}}>
+                            <input type="file" id="c-img" hidden multiple accept="image/*" onChange={handleContestImageUpload} />
+                            <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>{contestImages.length === 0 ? "➕ 上传第一幅插画" : "➕ 上传第二幅插画"}</label>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={submitContestWork} 
+                      disabled={isSubmitting} 
+                      style={{ ...styles.submitBtn, width: '100%', marginTop: '30px', backgroundColor: '#4f46e5', cursor: 'pointer' }}
+                    >
+                      {isSubmitting ? "正在封存上传中..." : "📤 确认提交参赛作品"}
+                    </button>
+                  </>
+                )}
               </div>
 
+              {/* 右侧实时进度，基于双轨门禁标识宣发入选成就 */}
               <div style={{...styles.reportBox, width: '30%', boxSizing: 'border-box', padding: '20px', margin: 0, backgroundColor: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                  <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 评审实时进度</h4>
+                  <h4 style={{ margin: 0, color: '#334155', fontSize: '14px' }}>📊 本届战绩档案</h4>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', animation: 'pulse 2s infinite' }}></div>
                 </div>
 
@@ -596,25 +525,34 @@ export default function Dashboard({ session }) {
                   <p style={{fontSize: '12px', color: '#94a3b8', textAlign: 'center', padding: '20px 0'}}>暂无记录</p>
                 ) : (
                   <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
-                    {userSubmissions.map(sub => (
-                      <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'}}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
-                          <span style={{fontSize: '11px', color: '#94a3b8'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
-                          {renderStatusBadge(sub.status)}
+                    {userSubmissions.map(sub => {
+                      const isExhibitionReady = sub.exhibition_ready || sub.is_manual_recommended;
+                      return (
+                        <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'}}>
+                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                            <span style={{fontSize: '11px', color: '#94a3b8'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
+                            {isExhibitionReady ? (
+                              <span style={{ backgroundColor: '#fbbf24', color: '#78350f', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', border: '1px solid #f59e0b' }}>
+                                🏆 成功入展
+                              </span>
+                            ) : (
+                              renderStatusBadge(sub.status)
+                            )}
+                          </div>
+                          <div style={{fontSize: '11px', fontWeight: 'bold', color: '#1e293b', fontFamily: 'monospace'}}>ID: {sub.id.substring(0,8)}</div>
+                          
+                          {(sub.status === 'success' || sub.status === 'selected') && sub.ai_total_score > 0 && (
+                            <div style={{fontSize: '12px', color: '#10b981', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
+                          )}
+                          {sub.status === 'rejected' && sub.ai_total_score > 0 && (
+                            <div style={{fontSize: '12px', color: '#64748b', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
+                          )}
+                          {sub.status === 'invalid' && sub.error_msg && (
+                            <div style={{fontSize: '10px', color: '#ef4444', marginTop: '6px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
+                          )}
                         </div>
-                        <div style={{fontSize: '11px', fontWeight: 'bold', color: '#1e293b', fontFamily: 'monospace'}}>ID: {sub.id.substring(0,8)}</div>
-                        
-                        {(sub.status === 'success' || sub.status === 'selected') && sub.ai_total_score > 0 && (
-                          <div style={{fontSize: '12px', color: '#10b981', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
-                        )}
-                        {sub.status === 'rejected' && sub.ai_total_score > 0 && (
-                          <div style={{fontSize: '12px', color: '#64748b', marginTop: '6px', fontWeight: 'bold'}}>评分: {sub.ai_total_score.toFixed(1)}</div>
-                        )}
-                        {sub.status === 'invalid' && sub.error_msg && (
-                          <div style={{fontSize: '10px', color: '#ef4444', marginTop: '6px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 
@@ -633,14 +571,8 @@ export default function Dashboard({ session }) {
                 {activeTab !== 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
-                    <select 
-                      value={selectedModelId} 
-                      onChange={(e) => setSelectedModelId(e.target.value)}
-                      style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
-                    >
-                      {models.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
+                    <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}>
+                      {models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                     {(() => {
                       const currentModel = models.find(m => m.id === selectedModelId);
@@ -660,33 +592,17 @@ export default function Dashboard({ session }) {
                 {activeTab === 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
-                    <select 
-                      value={imageType} 
-                      onChange={(e) => setImageType(e.target.value)}
-                      style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}
-                    >
-                      <option value="picturebook">绘本分镜 analysis</option>
+                    <select value={imageType} onChange={(e) => setImageType(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}>
+                      <option value="picturebook">绘本分镜分析</option>
                       <option value="illustration">单幅插画审美</option>
                     </select>
                   </div>
                 )}
               </div>
 
-              {activeTab === 'guide' && (
-                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
-                  请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。
-                </p>
-              )}
-              {activeTab === 'text' && (
-                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
-                  支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，文件大小不超过 <strong style={{color: '#4f46e5'}}>{maxDocSizeDisplay}</strong>。
-                </p>
-              )}
-              {activeTab === 'picturebook' && (
-                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
-                  请上传绘本插画素材。根据您的账户权限，当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{maxImageCount}</strong> 张图片，单张大小不超过 <strong style={{color: '#4f46e5'}}>{maxImageSizeMB}MB</strong> (格式：JPG / PNG)。
-                </p>
-              )}
+              {activeTab === 'guide' && <p style={styles.helpText}>请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。</p>}
+              {activeTab === 'text' && <p style={styles.helpText}>支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，文件大小不超过 <strong style={{color: '#4f46e5'}}>{maxDocSizeDisplay}</strong>。</p>}
+              {activeTab === 'picturebook' && <p style={styles.helpText}>请上传绘本插画素材。当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{maxImageCount}</strong> 张图片，单张大小不超过 <strong style={{color: '#4f46e5'}}>{maxImageSizeMB}MB</strong> (格式：JPG/PNG)。</p>}
 
               {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
@@ -695,34 +611,18 @@ export default function Dashboard({ session }) {
                       {selectedImages.map((file, index) => {
                         if (isPro) {
                           return (
-                            <div key={index} style={{ 
-                              display: 'flex', gap: '15px', padding: '15px', 
-                              backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' 
-                            }}>
+                            <div key={index} style={{ display: 'flex', gap: '15px', padding: '15px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
                               <div style={{ width: '25%', display: 'flex', flexDirection: 'column', gap: '8px', borderRight: '1px dashed #cbd5e1', paddingRight: '15px' }}>
-                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>
-                                  {imageType === 'picturebook' ? `第 ${index + 1} 页 / 跨页` : `第 ${index + 1} 幅插画`}
-                                </span>
-                                <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>
-                                  📄 {file.name.length > 20 ? `${file.name.substring(0, 15)}...` : file.name}
-                                </span>
-                                <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0, fontWeight: 'bold' }}>
-                                  ❌ 移除此页
-                                </button>
+                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>{imageType === 'picturebook' ? `第 ${index + 1} 页 / 跨页` : `第 ${index + 1} 幅插画`}</span>
+                                <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>📄 {file.name.length > 20 ? `${file.name.substring(0, 15)}...` : file.name}</span>
+                                <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0, fontWeight: 'bold' }}>❌ 移除此页</button>
                               </div>
                               <div style={{ width: '75%' }}>
                                 <textarea
-                                  placeholder={imageType === 'picturebook' 
-                                    ? "✍️ [绘本硬性要求] 请输入本跨页对应的绘本正文、独白或脚本分镜台词（若刻意设计为无字画面请填“无字留白”）..."
-                                    : "✍️ [插画硬性要求] 请输入本幅插画的创作初衷、审美理念、核心意境或画面背景说明（专业用户必填）..."
-                                  }
+                                  placeholder={imageType === 'picturebook' ? "✍️ [绘本硬性要求] 请输入本跨页对应的文本..." : "✍️ [插画硬性要求] 请输入审美理念..."}
                                   value={imageTexts[index] || ''}
                                   onChange={(e) => handleImageTextChange(index, e.target.value)}
-                                  style={{ 
-                                    width: '100%', height: '80px', padding: '10px', 
-                                    borderRadius: '8px', border: '1px solid #cbd5e1', 
-                                    fontSize: '13px', outline: 'none', resize: 'vertical'
-                                  }}
+                                  style={{ width: '100%', height: '80px', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', resize: 'vertical' }}
                                 />
                               </div>
                             </div>
@@ -730,28 +630,18 @@ export default function Dashboard({ session }) {
                         } else {
                           return (
                             <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
-                              <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>
-                                🖼️ [第 {index + 1} 画面] {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)
-                              </span>
-                              <button 
-                                onClick={() => removeSelectedImage(index)}
-                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                              >
-                                移除
-                              </button>
+                              <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>🖼️ [第 {index + 1} 画面] {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)</span>
+                              <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>移除</button>
                             </div>
                           );
                         }
                       })}
                     </div>
                   )}
-                  
                   {selectedImages.length < maxImageCount && (
                     <div style={styles.uploadArea}>
                       <input type="file" id="up" hidden multiple onChange={handleImageChange} accept="image/*" />
-                      <label htmlFor="up" style={styles.uploadBtn}>
-                        ➕ 点击上传插画素材 (还可传 {maxImageCount - selectedImages.length} 张)
-                      </label>
+                      <label htmlFor="up" style={styles.uploadBtn}>➕ 点击上传插画素材 (还可传 {maxImageCount - selectedImages.length} 张)</label>
                     </div>
                   )}
                 </div>
@@ -760,9 +650,7 @@ export default function Dashboard({ session }) {
               {activeTab === 'text' && (
                 <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="docx-up" hidden accept=".docx" onChange={handleDocxChange} />
-                  <label htmlFor="docx-up" style={styles.uploadBtn}>
-                    {selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}
-                  </label>
+                  <label htmlFor="docx-up" style={styles.uploadBtn}>{selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}</label>
                 </div>
               )}
               
@@ -771,31 +659,16 @@ export default function Dashboard({ session }) {
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
                     {activeTab === 'picturebook' ? '插画/绘本补充说明 (可选)' : '正文内容'}
                   </label>
-                  <textarea 
-                    style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
-                    placeholder={activeTab === 'picturebook' 
-                      ? "可在此处一次性输入您的整本绘本文字、分镜情节大纲或整体艺术理论阐述（选填）..." 
-                      : "在此粘贴需要评审的文本..."} 
-                    value={workText} 
-                    onChange={(e) => setWorkText(e.target.value)} 
-                  />
+                  <textarea style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} placeholder={activeTab === 'picturebook' ? "可输入文字描述..." : "在此粘贴需要评审的文本..."} value={workText} onChange={(e) => setWorkText(e.target.value)} />
                 </>
               )}
               
-              {activeTab === 'picturebook' && warningMessage && (
-                <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>
-                  {warningMessage}
-                </div>
-              )}
+              {activeTab === 'picturebook' && warningMessage && <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>{warningMessage}</div>}
 
               <button 
                 onClick={triggerEvaluation} 
                 disabled={loading || (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0))} 
-                style={{ 
-                  ...styles.submitBtn, width: '100%', marginTop: '20px',
-                  backgroundColor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? '#94a3b8' : '#111827',
-                  cursor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? 'not-allowed' : 'pointer'
-                }}
+                style={{ ...styles.submitBtn, width: '100%', marginTop: '20px', backgroundColor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? '#94a3b8' : '#111827', cursor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? 'not-allowed' : 'pointer' }}
               >
                 {loading ? "AI 专家计算中..." : (activeTab === 'picturebook' ? "启动视觉与图文协作评审" : (activeTab === 'guide' ? "启动创作指导" : "启动评审分析"))}
               </button>
@@ -812,11 +685,7 @@ export default function Dashboard({ session }) {
       </main>
       
       <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.2); }
-          100% { opacity: 1; transform: scale(1); }
-        }
+        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
       `}</style>
     </div>
   );
@@ -834,15 +703,9 @@ const styles = {
   navBtn: { padding: '12px', textAlign: 'left', background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', borderRadius: '8px' },
   navActive: { padding: '12px', textAlign: 'left', background: '#374151', border: 'none', color: 'white', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold' },
   userSection: { borderTop: '1px solid #374151', paddingTop: '20px' },
-  proBadge: { background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)', color: 'white', fontSize: '13px', padding: '10px', borderRadius: '8px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)' },
-  freeBadge: { backgroundColor: '#374151', color: '#e5e7eb', fontSize: '12px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '10px', fontWeight: 'bold' },
-  contestBadge: { backgroundColor: '#1e3a8a', color: '#60a5fa', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', fontWeight: 'bold', border: '1px solid #2563eb' },
-  pendingBadge: { backgroundColor: 'rgba(255,255,255,0.05)', color: '#9ca3af', fontSize: '11px', padding: '8px', borderRadius: '6px', textAlign: 'center', marginBottom: '12px', border: '1px dashed #4b5563' },
   roleLabel: { fontSize: '12px', color: '#9ca3af', textAlign: 'center', marginBottom: '18px', wordBreak: 'break-all', padding: '4px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '4px' },
   logoutBtn: { width: '100%', background: '#374151', border: 'none', color: '#f3f4f6', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
   main: { flex: 1, padding: '30px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' },
-  logoContainer: {display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px 16px', borderBottom: '1px solid rgba(0, 0, 0, 0.05)'},
-  logoImage: {width: '140px', height: 'auto', objectFit: 'contain'},
   sidebarHeader: {display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 16px', cursor: 'pointer', borderBottom: '1px solid rgba(0, 0, 0, 0.05)', marginBottom: '15px'},
   sidebarLogoImg: {height: '32px', width: 'auto', objectFit: 'contain'},
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
@@ -853,12 +716,12 @@ const styles = {
   descText: {color: '#1e293b', fontSize: '13px', margin: 0, lineHeight: '1.6'},
   statusLabel: { fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase' },
   statusValue: { fontSize: '15px', fontWeight: 'bold', color: '#111827' },
-  statusEmpty: { fontSize: '15px', fontWeight: 'bold', color: '#ef4444' },
   content: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  textarea: { height: '320px', padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
+  textarea: { padding: '20px', borderRadius: '12px', border: '1px solid #d1d5db', fontSize: '16px', lineHeight: '1.7', outline: 'none' },
+  helpText: { fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' },
   uploadArea: { padding: '25px', border: '2px dashed #d1d5db', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f8fafc' },
   uploadBtn: { cursor: 'pointer', color: '#6366f1', fontWeight: 'bold' },
-  submitBtn: { padding: '16px', backgroundColor: '#111827', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  submitBtn: { padding: '16px', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold' },
   reportBox: { padding: '40px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', textAlign: 'left' },
   reportTxt: { whiteSpace: 'pre-wrap', lineHeight: '2.0', color: '#374151', fontSize: '16px' },
   upgradeBox: { backgroundColor: '#1f2937', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #374151' },
