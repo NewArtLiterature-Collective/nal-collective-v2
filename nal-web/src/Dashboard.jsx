@@ -14,12 +14,12 @@ export default function Dashboard({ session }) {
   const [selectedImages, setSelectedImages] = useState([]);
   const [selectedDocx, setSelectedDocx] = useState(null); 
   
-  // 🌟 动态多赛季全局中控状态
+  // 动态多赛季全局中控状态
   const [isContestActive, setIsContestActive] = useState(false);
   const [activeContestId, setActiveContestId] = useState(''); 
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
-  const [submissionDeadline, setSubmissionDeadline] = useState(null); // 🌟 截稿死线
+  const [submissionDeadline, setSubmissionDeadline] = useState(null); 
 
   const [imageTexts, setImageTexts] = useState([]); 
 
@@ -46,6 +46,10 @@ export default function Dashboard({ session }) {
     pro_credits: initialMeta.pro_credits || 0
   });
 
+  // 🌟 核心新增：身份确权判定，拦截管理员误入普通用户控制台
+  const isAdmin = rawUserMetadata.role === 'admin';
+
+  // 1. 动态判定 Pro 是否过期
   let processedRole = rawUserMetadata.role;
   let isProExpired = false;
   if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
@@ -55,6 +59,7 @@ export default function Dashboard({ session }) {
     }
   }
 
+  // 2. 赛事门票动态防线（与当前激活的主赛场 ID 强绑定）
   const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
                               rawUserMetadata.paid_contest_id === activeContestId;
 
@@ -62,6 +67,7 @@ export default function Dashboard({ session }) {
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
 
+  // 3. 额度动态洗白
   const displayUsage = {
     flash: (isProExpired && usage.flash >= 9999) ? 5 : Math.max(0, Number(usage.flash || 0)),
     pro_credits: (isProExpired && usage.pro_credits >= 9999) ? 0 : Math.max(0, Number(usage.pro_credits || 0))
@@ -91,7 +97,8 @@ export default function Dashboard({ session }) {
   // --- 2. 初始化与监听逻辑 ---
 
   const fetchUserSubmissions = useCallback(async () => {
-    if (!session?.user?.id || !activeContestId) return;
+    // 如果是管理员或者没有基本账号信息，直接退回，防止空转引发数据库开销
+    if (!session?.user?.id || isAdmin) return;
     setIsRefreshing(true);
     
     const { data } = await supabase
@@ -103,9 +110,10 @@ export default function Dashboard({ session }) {
     
     if (data) setUserSubmissions(data);
     setTimeout(() => setIsRefreshing(false), 500); 
-  }, [session?.user?.id, activeContestId]);
+  }, [session?.user?.id, activeContestId, isAdmin]);
 
   const refreshUserMetadata = async () => {
+    if (isAdmin) return; // 管理员无需刷新用户消费资源算力
     const { data: { session: currentSession } } = await supabase.auth.refreshSession();
     const user = currentSession?.user || session?.user;
     if (user) {
@@ -133,7 +141,7 @@ export default function Dashboard({ session }) {
           if (contestData) {
             setContestName(contestData.name);
             setContestDescription(contestData.description);
-            setSubmissionDeadline(contestData.submission_deadline); // 🌟 拉取截稿日期
+            setSubmissionDeadline(contestData.submission_deadline); 
           }
         }
         if (activeTab === 'text' && settings.is_contest_active) setActiveTab('dynamics');
@@ -145,7 +153,9 @@ export default function Dashboard({ session }) {
   
   useEffect(() => {
     fetchSiteSettings();
-    refreshUserMetadata();
+    if (!isAdmin) {
+      refreshUserMetadata();
+    }
     
     const fetchModels = async () => {
       const { data } = await supabase.from('evaluation_models').select('id, name, description');
@@ -158,10 +168,10 @@ export default function Dashboard({ session }) {
       }
     };
     fetchModels();
-  }, [userRole, isPro]);
+  }, [userRole, isPro, isAdmin]);
 
   useEffect(() => {
-    if (activeContestId && session?.user?.id) {
+    if (activeContestId && session?.user?.id && !isAdmin) {
       fetchUserSubmissions();
       const submissionSubscription = supabase
         .channel('contest_changes')
@@ -169,7 +179,7 @@ export default function Dashboard({ session }) {
         .subscribe();
       return () => supabase.removeChannel(submissionSubscription);
     }
-  }, [activeContestId, session?.user?.id, fetchUserSubmissions]);
+  }, [activeContestId, session?.user?.id, fetchUserSubmissions, isAdmin]);
 
   // --- 3. 业务处理函数 ---
   const removeContestImage = (index) => setContestImages(prev => prev.filter((_, i) => i !== index));
@@ -285,14 +295,39 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
   };
 
-  // 🌟 核心状态大阵
+  // 🌟 核心拦截渲染层：如果判定当前登录者是管理员，在这里执行彻底的“物理熔断”，阻止渲染下方任何工作台组件
+  if (isAdmin) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'monospace', padding: '20px', textAlign: 'center' }}>
+        <div style={{ fontSize: '64px', marginBottom: '25px', animation: 'pulse 2s infinite' }}>🚧</div>
+        <h2 style={{ color: '#ef4444', fontSize: '24px', fontWeight: 'bold', marginBottom: '15px', letterSpacing: '1px' }}>
+          安全拦截：管理员账户禁止访问创作者终端
+        </h2>
+        <p style={{ color: '#9ca3af', fontSize: '14px', lineHeight: '1.8', maxWidth: '520px', marginBottom: '35px', textAlign: 'justify' }}>
+          检测到您当前登录的是 NAL 全局管理账号。为确保分布式评审数据流与赛季总控大闸的绝对隔离，防止发生账户状态交叉污染，管理员身份已被限制在用户工作区之外。请移步至专属的中央调度台。
+        </p>
+        <div style={{ display: 'flex', gap: '20px' }}>
+          <button 
+            onClick={() => navigate('/admin')} // 👈 绑定到项目的管理员后台页面路径
+            style={{ padding: '14px 30px', backgroundColor: '#4f46e5', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 15px rgba(79, 70, 229, 0.3)' }}
+          >
+            🏛️ 前往中央管理台
+          </button>
+          <button 
+            onClick={() => { supabase.auth.signOut(); window.location.reload(); }}
+            style={{ padding: '14px 30px', backgroundColor: 'transparent', color: '#9ca3af', border: '1px solid #374151', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}
+          >
+            安全撤离并退出
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 以下为普通创作者的正常业务矩阵数据状态
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
-  
-  // 🌟 截稿死线判定器
   const now = new Date();
   const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
-  
-  // 综合评定当前能否输入新作品
   const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline;
 
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
@@ -445,7 +480,6 @@ export default function Dashboard({ session }) {
                 {contestDescription || '具体章程与评审机制正在获取中...'}
               </div>
               
-              {/* 🌟 三重状态感知入口按钮 */}
               <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
                 {alreadySubmitted ? (
                   <button 
@@ -481,7 +515,6 @@ export default function Dashboard({ session }) {
           ) : activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
-              {/* 🌟 拥有截稿死线的智能防线锁定屏 */}
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
                 {!canSubmitNew ? (
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
@@ -602,7 +635,7 @@ export default function Dashboard({ session }) {
           ) : (
             <div style={{ ...styles.reportBox, margin: 0 }}>
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                {activeTab !== 'picturebook' && (
+                {activeTab !== 'text' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
                     <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}>
@@ -627,7 +660,7 @@ export default function Dashboard({ session }) {
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
                     <select value={imageType} onChange={(e) => setImageType(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}>
-                      <option value="picturebook">绘本分镜分析</option>
+                      <option value="picturebook">绘本分镜 analysis</option>
                       <option value="illustration">单幅插画审美</option>
                     </select>
                   </div>
@@ -719,7 +752,8 @@ export default function Dashboard({ session }) {
       </main>
       
       <style>{`
-        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
+        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.02); } 100% { opacity: 1; transform: scale(1); } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
