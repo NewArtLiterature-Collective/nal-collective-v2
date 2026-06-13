@@ -19,8 +19,8 @@ export default function Dashboard({ session }) {
   const [activeContestId, setActiveContestId] = useState(''); 
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
+  const [submissionDeadline, setSubmissionDeadline] = useState(null); // 🌟 截稿死线
 
-  // 专门存储每一页图文描述的数组
   const [imageTexts, setImageTexts] = useState([]); 
 
   // 参赛作品专属状态
@@ -46,7 +46,6 @@ export default function Dashboard({ session }) {
     pro_credits: initialMeta.pro_credits || 0
   });
 
-  // 1. 动态判定 Pro 是否过期
   let processedRole = rawUserMetadata.role;
   let isProExpired = false;
   if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
@@ -56,7 +55,6 @@ export default function Dashboard({ session }) {
     }
   }
 
-  // 2. 赛事门票动态防线（与当前激活的主赛场 ID 强绑定）
   const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
                               rawUserMetadata.paid_contest_id === activeContestId;
 
@@ -64,7 +62,6 @@ export default function Dashboard({ session }) {
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
 
-  // 3. 额度动态洗白
   const displayUsage = {
     flash: (isProExpired && usage.flash >= 9999) ? 5 : Math.max(0, Number(usage.flash || 0)),
     pro_credits: (isProExpired && usage.pro_credits >= 9999) ? 0 : Math.max(0, Number(usage.pro_credits || 0))
@@ -88,7 +85,7 @@ export default function Dashboard({ session }) {
   const maxImageSizeMB = currentLimits.mb;
   const maxDocSizeDisplay = currentLimits.display;
 
-  const { payLoading, loadingPlan, handlePayment, setPayLoading } = usePayment();
+  const { payLoading, handlePayment, setPayLoading } = usePayment();
   const { loading, report, evaluate } = useEvaluation(userRole, usage); 
 
   // --- 2. 初始化与监听逻辑 ---
@@ -136,6 +133,7 @@ export default function Dashboard({ session }) {
           if (contestData) {
             setContestName(contestData.name);
             setContestDescription(contestData.description);
+            setSubmissionDeadline(contestData.submission_deadline); // 🌟 拉取截稿日期
           }
         }
         if (activeTab === 'text' && settings.is_contest_active) setActiveTab('dynamics');
@@ -195,7 +193,7 @@ export default function Dashboard({ session }) {
       }
       const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
       if (oversizedFiles.length > 0) {
-        alert(`文件过大！当前账户单张图片大小限制为 ${maxImageSizeMB}MB。`);
+        alert(`文件过大！单张不超过 ${maxImageSizeMB}MB。`);
         return prev;
       }
       setImageTexts(prevTexts => [...prevTexts, ...Array(files.length).fill('')]);
@@ -206,7 +204,7 @@ export default function Dashboard({ session }) {
   const handleDocxChange = useCallback((e) => {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
-      if (file.size > maxDocxSize) return alert(`文件过大！您当前身份最大可上传 ${maxDocSizeDisplay} 的文档。`);
+      if (file.size > maxDocxSize) return alert(`文件过大！最多上传 ${maxDocSizeDisplay} 的文档。`);
       setSelectedDocx(file);
     }
   }, [maxDocxSize, maxDocSizeDisplay]); 
@@ -263,7 +261,7 @@ export default function Dashboard({ session }) {
       });
       if (dbError) throw dbError;
 
-      alert("🎉 提交成功！您的作品已封存并进入智能评审大阵，不可修改。请在右侧追踪实时进度。");
+      alert("🎉 提交成功！您的作品已封存并进入智能评审大阵，请在右侧追踪进度。");
       setContestText('');
       setContestImages([]);
       fetchUserSubmissions(); 
@@ -287,8 +285,16 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
   };
 
-  // 纯粹的“本届已投”标识
+  // 🌟 核心状态大阵
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
+  
+  // 🌟 截稿死线判定器
+  const now = new Date();
+  const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
+  
+  // 综合评定当前能否输入新作品
+  const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline;
+
   const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
 
   let isPictureBookValid = true;
@@ -307,12 +313,12 @@ export default function Dashboard({ session }) {
 
         if (filledTextCount < requiredTextCount) {
           isPictureBookValid = false;
-          warningMessage = `🚨 绘本专业评审要求：当前上传 ${count} 跨页，基于出版标准，您至少需要填写 ${requiredTextCount} 页的分镜文本（已填 ${filledTextCount} 页）。`;
+          warningMessage = `🚨 绘本专业要求：当前上传 ${count} 跨页，您至少需填写 ${requiredTextCount} 页文本（已填 ${filledTextCount}）。`;
         }
       } else {
         if (filledTextCount < count) {
           isPictureBookValid = false;
-          warningMessage = `🚨 插画专业评审要求：专业账户必须为每一幅上传的插画填写专属的内容或审美理念描述（已填 ${filledTextCount} / ${count} 幅）。`;
+          warningMessage = `🚨 插画专业要求：必须为每一幅上传的插画填写理念（已填 ${filledTextCount} / ${count}）。`;
         }
       }
     } else {
@@ -355,7 +361,7 @@ export default function Dashboard({ session }) {
                 onClick={() => setActiveTab('contest')} 
                 style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}
               >
-                🏆 提交参赛作品
+                🏆 参赛作品与档案
               </button>
             )}
           </nav>
@@ -390,7 +396,7 @@ export default function Dashboard({ session }) {
         <div style={styles.header}>
           <h2 style={{ margin: '0', fontSize: '20px', color: '#111827', fontWeight: 'bold' }}>
             {activeTab === 'dynamics' && '🔥 大赛官方动态'}
-            {activeTab === 'contest' && '🏆 参赛作品提交与进度'}
+            {activeTab === 'contest' && '🏆 参赛作品与进度'}
             {activeTab === 'guide' && '💡 创作指导'}
             {activeTab === 'text' && '📝 文字评审'}
             {activeTab === 'picturebook' && '🎨 绘本插画'}
@@ -430,7 +436,7 @@ export default function Dashboard({ session }) {
           {activeTab === 'dynamics' ? (
             <div style={{ padding: '40px', borderRadius: '16px', background: 'linear-gradient(145deg, #111827 0%, #1f2937 100%)', border: '1px solid #374151', color: '#f3f4f6', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
               <div style={{ display: 'inline-block', padding: '6px 16px', background: '#ef4444', color: '#fff', fontSize: '13px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '20px' }}>
-                🔥 官方征稿进行中
+                🔥 官方征稿 / 评审进行中
               </div>
               <h2 style={{ fontSize: '32px', color: '#fbbf24', margin: '0 0 20px 0', fontWeight: '900', letterSpacing: '-0.5px' }}>
                 {contestName || 'NAL 年度文学大赏'}
@@ -439,7 +445,7 @@ export default function Dashboard({ session }) {
                 {contestDescription || '具体章程与评审机制正在获取中...'}
               </div>
               
-              {/* 🌟 核心改进：三重状态智能侦测呈现入口 UI */}
+              {/* 🌟 三重状态感知入口按钮 */}
               <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
                 {alreadySubmitted ? (
                   <button 
@@ -447,6 +453,13 @@ export default function Dashboard({ session }) {
                     style={{ padding: '16px 32px', background: '#4f46e5', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)' }}
                   >
                     ✅ 您已提交本届作品，点击查看档案与进度
+                  </button>
+                ) : isPastDeadline ? (
+                  <button 
+                    disabled
+                    style={{ padding: '16px 32px', background: '#64748b', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'not-allowed', fontSize: '16px' }}
+                  >
+                    🛑 本届截稿时间已过，提交通道已关闭
                   </button>
                 ) : isEligibleForContest ? (
                   <button 
@@ -468,15 +481,24 @@ export default function Dashboard({ session }) {
           ) : activeTab === 'contest' ? (
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
+              {/* 🌟 拥有截稿死线的智能防线锁定屏 */}
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
-                {alreadySubmitted ? (
+                {!canSubmitNew ? (
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
-                    <h3 style={{ color: '#1e293b', marginBottom: '15px', fontSize: '20px' }}>作品大典已封存，进入评审程序</h3>
+                    <h3 style={{ color: '#1e293b', marginBottom: '15px', fontSize: '20px' }}>
+                      {!isContestActive ? '当前赛季未开放' : 
+                        (!isEligibleForContest ? '您未获得参赛资格' : 
+                          (alreadySubmitted ? '作品大典已封存' : '本届征稿通道已关闭'))}
+                    </h3>
                     <p style={{ color: '#64748b', fontSize: '15px', lineHeight: '1.8', maxWidth: '400px', margin: '0 auto' }}>
-                      您已成功提交本届赛事的参赛作品。<br/>
-                      为保证全量策展与 AI 离线评审的绝对公平，<strong style={{color: '#ef4444'}}>所有选手限投一次且提交后不可修改、不可撤回</strong>。<br/>
-                      请在右侧实时关注作品的入展状态。
+                      {!isContestActive
+                        ? '本届赛事大闸已休眠，此处仅供查看历史战绩。'
+                        : (!isEligibleForContest
+                          ? '请在左侧“大赛官方动态”中获取本届赛事的门票资格。'
+                          : (alreadySubmitted 
+                            ? '您的作品已进入评审矩阵不可更改。请在右侧关注实时进度。' 
+                            : '截稿时间已过。目前已全面进入紧张的 AI 离线评审与专家会诊阶段，右侧为您的参展档案。'))}
                     </p>
                   </div>
                 ) : (
