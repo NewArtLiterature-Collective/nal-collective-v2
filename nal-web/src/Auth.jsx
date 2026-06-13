@@ -1,4 +1,4 @@
-// Auth.jsx 修改版 (SVG 图标版)
+// Auth.jsx 修改版 (SVG 图标版 + 物理分流防线)
 import React, { useState } from 'react';
 import { supabase } from './supabaseClient';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -53,10 +53,38 @@ export default function Auth() {
 
     try {
       if (authMode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        // 🌟 核心分流大闸：登录认证链路
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        
+        if (data?.user) {
+          // 提取该账户在库中的真实元数据标签
+          const currentRole = data.user.user_metadata?.role;
+
+          // 🚨 物理分流防线：严禁角色错位
+          if (currentRole === 'admin') {
+            alert('🏛️ 识别到最高管理特权凭证，正在接入中央控制台...');
+            navigate('/admin'); // 将管理员遣送至后台
+          } else {
+            navigate('/dashboard'); // 普通创作者放行至工作台
+          }
+        }
       } else if (authMode === 'signup') {
-        const { error } = await supabase.auth.signUp({ email, password });
+        // 🌟 注册时动态分配角色与算力
+        let initialRole = 'free'; 
+        if (intent === 'pro') initialRole = 'pro';
+
+        const { error } = await supabase.auth.signUp({ 
+          email, 
+          password,
+          options: {
+            data: {
+              role: initialRole,
+              flash_left: 5, // 默认赠送 5 次基础算力
+              pro_credits: 0
+            }
+          }
+        });
         if (error) throw error;
         
         setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
@@ -71,7 +99,7 @@ export default function Auth() {
       }
     } catch (error) {
       if (error.message.includes("Invalid login credentials")) {
-        setErrorMsg('未注册用户，请先注册');
+        setErrorMsg('未注册用户或密码错误，请先注册');
       } else {
         setErrorMsg(error.message || '操作失败，请重试');
       }
@@ -124,7 +152,6 @@ export default function Auth() {
                     placeholder="至少 6 位字符" 
                     required 
                   />
-                  {/* 🚨 修改：替换为 SVG 图标 */}
                   <button 
                     type="button" 
                     onClick={() => setShowPassword(!showPassword)}
@@ -148,7 +175,6 @@ export default function Auth() {
                       placeholder="请再次输入密码" 
                       required 
                     />
-                    {/* 🚨 修改：替换为 SVG 图标 */}
                     <button 
                       type="button" 
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -212,19 +238,5 @@ const styles = {
   successBox: { padding: '12px', backgroundColor: '#ecfdf5', color: '#047857', borderRadius: '8px', fontSize: '13px' },
   footer: { marginTop: '25px', textAlign: 'center' },
   switchBtn: { background: 'none', border: 'none', color: '#4f46e5', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  // 🚨 样式微调：为了让 SVG 完美居中并具有良好的交互反馈
-  eyeBtn: { 
-    position: 'absolute', 
-    right: '12px', 
-    top: '50%', 
-    transform: 'translateY(-50%)', 
-    background: 'none', 
-    border: 'none', 
-    cursor: 'pointer', 
-    padding: '4px',
-    display: 'flex', 
-    alignItems: 'center', 
-    justifyContent: 'center',
-    outline: 'none'
-  }
+  eyeBtn: { position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none' }
 };
