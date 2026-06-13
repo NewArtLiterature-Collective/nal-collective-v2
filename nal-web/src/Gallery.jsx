@@ -126,7 +126,7 @@ export default function Gallery() {
         {isLoading ? (
           <div style={styles.statusBox}>
             <span style={{ animation: 'pulse 1.5s infinite', color: '#88c0d0' }}>
-              📡 正在通过防火墙提取典藏作品序列...
+              📡 正在提取典藏作品序列...
             </span>
           </div>
         ) : !galleryState.isOpen ? (
