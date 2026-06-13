@@ -21,51 +21,57 @@ export default function Gallery() {
     const fetchGalleryData = async () => {
       try {
         // ==========================================
-        // 阶段 1：校验时空大闸与赛季状态
+        // 阶段 1：获取当前主赛场指针 (修正：只取指针)
         // ==========================================
         const { data: settings, error: sErr } = await supabase
           .from('site_settings')
-          .select('is_contest_active, current_contest_id, gallery_start_time, gallery_end_time')
+          .select('is_contest_active, current_contest_id')
           .eq('id', 1)
           .maybeSingle();
 
         if (sErr) throw sErr;
 
-        let activeContestId = null;
+        let activeContestId = settings?.current_contest_id;
 
-        if (settings) {
-          activeContestId = settings.current_contest_id;
+        if (!activeContestId) {
+          setGalleryState({ isOpen: false, message: '🌙 当前没有正在展出的赛季档案。' });
+          setIsLoading(false);
+          return;
+        }
+
+        // ==========================================
+        // 阶段 2：校验具体赛季的时空大闸与名称 (修正：从 contests 表读取)
+        // ==========================================
+        const { data: contestData, error: cErr } = await supabase
+          .from('contests')
+          .select('name, gallery_start_time, gallery_end_time')
+          .eq('id', activeContestId)
+          .maybeSingle();
+
+        if (cErr) throw cErr;
+
+        if (contestData) {
+          setGalleryState(prev => ({ ...prev, contestName: contestData.name }));
+          
           const now = new Date();
-          const start = settings.gallery_start_time ? new Date(settings.gallery_start_time) : null;
-          const end = settings.gallery_end_time ? new Date(settings.gallery_end_time) : null;
+          const start = contestData.gallery_start_time ? new Date(contestData.gallery_start_time) : null;
+          const end = contestData.gallery_end_time ? new Date(contestData.gallery_end_time) : null;
 
           // 时间逻辑门禁
           if (start && now < start) {
-            setGalleryState({ isOpen: false, message: `⏳ 展厅尚未开放。\n本届展厅启封时间：${start.toLocaleDateString()}` });
+            setGalleryState(prev => ({ ...prev, isOpen: false, message: `⏳ 展厅尚未开放。\n本届展厅启封时间：${start.toLocaleDateString()}` }));
             setIsLoading(false);
             return;
           }
           if (end && now > end) {
-            setGalleryState({ isOpen: false, message: '🌙 本届数字展厅已闭馆，感谢您的关注。' });
+            setGalleryState(prev => ({ ...prev, isOpen: false, message: '🌙 本届数字展厅已闭馆，感谢您的关注。' }));
             setIsLoading(false);
             return;
           }
         }
 
-        // 提取当前赛季名称
-        if (activeContestId) {
-          const { data: contestData } = await supabase
-            .from('contests')
-            .select('name')
-            .eq('id', activeContestId)
-            .maybeSingle();
-          if (contestData) {
-            setGalleryState(prev => ({ ...prev, contestName: contestData.name }));
-          }
-        }
-
         // ==========================================
-        // 阶段 2：策展门禁查询（🚨 纯正的双引擎混合工作流）
+        // 阶段 3：策展门禁查询（纯正的双引擎混合工作流）
         // ==========================================
         const { data: submissions, error: subErr } = await supabase
           .from('contest_submissions')
