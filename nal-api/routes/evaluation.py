@@ -75,7 +75,7 @@ async def process_evaluation(
             metadata["is_paid"] = False
             metadata["expiry_date"] = None
             metadata["pro_credits"] = 0
-            metadata["flash_left"] = 5  
+            metadata["flash_left"] = 3  
             supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
 
     flash_left = metadata.get("flash_left", 0)
