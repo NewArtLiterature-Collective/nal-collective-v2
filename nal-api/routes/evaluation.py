@@ -100,12 +100,12 @@ async def process_evaluation(
         else:
             target_model = "gemini-2.5-flash"
     else:
-        if flash_left > 0:
-            target_model = "gemini-2.5-flash"
-            used_flash = True
-        elif pro_credits > 0:
+        if pro_credits > 0:
             target_model = "gemini-2.5-pro" 
             used_pro = True
+        elif flash_left > 0:
+            target_model = "gemini-2.5-flash"
+            used_flash = True
         else:
             raise HTTPException(status_code=403, detail="资源已耗尽，请购买加油包或报名参赛。")
 
@@ -206,10 +206,11 @@ async def process_evaluation(
         if used_pro_daily:
             metadata["pro_daily_used"] = pro_daily_used + 1
         if role != "pro":
-            if used_flash:
-                metadata["flash_left"] = max(0, flash_left - 1)
-            elif used_pro:
+            if used_pro:
                 metadata["pro_credits"] = max(0, pro_credits - 1)
+            elif used_flash:
+                metadata["flash_left"] = max(0, flash_left - 1)
+                
         supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
     except Exception as e:
         print(f"⚠️ 数据库额度更新失败: {e}")
