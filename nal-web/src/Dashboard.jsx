@@ -329,7 +329,7 @@ export default function Dashboard({ session }) {
 
   // 🌟 核心引擎显示策略：优先展示并消耗 Pro 额度
   const engineName = isPro ? "文学专业旗舰版" : 
-                     (displayUsage.pro_credits > 0 ? "旗舰版 (优先消耗 Pro 额度)" : 
+                     (displayUsage.pro_credits > 0 ? "高级版 (优先消耗 Pro 额度)" : 
                      (isContestant ? "高级文学引擎" : "基础版"));
 
   let isPictureBookValid = true;
