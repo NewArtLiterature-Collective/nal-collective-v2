@@ -51,7 +51,7 @@ class UserService:
                         
                         # 3. 剥夺 Pro 身份，9999 滥用额度直接一刀切清零
                         meta["role"] = None  # 降级退化为普通用户
-                        meta["flash_left"] = 5   
+                        meta["flash_left"] = 3   
                         meta["pro_credits"] = 0
                         
                         # 🚨 4. 彻底物理粉碎历史旧布尔标记，防止污染前端卡槽
@@ -95,9 +95,9 @@ class UserService:
                 current_flash = int(meta.get("flash_left") if meta.get("flash_left") is not None else 0)
                 current_pro = int(meta.get("pro_credits") if meta.get("pro_credits") is not None else 0)
                 
-                meta["flash_left"] = current_flash + 2
-                meta["pro_credits"] = current_pro + 3
-                print(f"📦 用户 {user_id} 获得加油包：+2 Flash, +3 Pro。绑定赛事: {current_id}")
+                meta["flash_left"] = current_flash + 3
+                meta["pro_credits"] = current_pro + 2
+                print(f"📦 用户 {user_id} 获得加油包：+3 Flash, +2 Pro。绑定赛事: {current_id}")
 
             # 🏆 逻辑 2：大奖赛门票/参赛费 (contestant)
             elif plan == "contestant":
@@ -106,14 +106,14 @@ class UserService:
                 meta["paid_contest_id"] = current_id  
                 meta.pop("is_paid", None)  # 静默洗净旧字段
                 
-                # 🚨 防重发逻辑重构：只有当用户【在本赛季内没有买过加油包】时，才白送 2+3 初始额度
+                # 🚨 防重发逻辑重构：只有当用户【在本赛季内没有买过加油包】时，才白送 3+2 初始额度
                 if meta.get("booster_contest_id") != current_id:
                     current_flash = int(meta.get("flash_left") if meta.get("flash_left") is not None else 0)
                     current_pro = int(meta.get("pro_credits") if meta.get("pro_credits") is not None else 0)
                     
-                    meta["flash_left"] = current_flash + 2
-                    meta["pro_credits"] = current_pro + 3
-                    print(f"🏆 用户 {user_id} 成功报名【{current_id}】大奖赛，发放初始资源：+2 Flash, +3 Pro。")
+                    meta["flash_left"] = current_flash + 3
+                    meta["pro_credits"] = current_pro + 2
+                    print(f"🏆 用户 {user_id} 成功报名【{current_id}】大奖赛，发放初始资源：+3 Flash, +2 Pro。")
                 else:
                     print(f"🏆 用户 {user_id} 报名成功【{current_id}】，因本赛季已提前购买加油包，不再重复白送资源。")
 
@@ -183,9 +183,9 @@ class UserService:
                 current_flash = int(meta.get("flash_left") if meta.get("flash_left") is not None else 0)
                 current_pro = int(meta.get("pro_credits") if meta.get("pro_credits") is not None else 0)
                 
-                meta["flash_left"] = current_flash + 2
-                meta["pro_credits"] = current_pro + 3
-                print(f"🏆 用户 {user_id} 免费报名成功，获得资格及资源：+2 Flash, +3 Pro。")
+                meta["flash_left"] = current_flash + 3
+                meta["pro_credits"] = current_pro + 2
+                print(f"🏆 用户 {user_id} 免费报名成功，获得资格及资源：+3 Flash, +2 Pro。")
                 
             supabase_admin.auth.admin.update_user_by_id(
                 user_id, 
