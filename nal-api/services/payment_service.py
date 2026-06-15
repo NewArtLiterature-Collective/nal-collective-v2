@@ -7,7 +7,7 @@ class PaymentService:
     @staticmethod
     def create_checkout_session(user_id: str, user_email: str, plan: str = 'contestant'):
         try:
-            # 1. 动态配置商品信息 (10元 / 20元 / 300元)
+            # 1. 动态配置商品信息 (10元 / 20元 / 500元)
             if plan == 'pro':
                 product_name = 'NAL 专业会员 (1年期)'
                 amount = 50000  # 500.00 CNY
