@@ -42,11 +42,11 @@ export default function Dashboard({ session }) {
   const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
   
   const [usage, setUsage] = useState({ 
-    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 5, 
+    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 3, 
     pro_credits: initialMeta.pro_credits || 0
   });
 
-  // 🌟 核心新增：身份确权判定，拦截管理员误入普通用户控制台
+  // 身份确权判定，拦截管理员误入普通用户控制台
   const isAdmin = rawUserMetadata.role === 'admin';
 
   // 1. 动态判定 Pro 是否过期
@@ -69,7 +69,7 @@ export default function Dashboard({ session }) {
 
   // 3. 额度动态洗白
   const displayUsage = {
-    flash: (isProExpired && usage.flash >= 9999) ? 5 : Math.max(0, Number(usage.flash || 0)),
+    flash: (isProExpired && usage.flash >= 9999) ? 3 : Math.max(0, Number(usage.flash || 0)),
     pro_credits: (isProExpired && usage.pro_credits >= 9999) ? 0 : Math.max(0, Number(usage.pro_credits || 0))
   };
 
@@ -97,7 +97,6 @@ export default function Dashboard({ session }) {
   // --- 2. 初始化与监听逻辑 ---
 
   const fetchUserSubmissions = useCallback(async () => {
-    // 如果是管理员或者没有基本账号信息，直接退回，防止空转引发数据库开销
     if (!session?.user?.id || isAdmin) return;
     setIsRefreshing(true);
     
@@ -113,18 +112,18 @@ export default function Dashboard({ session }) {
   }, [session?.user?.id, activeContestId, isAdmin]);
 
   const refreshUserMetadata = async () => {
-    if (isAdmin) return; // 管理员无需刷新用户消费资源算力
+    if (isAdmin) return;
     const { data: { session: currentSession } } = await supabase.auth.refreshSession();
     const user = currentSession?.user || session?.user;
     if (user) {
       let meta = user.user_metadata || {};
       if (meta.flash_left === undefined) {
-        const { data, error } = await supabase.auth.updateUser({ data: { flash_left: 5 } });
+        const { data, error } = await supabase.auth.updateUser({ data: { flash_left: 3 } }); 
         if (!error && data?.user) meta = data.user.user_metadata;
       }
       setRawUserMetadata(meta);
       setUsage({
-        flash: meta.flash_left !== undefined ? meta.flash_left : 5,
+        flash: meta.flash_left !== undefined ? meta.flash_left : 3,
         pro_credits: meta.pro_credits || 0
       });
     }
@@ -295,7 +294,6 @@ export default function Dashboard({ session }) {
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
   };
 
-  // 🌟 核心拦截渲染层：如果判定当前登录者是管理员，在这里执行彻底的“物理熔断”，阻止渲染下方任何工作台组件
   if (isAdmin) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'monospace', padding: '20px', textAlign: 'center' }}>
@@ -308,7 +306,7 @@ export default function Dashboard({ session }) {
         </p>
         <div style={{ display: 'flex', gap: '20px' }}>
           <button 
-            onClick={() => navigate('/admin')} // 👈 绑定到项目的管理员后台页面路径
+            onClick={() => navigate('/admin')} 
             style={{ padding: '14px 30px', backgroundColor: '#4f46e5', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 15px rgba(79, 70, 229, 0.3)' }}
           >
             🏛️ 前往中央管理台
@@ -324,13 +322,15 @@ export default function Dashboard({ session }) {
     );
   }
 
-  // 以下为普通创作者的正常业务矩阵数据状态
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const now = new Date();
   const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
   const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline;
 
-  const engineName = isPro ? "文学专业旗舰版" : (isContestant ? "高级文学引擎" : "基础版");
+  // 🌟 核心引擎显示策略：优先展示并消耗 Pro 额度
+  const engineName = isPro ? "文学专业旗舰版" : 
+                     (displayUsage.pro_credits > 0 ? "旗舰版 (优先消耗 Pro 额度)" : 
+                     (isContestant ? "高级文学引擎" : "基础版"));
 
   let isPictureBookValid = true;
   let requiredTextCount = 0;
@@ -635,7 +635,7 @@ export default function Dashboard({ session }) {
           ) : (
             <div style={{ ...styles.reportBox, margin: 0 }}>
               <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', backgroundColor: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                {activeTab !== 'text' && (
+                {activeTab !== 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>💡 选择专家模型</label>
                     <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}>
@@ -660,7 +660,7 @@ export default function Dashboard({ session }) {
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🎨 选择插画类型</label>
                     <select value={imageType} onChange={(e) => setImageType(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#1e293b', outline: 'none', cursor: 'pointer' }}>
-                      <option value="picturebook">绘本分镜 analysis</option>
+                      <option value="picturebook">绘本分镜分析</option>
                       <option value="illustration">单幅插画审美</option>
                     </select>
                   </div>
