@@ -80,7 +80,7 @@ export default function Auth() {
           options: {
             data: {
               role: initialRole,
-              flash_left: 5, // 默认赠送 5 次基础算力
+              flash_left: 3, // 默认赠送 5 次基础算力
               pro_credits: 0
             }
           }
