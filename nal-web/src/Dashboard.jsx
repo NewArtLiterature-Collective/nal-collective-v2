@@ -506,7 +506,6 @@ export default function Dashboard({ session }) {
               <button 
                 onClick={() => setActiveTab('contest')} 
                 style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}
-              >
                 🏆 参赛作品与档案
               </button>
             )}
