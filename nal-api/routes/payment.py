@@ -26,8 +26,8 @@ async def create_checkout_session_route(request: Request):
             if meta.get("role") == "pro":
                 return {"url": PaymentService.create_checkout_session(user_id, user_email, plan)}
 
-            # 2. 🚨 核心修正：完全废弃旧的细分字段，精准对齐统一额度账本
-            f0 = int(meta.get("flash_left") if meta.get("flash_left") is not None else 5)
+            # 2. 🚨 核心修正：完全废弃旧的细分字段，精准对齐统一额度账本 (新用户默认3次)
+            f0 = int(meta.get("flash_left") if meta.get("flash_left") is not None else 3)
             pro_credits = int(meta.get("pro_credits") or 0) # 👈 统一读取 Pro 点数
             
             total = f0 + pro_credits
@@ -69,14 +69,50 @@ async def stripe_webhook(request: Request):
             metadata = session_dict.get('metadata', {})
             user_id = metadata.get('user_id')
             plan = metadata.get('plan', 'contestant')
+            # 兼容多赛季扩展，可以从 metadata 里传，或者使用默认值
+            contest_id = metadata.get('contest_id', '2026_contest') 
             
             print(f"💰 Webhook 成功解析：User:{user_id}, Plan:{plan}")
 
             if user_id:
-                # 🚨 强力提醒：请务必检查 UserService.upgrade_user_to_pro 内部！
-                # 确保当 plan == 'addon' 时，加算的是 meta 中的 pro_credits 字段（比如 +5），
-                # 而不是去加算什么遗留的 guide_pro / text_pro / illustration_pro。
-                UserService.upgrade_user_to_pro(user_id, plan)
+                if plan == 'contestant':
+                    # =======================================================
+                    # 🚨 参赛资格门票：动态精算与发货逻辑
+                    # =======================================================
+                    user_res = UserService.get_user_by_id(user_id)
+                    current_meta = {}
+                    if user_res and hasattr(user_res, 'user'):
+                        current_meta = user_res.user.user_metadata or {}
+
+                    current_flash = int(current_meta.get("flash_left") if current_meta.get("flash_left") is not None else 3)
+                    current_pro = int(current_meta.get("pro_credits") or 0)
+
+                    # 1. 继承原有数据，并升级为参赛者身份
+                    new_meta = current_meta.copy()
+                    new_meta['role'] = 'contestant'
+                    new_meta['paid_contest_id'] = contest_id
+
+                    # 2. 执行严密的商业叠加规则
+                    if current_flash > 0 or current_pro > 0:
+                        # 资源未用完的情况：Flash 不变，叠加 1 次 Pro
+                        new_meta['flash_left'] = current_flash
+                        new_meta['pro_credits'] = current_pro + 1
+                    else:
+                        # 资源已用完的情况 (枯竭状态)：获得 1 次 Flash 和 1 次 Pro
+                        new_meta['flash_left'] = 1
+                        new_meta['pro_credits'] = 1
+
+                    print(f"🎯 门票发货精算完毕: Flash({current_flash} -> {new_meta['flash_left']}), Pro({current_pro} -> {new_meta['pro_credits']})")
+
+                    # 3. 强力保存
+                    # 要求 UserService 拥有一个能够直接保存字典数据的通用方法
+                    UserService.update_user_metadata(user_id, new_meta)
+                    
+                else:
+                    # =======================================================
+                    # 其他商品 (addon / pro)：继续走原有升级流水线
+                    # =======================================================
+                    UserService.upgrade_user_to_pro(user_id, plan)
         
         except Exception as err:
             import traceback
