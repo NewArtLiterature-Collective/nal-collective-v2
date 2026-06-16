@@ -23,6 +23,16 @@ export default function Dashboard({ session }) {
 
   const [imageTexts, setImageTexts] = useState([]); 
 
+  // --- 报名与规则确认大闸状态 ---
+  const [showRegModal, setShowRegModal] = useState(false);
+  const [isUpdatingReg, setIsUpdatingReg] = useState(false);
+  const [regForm, setRegForm] = useState({
+    name: '',
+    gender: '保密',
+    phone: '',
+    agreed: false
+  });
+
   // 参赛作品专属状态
   const [contestText, setContestText] = useState('');
   const [contestImages, setContestImages] = useState([]);
@@ -66,6 +76,9 @@ export default function Dashboard({ session }) {
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
+
+  // --- 判断用户是否已经报名并同意当前赛季规则 ---
+  const hasAgreedToCurrentContest = rawUserMetadata.agreed_contests?.includes(activeContestId);
 
   // 3. 额度动态洗白
   const displayUsage = {
@@ -126,6 +139,13 @@ export default function Dashboard({ session }) {
         flash: meta.flash_left !== undefined ? meta.flash_left : 3,
         pro_credits: meta.pro_credits || 0
       });
+      // 初始化报名表单数据
+      setRegForm(prev => ({
+        ...prev,
+        name: meta.real_name || '',
+        gender: meta.gender || '保密',
+        phone: meta.phone || ''
+      }));
     }
   };
 
@@ -181,6 +201,37 @@ export default function Dashboard({ session }) {
   }, [activeContestId, session?.user?.id, fetchUserSubmissions, isAdmin]);
 
   // --- 3. 业务处理函数 ---
+
+  // 处理报名信息提交
+  const handleRegisterSubmit = async () => {
+    if (!regForm.name.trim() || !regForm.phone.trim()) {
+      return alert("请填写完整的姓名和联系电话，以便获奖后与您取得联系。");
+    }
+    
+    setIsUpdatingReg(true);
+    try {
+      const updatedAgreedContests = [...(rawUserMetadata.agreed_contests || []), activeContestId];
+      
+      const { data, error } = await supabase.auth.updateUser({
+        data: {
+          real_name: regForm.name,
+          gender: regForm.gender,
+          phone: regForm.phone,
+          agreed_contests: updatedAgreedContests
+        }
+      });
+      
+      if (error) throw error;
+      
+      setRawUserMetadata(data.user.user_metadata);
+      setShowRegModal(false); // 提交成功，关闭弹窗，瞬间解锁上传大厅
+    } catch (error) {
+      alert("信息提交失败: " + error.message);
+    } finally {
+      setIsUpdatingReg(false);
+    }
+  };
+
   const removeContestImage = (index) => setContestImages(prev => prev.filter((_, i) => i !== index));
   const removeSelectedImage = (index) => {
     setSelectedImages(prev => prev.filter((_, i) => i !== index));
@@ -363,12 +414,68 @@ export default function Dashboard({ session }) {
 
   return (
     <div style={styles.dashboard}>
+      {/* 支付状态遮罩层 */}
       {payLoading && (
         <div style={styles.overlay}>
           <div style={styles.paymentModal}>
             <div style={styles.spinner}></div>
             <h3 style={{ margin: '20px 0 10px 0', color: '#111827' }}>正在连接支付网关...</h3>
             <button onClick={() => setPayLoading(false)} style={styles.cancelPayBtn}>返回</button>
+          </div>
+        </div>
+      )}
+
+      {/* 报名与参赛规则确认弹窗 */}
+      {showRegModal && (
+        <div style={styles.overlay}>
+          <div style={{...styles.paymentModal, maxWidth: '550px', textAlign: 'left', padding: '35px'}}>
+            <h3 style={{ margin: '0 0 20px 0', color: '#111827', borderBottom: '1px solid #e5e7eb', paddingBottom: '15px', fontSize: '20px' }}>
+              📝 完善报名信息与参赛声明
+            </h3>
+            
+            <div style={{ marginBottom: '16px' }}>
+              <label style={styles.regLabel}>真实姓名 <span style={{color: '#ef4444'}}>*</span></label>
+              <input type="text" style={styles.regInput} value={regForm.name} onChange={e => setRegForm({...regForm, name: e.target.value})} placeholder="请输入您的真实姓名" />
+            </div>
+            
+            <div style={{ marginBottom: '20px', display: 'flex', gap: '15px' }}>
+              <div style={{ flex: 1 }}>
+                <label style={styles.regLabel}>性别</label>
+                <select style={styles.regInput} value={regForm.gender} onChange={e => setRegForm({...regForm, gender: e.target.value})}>
+                  <option value="保密">保密</option>
+                  <option value="男">男</option>
+                  <option value="女">女</option>
+                </select>
+              </div>
+              <div style={{ flex: 2 }}>
+                <label style={styles.regLabel}>联系电话 <span style={{color: '#ef4444'}}>*</span></label>
+                <input type="tel" style={styles.regInput} value={regForm.phone} onChange={e => setRegForm({...regForm, phone: e.target.value})} placeholder="非常重要，用于入围与发奖联系" />
+              </div>
+            </div>
+
+            <label style={styles.regLabel}>大赛参赛规则与版权声明</label>
+            <div style={styles.rulesBox}>
+              <p>1. <strong>原创性声明</strong>：参赛作品必须为参赛者本人绝对原创，严禁任何形式的抄袭、洗稿或剽窃。若因版权侵权引发法律纠纷，一切后果及法律责任由参赛者本人承担。</p>
+              <p>2. <strong>AI 生成限制</strong>：本平台旨在发掘人类真实的文学情感。严禁直接提交由 ChatGPT、文心一言等 AI 工具自动生成的作品。我们的后台评审引擎包含深度的“去人造化与 AI 痕迹筛查”，一经判定为 AI 纯生成，将直接取消入展资格。</p>
+              <p>3. <strong>版权与使用权归属</strong>：参赛作品的完整著作权（含署名权）永远归创作者所有。但报名并提交作品即视为参赛者**同意并授权** NAL Collective 在其官方平台、线上展厅、相关社交媒体及宣传物料中，非排他性地展示、发表及使用该作品。</p>
+              <p>4. <strong>唯一投递原则</strong>：为保证评审资源的合理分配，每位参赛账户在单个赛季期间，限定只能投递一部完整的代表作品。作品一经点击提交并进入 AI 矩阵，即不可撤回或修改，请务必确认至最终版再提交。</p>
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '20px', fontSize: '13px', cursor: 'pointer', color: '#1f2937', userSelect: 'none' }}>
+              <input type="checkbox" checked={regForm.agreed} onChange={e => setRegForm({...regForm, agreed: e.target.checked})} style={{ marginTop: '2px', transform: 'scale(1.2)', cursor: 'pointer' }} />
+              <span style={{ lineHeight: '1.5' }}>我已仔细阅读并完全理解、同意上述《NAL Collective 参赛规则与版权声明》。</span>
+            </label>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '30px' }}>
+              <button onClick={() => setShowRegModal(false)} style={{...styles.cancelPayBtn, flex: 1}}>取消返回</button>
+              <button 
+                onClick={handleRegisterSubmit} 
+                disabled={isUpdatingReg || !regForm.agreed} 
+                style={{...styles.submitBtn, flex: 2, padding: '12px', backgroundColor: (!regForm.agreed || isUpdatingReg) ? '#94a3b8' : '#4f46e5', cursor: (!regForm.agreed || isUpdatingReg) ? 'not-allowed' : 'pointer', marginTop: 0}}
+              >
+                {isUpdatingReg ? '信息提交中...' : '确认同意并前往上传大厅'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -516,6 +623,7 @@ export default function Dashboard({ session }) {
             <div style={{ display: 'flex', flexDirection: 'row', gap: '2%', alignItems: 'flex-start' }}>
               
               <div style={{...styles.reportBox, width: '68%', boxSizing: 'border-box', padding: '30px', margin: 0 }}>
+                {/* 拦截1：未获取资格、未开赛或已提交 */}
                 {!canSubmitNew ? (
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
@@ -534,7 +642,29 @@ export default function Dashboard({ session }) {
                             : '截稿时间已过。目前已全面进入紧张的 AI 离线评审与专家会诊阶段，右侧为您的参展档案。'))}
                     </p>
                   </div>
-                ) : (
+                ) : 
+                
+                /* 拦截2：有参赛资格，但尚未同意【本届规则】。展示报名引导卡片 */
+                !hasAgreedToCurrentContest ? (
+                  <div style={{ textAlign: 'center', padding: '60px 20px', backgroundColor: '#f0f9ff', borderRadius: '12px', border: '2px dashed #bae6fd' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '20px' }}>✍️</div>
+                    <h3 style={{ color: '#0369a1', marginBottom: '15px', fontSize: '20px' }}>
+                      最后一步：完善报名信息并确认规则
+                    </h3>
+                    <p style={{ color: '#0c4a6e', fontSize: '15px', lineHeight: '1.8', maxWidth: '450px', margin: '0 auto 30px auto' }}>
+                      系统检测到您已获得本届大赛的参选资格。在正式解锁上传大厅之前，我们需要您登记联系方式，并确认大赛的版权与原创声明。
+                    </p>
+                    <button 
+                      onClick={() => setShowRegModal(true)} 
+                      style={{ padding: '14px 32px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '15px', boxShadow: '0 4px 10px rgba(2, 132, 199, 0.3)' }}
+                    >
+                      📝 立即填写报名信息
+                    </button>
+                  </div>
+                ) : 
+
+                /* 拦截3：已同意规则，一切就绪，展示正式上传大厅 */
+                (
                   <>
                     <div style={{ marginTop: '0px' }}>
                       <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
@@ -761,7 +891,7 @@ export default function Dashboard({ session }) {
 
 const styles = {
   dashboard: { display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', fontFamily: 'system-ui' },
-  overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', zIndex: 1000 },
+  overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', zIndex: 1000, backdropFilter: 'blur(3px)' },
   paymentModal: { margin: 'auto', backgroundColor: 'white', padding: '40px', borderRadius: '24px', textAlign: 'center', width: '90%', maxWidth: '400px', boxShadow: '0 20px 50px rgba(0,0,0,0.2)' },
   spinner: { width: '40px', height: '40px', border: '4px solid #f3f4f6', borderTop: '4px solid #4f46e5', borderRadius: '50%', margin: '0 auto', animation: 'spin 1s linear infinite' },
   cancelPayBtn: { background: 'none', border: '1px solid #d1d5db', color: '#6b7280', padding: '10px 20px', borderRadius: '10px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
@@ -797,4 +927,7 @@ const styles = {
   payBtn: { width: '100%', backgroundColor: '#6366f1', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
   addonBtn: { width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' },
   proBtn: { width: '100%', backgroundColor: 'transparent', color: '#a78bfa', border: '1px solid #a78bfa', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  regLabel: { display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#374151', marginBottom: '6px' },
+  regInput: { width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none', fontSize: '14px', boxSizing: 'border-box' },
+  rulesBox: { backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', height: '140px', overflowY: 'auto', lineHeight: '1.6' }
 };
