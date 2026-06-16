@@ -198,7 +198,7 @@ export default function Home() {
             <div style={{...styles.pricingCard, border: '2px solid #4f46e5', transform: 'scale(1.05)', zIndex: 10}}>
               <div style={styles.popularBadge}>2026 评审季推荐</div>
               <h3 style={styles.planName}><span role="img" aria-label="contestant">🏆</span> 参赛选手</h3>
-              <div style={styles.planPrice}>￥10 <span style={styles.priceUnit}>/ 报名费</span></div>
+              <div style={styles.planPrice}>￥20 <span style={styles.priceUnit}>/ 报名费</span></div>
               <ul style={styles.planFeatures}>
                 <li>✓ 获得大赛官方作品提交资格</li>
                 <li>✓ 赠送高级权益 1 次</li>
