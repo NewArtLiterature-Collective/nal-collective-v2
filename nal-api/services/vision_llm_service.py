@@ -35,10 +35,9 @@ class VisionLLMService:
             return None
 
     @classmethod
-    def _get_v65_instruction(cls, image_type: str) -> str:
+    def _get_v65_instruction(cls, image_type: str, has_declared_ai: bool = False) -> str:
         """
-        🚀 获取 NAL 升级版创作指导型视觉评审指令
-        已植入：反“视觉人造儿童”警示、4:3:3 子维度强制拆解
+        🚀 获取 NAL 升级版创作指导型视觉评审指令 (植入动态 AI 检测)
         """
         
         core_philosophy = """
@@ -49,6 +48,21 @@ class VisionLLMService:
         1. 警惕「精美陷阱」：视觉极为精美但沦为“画廊展品”。若图画未参与叙事或缺乏文本推进力，必须严厉扣分。
         2. 警惕「视觉人造儿童」：严查画面中是否有将儿童强行宠物化、弱智化的视觉表达。坚决抵制披着低幼外衣的刻板道德说教。
         3. 警惕「图文复读机」：画出来的和写出来的一模一样，毫无文本与图像的博弈和互补空间。
+        """
+        
+        # 🚨 动态 AI 审查策略
+        ai_policy = ""
+        if has_declared_ai:
+            ai_policy = """
+        【🤖 视觉指纹筛查策略：已声明 AI 辅助】
+        创作者已坦诚使用了 AI (如 Midjourney / DALL-E) 进行辅助。
+        你的任务是：包容其工具属性，但必须尖锐地指出其“人造感”浓厚的地方（如：千篇一律的塑料光影、人物手部/透视的物理畸变、背景细节的逻辑错乱）。指导创作者如何通过人类的主观美学去进行“二次艺术打磨”。
+        """
+        else:
+            ai_policy = """
+        【🤖 视觉指纹筛查策略：未声明 AI 辅助】
+        创作者声称此为纯原创。请开启极高敏锐度的“AI 痕迹筛查”。
+        寻找任何疑似生成式 AI 的典型缺陷（如：毫无逻辑的背景元素融合、过度完美的商业插画质感但情感空洞、角色的细微结构崩坏）。如果有强烈的 AI 痕迹，请在点评中严厉指出。
         """
         
         # 维度 1：画面艺术性
@@ -83,7 +97,8 @@ class VisionLLMService:
         你必须按照提供的 JSON 格式输出。
         1. 首先，分别评估三个子维度的得分（score_artistry, score_subject, score_narrative）。
         2. 然后，将三者严格相加，得出 v65_visual_score。
-        3. 在 v65_synergy_report 中，明确回答该作品是否触发了上述“三大陷阱”。
+        3. 给出综合点评并排查三大陷阱。
+        4. 给出客观的 AI 痕迹与浓度评估。
         """
         
         work_name = "插画作品" if image_type == "illustration" else "绘本作品"
@@ -91,6 +106,7 @@ class VisionLLMService:
         return f"""你现在是 NAL 顶尖儿童文学视觉评审专家与艺术指导顾问。请严格根据以下标准评审这组【{work_name}】，重点在于提出具体的打磨改进建议，并必须仅以 JSON 格式输出结果。
 
         {core_philosophy}
+        {ai_policy}
 
         【核心评分维度（4:3:3）】：
         {artistry_base}
@@ -108,7 +124,8 @@ class VisionLLMService:
             "v65_visual_score": 浮点数 (1-10分，前三项的严格加总),
             "v65_critique": "集成理论的综合艺术点评，必须针对画面缺陷提出可执行的修改建议",
             "v65_prediction": "限制三个固定值之一：'提出修改建议'、'认定是视觉杰作'、'需人工复核'",
-            "v65_synergy_report": "包含陷阱自查与画面优缺点理论映射的思维链分析"
+            "v65_synergy_report": "包含陷阱自查与画面优缺点理论映射的思维链分析",
+            "v65_ai_assessment": "基于 AI 筛查策略，客观评估其视觉指纹的机器感与 AI 生成浓度，字数需在100字左右。"
         }}
         """
 
@@ -119,8 +136,9 @@ class VisionLLMService:
         image_type: str, 
         image_urls: list, 
         work_text: str = "", 
-        page_texts: list = None,  # 🚨 找回丢失的参数！
-        is_pro: bool = False      # 🚨 找回丢失的参数！
+        page_texts: list = None,  
+        is_pro: bool = False,
+        has_declared_ai: bool = False  # 🚨 接收前端的 AI 声明状态
     ) -> str:
         """
         🖼️ 核心多模态评估入口（动态上限 + 等距抽样 + 图文强绑定）
@@ -163,7 +181,7 @@ class VisionLLMService:
             raise ValueError("未提取到有效的图片用于视觉评审。")
 
         # 4. 构建 Prompt 和内容交织列表 (Interleaving)
-        system_instruction = cls._get_v65_instruction(image_type)
+        system_instruction = cls._get_v65_instruction(image_type, has_declared_ai)
         contents = []
 
         # 🚨 商业路由：如果是绘本且传入了分页文本（代表触发了高阶文图协作）
@@ -214,6 +232,7 @@ class VisionLLMService:
                 artistry = result_json.get('score_artistry', 'N/A')
                 subject = result_json.get('score_subject', 'N/A')
                 narrative = result_json.get('score_narrative', 'N/A')
+                ai_assessment = result_json.get('v65_ai_assessment', '系统未检测到明显的 AI 痕迹。')
 
                 markdown_report = f"""
 ### 🎨 NAL 视觉艺术评审与指导报告
@@ -230,6 +249,9 @@ class VisionLLMService:
 
 #### 🔬 理论映射与专项诊断 (陷阱自查与思维链)
 {result_json.get('v65_synergy_report', 'N/A')}
+
+#### 🤖 视觉指纹与 AI 浓度评估
+{ai_assessment}
 """
                 return markdown_report
             else:
