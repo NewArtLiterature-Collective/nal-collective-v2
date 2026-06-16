@@ -64,7 +64,7 @@ export default function AdminGuard({ children }) {
               <label style={{ display: 'block', color: '#888', fontSize: '12px', marginBottom: '8px' }}>管理账号 (Username)</label>
               <input 
                 type="text" // 👈 已经去掉了 type="email" 限制，支持纯英文字母
-                placeholder="请输入 admin" 
+                placeholder="请输入管理员账号" 
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 style={{ width: '100%', padding: '12px', background: '#000', color: '#a3be8c', border: '1px solid #333', borderRadius: '6px', outline: 'none', boxSizing: 'border-box', fontFamily: 'monospace' }}
