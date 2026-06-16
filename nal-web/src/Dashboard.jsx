@@ -30,9 +30,11 @@ export default function Dashboard({ session }) {
     name: '',
     gender: '保密',
     phone: '',
-    agreed: false,
-    used_ai: false // 新增：是否使用AI辅助的全局状态
+    agreed: false
   });
+
+  // 🚨 全局 AI 辅助强制声明状态 (''=未选择, 'no'=未使用, 'yes'=已使用)
+  const [aiDeclaration, setAiDeclaration] = useState(''); 
 
   // 参赛作品专属状态
   const [contestText, setContestText] = useState('');
@@ -145,8 +147,7 @@ export default function Dashboard({ session }) {
         ...prev,
         name: meta.real_name || '',
         gender: meta.gender || '保密',
-        phone: meta.phone || '',
-        used_ai: false // 刷新时默认重置 AI 状态
+        phone: meta.phone || ''
       }));
     }
   };
@@ -288,7 +289,7 @@ export default function Dashboard({ session }) {
       imageType, 
       selectedModelId, 
       page_texts_json: pageTextsJson,
-      has_declared_ai: regForm.used_ai // 🚨 将 AI 声明传递给后端的常规评估
+      has_declared_ai: aiDeclaration === 'yes' // 🚨 明确判定是否使用了 AI
     });
     setTimeout(refreshUserMetadata, 1500);
     if (success) {
@@ -296,6 +297,7 @@ export default function Dashboard({ session }) {
       setSelectedImages([]);
       setImageTexts([]);
       setSelectedDocx(null);
+      setAiDeclaration(''); // 提交成功后重置选项
     }
   };
 
@@ -327,13 +329,14 @@ export default function Dashboard({ session }) {
         image_urls: imageUrls,
         status: 'pending',
         contest_id: targetContestId,
-        has_declared_ai: regForm.used_ai // 🚨 将 AI 声明正式入库，供大赛评委 Agent 交叉验证
+        has_declared_ai: aiDeclaration === 'yes' // 🚨 将 AI 声明正式入库
       });
       if (dbError) throw dbError;
 
       alert("🎉 提交成功！您的作品已封存并进入智能评审大阵，请在右侧追踪进度。");
       setContestText('');
       setContestImages([]);
+      setAiDeclaration(''); // 提交成功后重置选项
       fetchUserSubmissions(); 
     } catch (error) {
       alert("❌ 失败: " + error.message);
@@ -711,18 +714,29 @@ export default function Dashboard({ session }) {
                       </div>
                     </div>
 
-                    {/* 🚨 修复的排版位置：这才是正确的参赛 AI 声明大闸位置！*/}
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '20px', fontSize: '14px', color: '#1f2937', fontWeight: 'bold', cursor: 'pointer', backgroundColor: '#fef2f2', padding: '15px', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                      <input type="checkbox" checked={regForm.used_ai} onChange={e => setRegForm({...regForm, used_ai: e.target.checked})} style={{ marginTop: '2px', transform: 'scale(1.2)', cursor: 'pointer' }} />
-                      <span style={{ color: '#991b1b', lineHeight: '1.5' }}>参赛诚信声明：本篇参赛作品在创作过程中，是否使用了 AI 工具进行辅助、润色或扩写？（若未声明但被检测出高度 AI 生成，将直接落选）</span>
-                    </label>
+                    {/* 🚨 参赛作品专属 AI 声明 (带强烈警告样式) */}
+                    <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#991b1b', marginBottom: '10px' }}>
+                        🚨 参赛诚信与 AI 辅助声明 <span style={{ color: '#ef4444' }}>* (必选)</span>
+                      </label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', color: '#7f1d1d' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                          <input type="radio" name="contest_ai_dec" checked={aiDeclaration === 'no'} onChange={() => setAiDeclaration('no')} style={{ cursor: 'pointer' }} />
+                          <span>我郑重声明：本作品为纯人类原创，未使用任何 AI 工具。（若被检测出高度 AI 生成，直接落选）</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                          <input type="radio" name="contest_ai_dec" checked={aiDeclaration === 'yes'} onChange={() => setAiDeclaration('yes')} style={{ cursor: 'pointer' }} />
+                          <span>我如实声明：本作品在创作过程中使用了 AI 工具进行辅助/润色。（允许适度辅助，拒绝全篇代写）</span>
+                        </label>
+                      </div>
+                    </div>
 
                     <button 
                       onClick={submitContestWork} 
-                      disabled={isSubmitting} 
-                      style={{ ...styles.submitBtn, width: '100%', marginTop: '30px', backgroundColor: '#4f46e5', cursor: 'pointer' }}
+                      disabled={isSubmitting || aiDeclaration === ''} 
+                      style={{ ...styles.submitBtn, width: '100%', marginTop: '30px', backgroundColor: (isSubmitting || aiDeclaration === '') ? '#94a3b8' : '#4f46e5', cursor: (isSubmitting || aiDeclaration === '') ? 'not-allowed' : 'pointer' }}
                     >
-                      {isSubmitting ? "正在封存上传中..." : "📤 确认提交参赛作品"}
+                      {isSubmitting ? "正在封存上传中..." : (aiDeclaration === '' ? "⛔ 请先勾选上方 AI 声明" : "📤 确认提交参赛作品")}
                     </button>
                   </>
                 )}
@@ -864,12 +878,6 @@ export default function Dashboard({ session }) {
                 <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="docx-up" hidden accept=".docx" onChange={handleDocxChange} />
                   <label htmlFor="docx-up" style={styles.uploadBtn}>{selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}</label>
-                  
-                  {/* 🚨 修复的排版位置：常规文本评审的 AI 声明 */}
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '15px', fontSize: '13px', color: '#475569', cursor: 'pointer', justifyContent: 'center' }}>
-                    <input type="checkbox" checked={regForm.used_ai} onChange={e => setRegForm({...regForm, used_ai: e.target.checked})} style={{ cursor: 'pointer' }} />
-                    <span>声明：本篇作品的撰写过程是否使用了 AI 工具（如 ChatGPT, Claude 等）进行辅助？</span>
-                  </label>
                 </div>
               )}
               
@@ -882,15 +890,49 @@ export default function Dashboard({ session }) {
                 </>
               )}
               
+              {/* 🚨 常规文字与绘本插画的全局 AI 声明选项 (强制要求勾选单选框) */}
+              {(activeTab === 'text' || activeTab === 'picturebook') && (
+                <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#1e293b', marginBottom: '10px' }}>
+                    🤖 AI 辅助创作声明 <span style={{ color: '#ef4444' }}>* (必选)</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: '20px', fontSize: '13px', color: '#475569' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                      <input type="radio" name="general_ai_dec" checked={aiDeclaration === 'no'} onChange={() => setAiDeclaration('no')} style={{ cursor: 'pointer' }} />
+                      <span>纯人类原创，未使用 AI 工具</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                      <input type="radio" name="general_ai_dec" checked={aiDeclaration === 'yes'} onChange={() => setAiDeclaration('yes')} style={{ cursor: 'pointer' }} />
+                      <span>使用了 AI 工具进行辅助</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'picturebook' && warningMessage && <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>{warningMessage}</div>}
 
-              <button 
-                onClick={triggerEvaluation} 
-                disabled={loading || (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0))} 
-                style={{ ...styles.submitBtn, width: '100%', marginTop: '20px', backgroundColor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? '#94a3b8' : '#111827', cursor: (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ? 'not-allowed' : 'pointer' }}
-              >
-                {loading ? "AI 专家计算中..." : (activeTab === 'picturebook' ? "启动视觉与图文协作评审" : (activeTab === 'guide' ? "启动创作指导" : "启动评审分析"))}
-              </button>
+              {/* 🚨 按钮动态控制逻辑：如果没选 AI 声明，按钮变灰且不让点击 */}
+              {(() => {
+                const isEvalDisabled = loading || 
+                  (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ||
+                  ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '');
+
+                let btnText = "启动评审分析";
+                if (loading) btnText = "AI 专家计算中...";
+                else if ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '') btnText = "⛔ 请先完成上方 AI 声明";
+                else if (activeTab === 'picturebook') btnText = "启动视觉与图文协作评审";
+                else if (activeTab === 'guide') btnText = "启动创作指导";
+
+                return (
+                  <button 
+                    onClick={triggerEvaluation} 
+                    disabled={isEvalDisabled} 
+                    style={{ ...styles.submitBtn, width: '100%', marginTop: '20px', backgroundColor: isEvalDisabled ? '#94a3b8' : '#111827', cursor: isEvalDisabled ? 'not-allowed' : 'pointer' }}
+                  >
+                    {btnText}
+                  </button>
+                );
+              })()}
             </div>
           )}
         </div>
