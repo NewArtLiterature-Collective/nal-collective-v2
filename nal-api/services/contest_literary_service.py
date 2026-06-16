@@ -15,31 +15,34 @@ class ContestLiteraryService:
         多模态会诊：同时吃进文本和真实的插画 PIL 对象。
         基于新版 SDK 架构，完美支持 Gemini 2.5 Pro 的推理思维链空间，100% 免疫截断。
         """
-        # 专家系统指令矩阵
-        # 专家系统指令矩阵
+        # 专家系统指令矩阵 (🚨 已全面植入 AI 浓度侦测机制)
         prompts = {
             "panoramic": (
                 "你是资深编辑，关注结构与图文绝对对位。你现在能同时看到故事文本和配套插画。\n"
                 "🚨【刚性红线】：如果插画中包含违规内容，请在 review 中写明‘图片违规隐患’并全维度打 0 分！\n"
                 "🚨【绝对指令】：打分必须采用严格的百分制（0-100的整数，如 85, 92）！严禁使用 10分制 或 5分制！\n"
+                "🚨【AI 痕迹侦测】：请审视文本的“机器味”与画面的“AI生成瑕疵”（如手部畸形、背景无逻辑融合），并综合给出一个 0-100 的 ai_probability（AI生成概率）。\n"
                 "若合规，请评估画面视觉张力与文本互文结构，给出文学底色、叙事创新、时代感、感官对位四个维度的打分和80字以内总结。"
             ),
             "nal_chief": (
                 "你是首席专家，严厉打击“人造儿童”。你现在能同时看到故事文本和配套插画。\n"
                 "🚨【刚性红线】：若发现敏感违规视觉，判定‘视觉违规’并全维度打 0 分！\n"
                 "🚨【绝对指令】：打分必须采用严格的百分制（0-100的整数，如 88, 95）！严禁使用 10分制 或 5分制！\n"
+                "🚨【AI 痕迹侦测】：请审视文本的“说教机器味”与画面的“AI图库塑料感”，并给出一个 0-100 的 ai_probability（AI纯生成概率）。\n"
                 "重点寻找插画与文字配合时的先锋性和实验性。评语要犀利，若有艺术灵性请破格给高分。"
             ),
             "li_lifang": (
                 "你是学术专家，基于李利芳儿童精神理论。你现在能同时看到故事文本和配套插画。\n"
                 "🚨【刚性红线】：若插画违规，直接拒绝评审，全维度归 0。\n"
                 "🚨【绝对指令】：打分必须采用严格的百分制（0-100的整数，如 82, 90）！严禁使用 10分制 或 5分制！\n"
+                "🚨【AI 痕迹侦测】：考察作品是否缺乏真正人类的“生命本体深度”，给出综合 ai_probability (0-100)。\n"
                 "考察图文结合后展现出的儿童本体深度。评语要深邃。"
             )
         }
 
         system_instruction = prompts.get(persona, prompts["panoramic"])
-        system_instruction += "\n\n请务必只返回标准的 JSON 格式：{\"scores\": {\"文学底色\": 0, \"叙事创新\": 0, \"时代感\": 0, \"感官对位\": 0}, \"review\": \"...\"}"
+        # 🚨 强制要求输出体包含 ai_probability 字段
+        system_instruction += "\n\n请务必只返回标准的 JSON 格式：{\"scores\": {\"文学底色\": 0, \"叙事创新\": 0, \"时代感\": 0, \"感官对位\": 0}, \"review\": \"...\", \"ai_probability\": 0}"
 
         # 🚨 3. 采用新版标准的 GenerateContentConfig 模式
         # 新版 SDK 在未指定 max_output_tokens 时，会自动动态扩展以容纳模型的 Reasoning (内部思考) 消耗
@@ -79,7 +82,8 @@ class ContestLiteraryService:
             print(f"❌ 专家 {persona} 返回数据解析失败。原始文本: {response.text if 'response' in locals() else '无'}")
             return {
                 "scores": {"文学底色": 0, "叙事创新": 0, "时代感": 0, "感官对位": 0}, 
-                "review": f"返回的 JSON 结构受损: {str(je)}"
+                "review": f"返回的 JSON 结构受损: {str(je)}",
+                "ai_probability": 0
             }
         except Exception as e:
             print(f"❌ 专家 {persona} 评审或安全拦截触发: {e}")
@@ -87,5 +91,6 @@ class ContestLiteraryService:
                 raise e
             return {
                 "scores": {"文学底色": 0, "叙事创新": 0, "时代感": 0, "感官对位": 0}, 
-                "review": f"评审环节出现异常: {str(e)}"
+                "review": f"评审环节出现异常: {str(e)}",
+                "ai_probability": 0
             }
