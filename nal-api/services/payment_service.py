@@ -13,7 +13,7 @@ class PaymentService:
                 amount = 50000  # 500.00 CNY
             elif plan == 'contestant':
                 product_name = 'NAL“童心”征文大赛 报名资格'
-                amount = 1000   # 10.00 CNY
+                amount = 2000   # 20.00 CNY
             else:
                 product_name = 'NAL 资源加油包'
                 amount = 2000   # 20.00 CNY
