@@ -30,7 +30,8 @@ export default function Dashboard({ session }) {
     name: '',
     gender: '保密',
     phone: '',
-    agreed: false
+    agreed: false,
+    used_ai: false // 新增：是否使用AI辅助的全局状态
   });
 
   // 参赛作品专属状态
@@ -144,7 +145,8 @@ export default function Dashboard({ session }) {
         ...prev,
         name: meta.real_name || '',
         gender: meta.gender || '保密',
-        phone: meta.phone || ''
+        phone: meta.phone || '',
+        used_ai: false // 刷新时默认重置 AI 状态
       }));
     }
   };
@@ -279,7 +281,14 @@ export default function Dashboard({ session }) {
   const triggerEvaluation = async () => {
     const pageTextsJson = isPro ? JSON.stringify(imageTexts) : null;
     const success = await evaluate({
-      activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, page_texts_json: pageTextsJson
+      activeTab, 
+      workText, 
+      selectedImages, 
+      selectedDocx, 
+      imageType, 
+      selectedModelId, 
+      page_texts_json: pageTextsJson,
+      has_declared_ai: regForm.used_ai // 🚨 将 AI 声明传递给后端的常规评估
     });
     setTimeout(refreshUserMetadata, 1500);
     if (success) {
@@ -317,7 +326,8 @@ export default function Dashboard({ session }) {
         text_content: contestText,
         image_urls: imageUrls,
         status: 'pending',
-        contest_id: targetContestId
+        contest_id: targetContestId,
+        has_declared_ai: regForm.used_ai // 🚨 将 AI 声明正式入库，供大赛评委 Agent 交叉验证
       });
       if (dbError) throw dbError;
 
@@ -499,10 +509,6 @@ export default function Dashboard({ session }) {
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
             
             {(isContestActive && isEligibleForContest) && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px', fontSize: '14px', color: '#1f2937', fontWeight: 'bold', cursor: 'pointer', backgroundColor: '#fef2f2', padding: '15px', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                  <input type="checkbox" checked={regForm.used_ai} onChange={e => setRegForm({...regForm, used_ai: e.target.checked})} style={{ transform: 'scale(1.2)', cursor: 'pointer' }} />
-                  <span style={{ color: '#991b1b' }}>参赛诚信声明：本篇参赛作品在创作过程中，是否使用了 AI 工具进行辅助、润色或扩写？（若未声明但被检测出高度 AI 生成，将直接落选）</span>
-              </label>
               <button 
                 onClick={() => setActiveTab('contest')} 
                 style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}
@@ -705,6 +711,12 @@ export default function Dashboard({ session }) {
                       </div>
                     </div>
 
+                    {/* 🚨 修复的排版位置：这才是正确的参赛 AI 声明大闸位置！*/}
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '20px', fontSize: '14px', color: '#1f2937', fontWeight: 'bold', cursor: 'pointer', backgroundColor: '#fef2f2', padding: '15px', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                      <input type="checkbox" checked={regForm.used_ai} onChange={e => setRegForm({...regForm, used_ai: e.target.checked})} style={{ marginTop: '2px', transform: 'scale(1.2)', cursor: 'pointer' }} />
+                      <span style={{ color: '#991b1b', lineHeight: '1.5' }}>参赛诚信声明：本篇参赛作品在创作过程中，是否使用了 AI 工具进行辅助、润色或扩写？（若未声明但被检测出高度 AI 生成，将直接落选）</span>
+                    </label>
+
                     <button 
                       onClick={submitContestWork} 
                       disabled={isSubmitting} 
@@ -820,7 +832,7 @@ export default function Dashboard({ session }) {
                               </div>
                               <div style={{ width: '75%' }}>
                                 <textarea
-                                  placeholder={imageType === 'picturebook' ? "✍️ [绘本硬性要求] 请输入本跨页对应的文本..." : "✍️ [插画硬性要求] 请输入审美理念..."}
+                                  placeholder={imageType === 'picturebook' ? "✍️ [绘本硬要求] 请输入本跨页对应的文本..." : "✍️ [插画硬性要求] 请输入审美理念..."}
                                   value={imageTexts[index] || ''}
                                   onChange={(e) => handleImageTextChange(index, e.target.value)}
                                   style={{ width: '100%', height: '80px', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', resize: 'vertical' }}
@@ -851,11 +863,13 @@ export default function Dashboard({ session }) {
               {activeTab === 'text' && (
                 <div style={{ ...styles.uploadArea, marginBottom: '20px' }}>
                   <input type="file" id="docx-up" hidden accept=".docx" onChange={handleDocxChange} />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '15px', fontSize: '13px', color: '#475569', cursor: 'pointer' }}>
+                  <label htmlFor="docx-up" style={styles.uploadBtn}>{selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}</label>
+                  
+                  {/* 🚨 修复的排版位置：常规文本评审的 AI 声明 */}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '15px', fontSize: '13px', color: '#475569', cursor: 'pointer', justifyContent: 'center' }}>
                     <input type="checkbox" checked={regForm.used_ai} onChange={e => setRegForm({...regForm, used_ai: e.target.checked})} style={{ cursor: 'pointer' }} />
                     <span>声明：本篇作品的撰写过程是否使用了 AI 工具（如 ChatGPT, Claude 等）进行辅助？</span>
                   </label>
-                  <label htmlFor="docx-up" style={styles.uploadBtn}>{selectedDocx ? `✅ 已选择: ${selectedDocx.name}` : "📄 上传 Word 评审文档 (.docx)"}</label>
                 </div>
               )}
               
