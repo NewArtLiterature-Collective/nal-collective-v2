@@ -184,7 +184,7 @@ export default function Home() {
             <h3 style={styles.planName}><span role="img" aria-label="free">☕</span> 普通用户</h3>
             <div style={styles.planPrice}>免费体验</div>
             <ul style={styles.planFeatures}>
-              <li>✓ 默认赠送 5 次基础算力</li>
+              <li>✓ 默认赠送 3 次基础算力</li>
               <li>✓ 支持 50KB Word 文档</li>
               <li>✓ 单次最多 2 张评审图片 (限1MB)</li>
               <li>✓ 仅限使用 2 个通用模型</li>
@@ -201,9 +201,9 @@ export default function Home() {
               <div style={styles.planPrice}>￥10 <span style={styles.priceUnit}>/ 报名费</span></div>
               <ul style={styles.planFeatures}>
                 <li>✓ 获得大赛官方作品提交资格</li>
-                <li>✓ 赠送高级权益 5 次</li>
+                <li>✓ 赠送高级权益 1 次</li>
                 <li>✓ 解锁 <b>高级文学引擎</b></li>
-                <li>✓ 支持 150KB 文档 / 5张图片</li>
+                <li>✓ 支持 150KB 文档 / 5张图片(限1.5MB)</li>
                 <li>✓ 提供约 300 字高光片段试写</li>
               </ul>
               <button onClick={() => navigate('/login?intent=contestant')} style={styles.planBtnContest}>立即报名参赛</button>
