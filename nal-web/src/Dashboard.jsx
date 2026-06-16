@@ -502,10 +502,11 @@ export default function Dashboard({ session }) {
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px', fontSize: '14px', color: '#1f2937', fontWeight: 'bold', cursor: 'pointer', backgroundColor: '#fef2f2', padding: '15px', borderRadius: '8px', border: '1px solid #fecaca' }}>
                   <input type="checkbox" checked={regForm.used_ai} onChange={e => setRegForm({...regForm, used_ai: e.target.checked})} style={{ transform: 'scale(1.2)', cursor: 'pointer' }} />
                   <span style={{ color: '#991b1b' }}>参赛诚信声明：本篇参赛作品在创作过程中，是否使用了 AI 工具进行辅助、润色或扩写？（若未声明但被检测出高度 AI 生成，将直接落选）</span>
-                </label>
+              </label>
               <button 
                 onClick={() => setActiveTab('contest')} 
                 style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}
+              >
                 🏆 参赛作品与档案
               </button>
             )}
