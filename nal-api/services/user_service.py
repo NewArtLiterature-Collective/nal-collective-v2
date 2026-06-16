@@ -59,7 +59,7 @@ class UserService:
                         meta.pop("has_bought_booster", None)
                         
                         # 5. 实时写回 Supabase 数据库底层，完成净化自愈
-                        supabase_admin.auth.admin.update_user_by_id(
+                        supabase_admin.auth.admin._user_by_id(
                             user_id, 
                             attributes={'user_metadata': meta}
                         )
@@ -71,6 +71,17 @@ class UserService:
             print(f"❌ 获取用户失败: {e}")
             return None
 
+    @classmethod
+    def update_user_metadata(cls, user_id: str, new_meta: dict):
+        """
+        直接用计算好的新字典覆盖 Supabase 中的 user_metadata
+        """
+        # 假设你的 supabase 管理员客户端变量名叫 supabase_admin (请依据你的实际命名调整)
+        supabase_admin.auth.admin.update_user_by_id(
+            user_id,
+            {"user_metadata": new_meta}
+        )    
+    
     @staticmethod
     def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
         """
@@ -140,7 +151,7 @@ class UserService:
                 print(f"✨ 用户 {user_id} 升级为年费专业版，有效期至 {meta['expiry_date']}")
             
             # 2. 持久化同步写回 Supabase 数据库底层
-            supabase_admin.auth.admin.update_user_by_id(
+            supabase_admin.auth.admin._user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
             )
@@ -187,7 +198,7 @@ class UserService:
                 meta["pro_credits"] = current_pro + 2
                 print(f"🏆 用户 {user_id} 免费报名成功，获得资格及资源：+3 Flash, +2 Pro。")
                 
-            supabase_admin.auth.admin.update_user_by_id(
+            supabase_admin.auth.admin._user_by_id(
                 user_id, 
                 attributes={'user_metadata': meta}
             )
