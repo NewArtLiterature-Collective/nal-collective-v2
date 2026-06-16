@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient'; 
+import { supabase } from '../supabaseClient'; 
 
 export default function AdminGuard({ children }) {
   const [session, setSession] = useState(null);
