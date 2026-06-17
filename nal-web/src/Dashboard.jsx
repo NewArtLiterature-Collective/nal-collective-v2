@@ -98,8 +98,11 @@ export default function Dashboard({ session }) {
   })();
 
   const currentLimits = (() => {
-     if (isPro) return { count: maxImageCount, bytes: 100 * 1024 * 1024, mb: 5, display: '100MB' };
+     // 🚀 Pro 用户：Word 10MB, 图片 10MB
+     if (isPro) return { count: maxImageCount, bytes: 10 * 1024 * 1024, mb: 10, display: '10MB' };
+     // 🚀 参赛/加油包用户：Word 150KB, 图片 1.5MB
      if (isContestant || hasAddon) return { count: maxImageCount, bytes: 150 * 1024, mb: 1.5, display: '150KB' };
+     // 🚀 免费普通用户：Word 50KB, 图片 1MB
      return { count: maxImageCount, bytes: 50 * 1024, mb: 1, display: '50KB' };
   })();
 
