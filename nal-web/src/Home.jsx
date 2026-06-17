@@ -218,7 +218,7 @@ export default function Home() {
               <li>✓ <b>{isContestActive ? "包含参赛资格及所有评审功能" : "完全解锁全场景深度视觉与文本评审"}</b></li>
               <li>✓ 解锁 <b>文学专业旗舰算力</b></li>
               <li>✓ 解锁全部 7 个细分学术模型</li>
-              <li>✓ 支持 100MB 巨型文档 / 50张图片</li>
+              <li>✓ 支持 10MB 文档 / 50张图片(限10MB)</li>
               <li>✓ 提供约 800 字深度高光片段试写</li>
             </ul>
             <button onClick={() => navigate('/login?intent=pro')} style={styles.planBtnPro}>升级专业会员</button>
