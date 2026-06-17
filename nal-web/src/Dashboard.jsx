@@ -828,7 +828,10 @@ export default function Dashboard({ session }) {
               </div>
 
               {activeTab === 'guide' && <p style={styles.helpText}>请在下方输入您的故事灵感、大纲结构或角色设定，NAL AI 专家将为您提供深度的创作指导和理论支持。</p>}
-              {activeTab === 'text' && <p style={styles.helpText}>支持直接粘贴正文，或上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，文件大小不超过 <strong style={{color: '#4f46e5'}}>{maxDocSizeDisplay}</strong>。</p>}
+              
+              {/* 🚨 针对 text 模式的特定文案更新 */}
+              {activeTab === 'text' && <p style={styles.helpText}>请上传 Word 评审文档。限制：每次限上传 <strong>1</strong> 份 .docx 文件，文件大小不超过 <strong style={{color: '#4f46e5'}}>{maxDocSizeDisplay}</strong>。</p>}
+              
               {activeTab === 'picturebook' && <p style={styles.helpText}>请上传绘本插画素材。当前最多允许批量上传 <strong style={{color: '#4f46e5'}}>{maxImageCount}</strong> 张图片，单张大小不超过 <strong style={{color: '#4f46e5'}}>{maxImageSizeMB}MB</strong> (格式：JPG/PNG)。</p>}
 
               {activeTab === 'picturebook' && (
@@ -881,12 +884,13 @@ export default function Dashboard({ session }) {
                 </div>
               )}
               
-              {!(activeTab === 'picturebook' && isPro) && (
+              {/* 🚨 针对 guide 和非 pro 的 picturebook 保留文本输入框，对 text 彻底隐藏 */}
+              {(activeTab === 'guide' || (activeTab === 'picturebook' && !isPro)) && (
                 <>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
-                    {activeTab === 'picturebook' ? '插画/绘本补充说明 (可选)' : '正文内容'}
+                    {activeTab === 'picturebook' ? '插画/绘本补充说明 (可选)' : '大纲与设定内容'}
                   </label>
-                  <textarea style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} placeholder={activeTab === 'picturebook' ? "可输入文字描述..." : "在此粘贴需要评审的文本..."} value={workText} onChange={(e) => setWorkText(e.target.value)} />
+                  <textarea style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} placeholder={activeTab === 'picturebook' ? "可输入文字描述..." : "在此输入需要指导的故事灵感或大纲..."} value={workText} onChange={(e) => setWorkText(e.target.value)} />
                 </>
               )}
               
@@ -911,15 +915,17 @@ export default function Dashboard({ session }) {
 
               {activeTab === 'picturebook' && warningMessage && <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>{warningMessage}</div>}
 
-              {/* 🚨 按钮动态控制逻辑：如果没选 AI 声明，按钮变灰且不让点击 */}
+              {/* 🚨 按钮动态控制逻辑：如果没选 AI 声明，或在 text 模式没传文件，按钮变灰且不让点击 */}
               {(() => {
                 const isEvalDisabled = loading || 
                   (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ||
+                  (activeTab === 'text' && !selectedDocx) || // 🚨 新增拦截：文字评审模式必须传 Word
                   ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '');
 
                 let btnText = "启动评审分析";
                 if (loading) btnText = "AI 专家计算中...";
                 else if ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '') btnText = "⛔ 请先完成上方 AI 声明";
+                else if (activeTab === 'text' && !selectedDocx) btnText = "⛔ 请先上传 Word 评审文档"; // 🚨 明确的未传文档提示
                 else if (activeTab === 'picturebook') btnText = "启动视觉与图文协作评审";
                 else if (activeTab === 'guide') btnText = "启动创作指导";
 
