@@ -280,7 +280,8 @@ export default function Dashboard({ session }) {
   };
 
   const triggerEvaluation = async () => {
-    const pageTextsJson = isPro ? JSON.stringify(imageTexts) : null;
+    // 🚨 仅在选为绘本时，将图文协作描述封装发给后端
+    const pageTextsJson = imageType === 'picturebook' ? JSON.stringify(imageTexts) : null;
     const success = await evaluate({
       activeTab, 
       workText, 
@@ -396,6 +397,7 @@ export default function Dashboard({ session }) {
                      (displayUsage.pro_credits > 0 ? "高级版 (优先消耗 Pro 额度)" : 
                      (isContestant ? "高级文学引擎" : "基础版"));
 
+  // 🚨 核心逻辑升级：仅当 imageType 为 picturebook 时，才校验图文协作
   let isPictureBookValid = true;
   let requiredTextCount = 0;
   let filledTextCount = 0;
@@ -403,24 +405,26 @@ export default function Dashboard({ session }) {
 
   if (activeTab === 'picturebook' && selectedImages.length > 0) {
     const count = selectedImages.length;
-    if (isPro) {
+    
+    // 第一道防线：不管插画还是绘本，都必须要有整体故事说明
+    if (!workText || workText.trim().length === 0) {
+      isPictureBookValid = false;
+      warningMessage = `🚨 请在下方填写作品的【整体故事说明】。`;
+    } 
+    // 第二道防线：如果是绘本，强制要求逐页的图文协作描述
+    else if (imageType === 'picturebook') {
       filledTextCount = imageTexts.filter(t => t && t.trim().length > 0).length;
-      if (imageType === 'picturebook') {
-        if (count <= 10) requiredTextCount = Math.ceil(count * 0.8); 
-        else if (count <= 30) requiredTextCount = Math.ceil(count * 0.6); 
-        else requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); 
+      if (count <= 10) requiredTextCount = Math.ceil(count * 0.8); 
+      else if (count <= 30) requiredTextCount = Math.ceil(count * 0.6); 
+      else requiredTextCount = Math.max(15, Math.ceil(count * 0.4)); 
 
-        if (filledTextCount < requiredTextCount) {
-          isPictureBookValid = false;
-          warningMessage = `🚨 绘本专业要求：当前上传 ${count} 跨页，您至少需填写 ${requiredTextCount} 页文本（已填 ${filledTextCount}）。`;
-        }
-      } else {
-        if (filledTextCount < count) {
-          isPictureBookValid = false;
-          warningMessage = `🚨 插画专业要求：必须为每一幅上传的插画填写理念（已填 ${filledTextCount} / ${count}）。`;
-        }
+      if (filledTextCount < requiredTextCount) {
+        isPictureBookValid = false;
+        warningMessage = `🚨 绘本审查要求：当前上传 ${count} 跨页，至少需为 ${requiredTextCount} 页填写图文协作描述（已填 ${filledTextCount}）。`;
       }
-    } else {
+    } 
+    // 插画：通过第一道防线即可
+    else {
       isPictureBookValid = true;
     }
   }
@@ -839,17 +843,18 @@ export default function Dashboard({ session }) {
                   {selectedImages.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px' }}>
                       {selectedImages.map((file, index) => {
-                        if (isPro) {
+                        // 🚨 核心修改：如果是“绘本”模式，就显示图文协作框（对所有人开放，不限 Pro）
+                        if (imageType === 'picturebook') {
                           return (
                             <div key={index} style={{ display: 'flex', gap: '15px', padding: '15px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
                               <div style={{ width: '25%', display: 'flex', flexDirection: 'column', gap: '8px', borderRight: '1px dashed #cbd5e1', paddingRight: '15px' }}>
-                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>{imageType === 'picturebook' ? `第 ${index + 1} 页 / 跨页` : `第 ${index + 1} 幅插画`}</span>
+                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>{`第 ${index + 1} 页 / 跨页`}</span>
                                 <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>📄 {file.name.length > 20 ? `${file.name.substring(0, 15)}...` : file.name}</span>
                                 <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0, fontWeight: 'bold' }}>❌ 移除此页</button>
                               </div>
                               <div style={{ width: '75%' }}>
                                 <textarea
-                                  placeholder={imageType === 'picturebook' ? "✍️ [绘本硬要求] 请输入本跨页对应的文本..." : "✍️ [插画硬性要求] 请输入审美理念..."}
+                                  placeholder="✍️ [图文协作] 请输入本跨页对应的文本或分镜描述..."
                                   value={imageTexts[index] || ''}
                                   onChange={(e) => handleImageTextChange(index, e.target.value)}
                                   style={{ width: '100%', height: '80px', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', resize: 'vertical' }}
@@ -858,9 +863,10 @@ export default function Dashboard({ session }) {
                             </div>
                           );
                         } else {
+                          // 插画模式：仅显示文件名，不需要图文描述
                           return (
                             <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
-                              <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>🖼️ [第 {index + 1} 画面] {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)</span>
+                              <span style={{ fontSize: '13px', color: '#166534', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>🖼️ [第 {index + 1} 幅] {file.name} ({(file.size / 1024 / 1024).toFixed(1)}MB)</span>
                               <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>移除</button>
                             </div>
                           );
@@ -884,14 +890,19 @@ export default function Dashboard({ session }) {
                 </div>
               )}
               
-              {/* 🚨 针对 guide 和非 pro 的 picturebook 保留文本输入框，对 text 彻底隐藏 */}
-              {(activeTab === 'guide' || (activeTab === 'picturebook' && !isPro)) && (
-                <>
+              {/* 🚨 整体大纲/故事说明：仅针对绘本、插画、指导模式开放。文字模式已彻底纯净 */}
+              {(activeTab === 'picturebook' || activeTab === 'guide') && (
+                <div style={{ marginTop: activeTab === 'picturebook' ? '20px' : '0' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>
-                    {activeTab === 'picturebook' ? '插画/绘本补充说明 (可选)' : '大纲与设定内容'}
+                    {activeTab === 'picturebook' ? '整体故事说明 (必填)' : '大纲与设定内容'}
                   </label>
-                  <textarea style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} placeholder={activeTab === 'picturebook' ? "可输入文字描述..." : "在此输入需要指导的故事灵感或大纲..."} value={workText} onChange={(e) => setWorkText(e.target.value)} />
-                </>
+                  <textarea 
+                    style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }} 
+                    placeholder={activeTab === 'picturebook' ? "请输入作品的整体故事梗概、背景设定或核心主旨..." : "在此输入需要指导的故事灵感或大纲..."} 
+                    value={workText} 
+                    onChange={(e) => setWorkText(e.target.value)} 
+                  />
+                </div>
               )}
               
               {/* 🚨 常规文字与绘本插画的全局 AI 声明选项 (强制要求勾选单选框) */}
@@ -915,17 +926,18 @@ export default function Dashboard({ session }) {
 
               {activeTab === 'picturebook' && warningMessage && <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', color: '#991b1b', fontSize: '13px', marginTop: '20px', borderRadius: '4px' }}>{warningMessage}</div>}
 
-              {/* 🚨 按钮动态控制逻辑：如果没选 AI 声明，或在 text 模式没传文件，按钮变灰且不让点击 */}
+              {/* 🚨 按钮动态控制逻辑：如果没选 AI 声明，或在 text 模式没传文件，或在绘本模式没填整体说明，按钮变灰且不让点击 */}
               {(() => {
                 const isEvalDisabled = loading || 
                   (activeTab === 'picturebook' && (!isPictureBookValid || selectedImages.length === 0)) ||
-                  (activeTab === 'text' && !selectedDocx) || // 🚨 新增拦截：文字评审模式必须传 Word
+                  (activeTab === 'text' && !selectedDocx) || // 文字评审模式必须传 Word
                   ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '');
 
                 let btnText = "启动评审分析";
                 if (loading) btnText = "AI 专家评审中...";
                 else if ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '') btnText = "⛔ 请先完成上方 AI 声明";
-                else if (activeTab === 'text' && !selectedDocx) btnText = "⛔ 请先上传 Word 评审文档"; // 🚨 明确的未传文档提示
+                else if (activeTab === 'text' && !selectedDocx) btnText = "⛔ 请先上传 Word 评审文档";
+                else if (activeTab === 'picturebook' && (!workText || workText.trim().length === 0)) btnText = "⛔ 请填写整体故事说明";
                 else if (activeTab === 'picturebook') btnText = "启动视觉与图文协作评审";
                 else if (activeTab === 'guide') btnText = "启动创作指导";
 
