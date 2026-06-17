@@ -4,7 +4,7 @@ import google.generativeai as genai
 from fastapi import HTTPException
 
 class LiteraryLLMService:
-    # 预读特征提取专用模型 (强制使用 2.5-flash，保证极速响应)
+    # 预读特征提取专用模型 (强制使用 2.5-flash，保证极速响应且不浪费 Pro 额度)
     MODEL_ADAPTIVE = "gemini-2.5-flash"
 
     @classmethod
@@ -150,14 +150,16 @@ class LiteraryLLMService:
         请直接输出你的最终评审报告。
         
         ### 💡 逻辑与原创性审查
-        * **事实与逻辑排查**：[分析]
-        * **原创性评估**：[X/10分]
+        * **事实与逻辑排查**：[填写您的客观分析]
+        * **原创性评估**：[X/10分。简述理由]
         
         ### 🧮 维度解析与单项得分
+        （注意：这四项的实际得分相加，必须等于下方的最终综合评分！）
         {example_dims}
         
         ### 📝 核心修改建议
-        [提供具体修改建议]
+        1. 建议在结尾处增加...
+        2. 建议削弱某些冗余的对话...
 
         ### 📊 综合学术评分：[真实总分]/100
         
@@ -173,7 +175,7 @@ class LiteraryLLMService:
                 system_instruction=combined_instruction
             )
             
-            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格按指令进行全方位学术与 AI 侦测评审。"
+            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！\n请严格按指令进行全方位学术与 AI 侦测评审。"
             
             res = await eval_model.generate_content_async(
                 prompt, 
