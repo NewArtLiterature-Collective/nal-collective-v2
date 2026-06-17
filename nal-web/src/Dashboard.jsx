@@ -923,7 +923,7 @@ export default function Dashboard({ session }) {
                   ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '');
 
                 let btnText = "启动评审分析";
-                if (loading) btnText = "AI 专家计算中...";
+                if (loading) btnText = "AI 专家评审中...";
                 else if ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '') btnText = "⛔ 请先完成上方 AI 声明";
                 else if (activeTab === 'text' && !selectedDocx) btnText = "⛔ 请先上传 Word 评审文档"; // 🚨 明确的未传文档提示
                 else if (activeTab === 'picturebook') btnText = "启动视觉与图文协作评审";
