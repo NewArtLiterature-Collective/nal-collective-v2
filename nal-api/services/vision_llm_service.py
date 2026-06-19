@@ -11,28 +11,54 @@ from fastapi import HTTPException
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 PIL.Image.MAX_IMAGE_PIXELS = None
 
+# 🚨 同步 Pro 脚本的硬核 AI 侦测特征库
+AI_KEYWORDS = [
+    'stable diffusion', 'midjourney', 'dall-e', 'dall·e',
+    'comfyui', 'automatic1111', 'novelai', 'parameters',
+    'cfg scale', 'sampler', 'steps:', 'lora', 'controlnet',
+    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl', 'swinir'
+]
+
 class VisionLLMService:
     
     @staticmethod
     def _fetch_and_process_image(url: str, max_dim=1536) -> tuple[PIL.Image.Image | None, str]:
-        """从 URL 下载图片，先提取 AI 元数据，再进行降采样压缩"""
+        """从 URL 下载图片，先极限提取 AI 元数据，再进行降采样压缩"""
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             img = PIL.Image.open(io.BytesIO(response.content))
             
-            # 🚨 核心升级：在压缩和丢失数据前，提取元数据指纹
+            # 🚨 核心升级：在压缩丢失数据前，深度挖掘元数据指纹
             ai_fingerprint = ""
             meta_text = ""
-            if hasattr(img, 'info') and img.info:
-                meta_text += str(img.info).lower()
-            if hasattr(img, 'getexif') and img.getexif():
-                for v in img.getexif().values():
-                    meta_text += str(v).lower()
             
-            # 匹配主流 AI 绘图工具的底层标识
-            ai_keywords = ["midjourney", "dall-e", "dalle", "stable diffusion", "comfyui", "novelai", "sdxl", "swinir"]
-            for kw in ai_keywords:
+            # 1. 提取 PNG 的专属文本块 (Stable Diffusion/ComfyUI 经常写在这里)
+            if hasattr(img, 'text') and img.text:
+                for k, v in img.text.items():
+                    meta_text += f"{k}:{v}\n".lower()
+                    
+            # 2. 提取 Info 字典
+            if hasattr(img, 'info') and img.info:
+                for k, v in img.info.items():
+                    if k != 'exif': 
+                        meta_text += f"{k}:{v}\n".lower()
+                        
+            # 3. 提取 EXIF 数据 (Midjourney 等常用，处理字节解码)
+            if hasattr(img, 'getexif'):
+                exif = img.getexif()
+                if exif:
+                    for tag_id, value in exif.items():
+                        if isinstance(value, bytes):
+                            try:
+                                meta_text += value.decode('utf-8', errors='ignore').lower() + "\n"
+                            except:
+                                pass
+                        else:
+                            meta_text += str(value).lower() + "\n"
+            
+            # 匹配主流 AI 绘图工具的底层标识与生成参数
+            for kw in AI_KEYWORDS:
                 if kw in meta_text:
                     ai_fingerprint = kw
                     break
@@ -66,27 +92,27 @@ class VisionLLMService:
         3. 警惕「图文复读机」：画出来的和写出来的一模一样，毫无文本与图像的博弈和互补空间。
         """
         
-        # 🚨 动态 AI 审查策略
+        # 🚨 动态 AI 审查策略与底层证据对撞
         ai_policy = ""
         fingerprint_str = ", ".join(found_ai_fingerprints) if found_ai_fingerprints else ""
         
         if found_ai_fingerprints and not has_declared_ai:
             ai_policy = f"""
         【🚨 严重违规警告：涉嫌隐瞒 AI 生成】
-        创作者声称此为“纯人类原创”。但是，我们的底层系统已在图片元数据中提取到了确凿的 AI 生成器指纹（发现工具特征：{fingerprint_str}）。
-        你的任务：在 v65_ai_assessment 字段中严厉指出这一瞒报事实，批评其缺乏学术诚信，并在综合评分上给予适当惩罚。
+        创作者声称此为“纯人类原创”。但是，我们的底层系统已在图片元数据中提取到了确凿的 AI 生成器指纹及生成参数（查获核心特征词：[{fingerprint_str}]）。
+        你的任务：在 v65_ai_assessment 字段中严厉指出这一瞒报事实，批评其缺乏学术与创作诚信，并在综合评分上给予适当惩罚。
         """
         elif has_declared_ai:
             ai_policy = f"""
         【🤖 视觉指纹筛查策略：已声明 AI 辅助】
-        创作者已坦诚使用了 AI 进行辅助（系统检测特征：{fingerprint_str if fingerprint_str else '未直接提取到指纹，依靠视觉研判'}）。
-        你的任务：包容其工具属性，但必须尖锐地指出其“人造感”浓厚的地方（如：千篇一律的塑料光影、人物手部/透视的物理畸变、背景细节的逻辑错乱）。指导创作者如何通过人类的主观美学去进行“二次艺术打磨”。
+        创作者已坦诚使用了 AI 进行辅助（系统同步检出底层特征：[{fingerprint_str if fingerprint_str else '依靠视觉研判'}]）。
+        你的任务：包容其工具属性，但必须尖锐地指出其“机器感”浓厚的地方（如：千篇一律的塑料光影、细节逻辑错乱、空间透视崩坏）。指导创作者如何通过人类的主观美学去进行“二次艺术打磨”。
         """
         else:
             ai_policy = """
         【🤖 视觉指纹筛查策略：未声明 AI 辅助，未查出底层指纹】
-        创作者声称此为纯原创，底层元数据也未发现已知 AI 标记。请开启极高敏锐度的“AI 痕迹筛查”。
-        寻找任何疑似生成式 AI 的典型缺陷（如：毫无逻辑的背景元素融合、过度完美的商业插画质感但情感空洞、角色的细微结构崩坏）。如果有强烈的 AI 痕迹，请在点评中严厉指出。
+        创作者声明此为纯原创，底层元数据也未发现已知 AI 标记。请开启极高敏锐度的“AI 痕迹筛查”。
+        寻找任何疑似生成式 AI 的典型缺陷（如：毫无逻辑的背景元素融合、过度完美的商业插画质感但情感空洞、角色的细微结构崩坏）。如果有强烈的视觉 AI 痕迹，请在点评中严厉指出。
         """
         
         # 维度 1：画面艺术性
@@ -149,7 +175,7 @@ class VisionLLMService:
             "v65_critique": "集成理论的综合艺术点评，必须针对画面缺陷提出可执行的修改建议",
             "v65_prediction": "限制三个固定值之一：'提出修改建议'、'认定是视觉杰作'、'需人工复核'",
             "v65_synergy_report": "包含陷阱自查与画面优缺点理论映射的思维链分析",
-            "v65_ai_assessment": "基于 AI 筛查策略与底层指纹，客观评估其欺诈行为或机器感与 AI 生成浓度，字数需在100字左右。"
+            "v65_ai_assessment": "基于 AI 筛查策略与底层指纹证据，客观评估其欺诈行为或机器感浓度，字数约100字。"
         }}
         """
 
@@ -162,28 +188,19 @@ class VisionLLMService:
         work_text: str = "", 
         page_texts: list = None,  
         is_pro: bool = False,
-        has_declared_ai: bool = False  # 🚨 接收前端的 AI 声明状态
+        has_declared_ai: bool = False  
     ) -> str:
-        """
-        🖼️ 核心多模态评估入口（动态上限 + 等距抽样 + 图文强绑定）
-        """
-        # 1. 动态设定算力上限
         MAX_IMAGES = 50 if is_pro else 12
-
-        # 2. 智能等距抽样算法 (Uniform Spaced Sampling)
         total_images = len(image_urls)
+        
         if total_images > MAX_IMAGES:
-            print(f"⚠️ 图片数量({total_images})超出上限({MAX_IMAGES})，触发等距抽样算法。")
             step = total_images / MAX_IMAGES
-            # 均匀抽取中间页
             sampled_indices = [int(i * step) for i in range(MAX_IMAGES)]
-            # 刚性覆盖：确保绘本的“大结局”（最后一页）绝对被包含在内
             if sampled_indices[-1] != total_images - 1:
                 sampled_indices[-1] = total_images - 1
         else:
             sampled_indices = list(range(total_images))
 
-        # 3. 执行下载与图文强绑定 (Index Binding)
         processed_pairs = []
         found_ai_fingerprints = set()
         
@@ -194,14 +211,12 @@ class VisionLLMService:
                 if fingerprint:
                     found_ai_fingerprints.add(fingerprint)
                     
-                # 🚨 核心关系处理：严格对齐文本。如果缺失文本数组，用兜底文本填补，绝不错位！
+                pt_text = ""
                 if page_texts is not None:
                     pt_text = page_texts[i] if i < len(page_texts) and page_texts[i].strip() else "（本页无文字描述/纯无字分镜）"
-                else:
-                    pt_text = ""
 
                 processed_pairs.append({
-                    "original_page": i + 1,  # 记录这幅图在原书中的真实物理页码
+                    "original_page": i + 1,
                     "image": img,
                     "text": pt_text
                 })
@@ -209,18 +224,14 @@ class VisionLLMService:
         if not processed_pairs:
             raise ValueError("未提取到有效的图片用于视觉评审。")
 
-        # 4. 构建 Prompt 和内容交织列表 (Interleaving)
         system_instruction = cls._get_v65_instruction(image_type, has_declared_ai, list(found_ai_fingerprints))
         contents = []
 
-        # 🚨 商业路由：如果是绘本且传入了分页文本（代表触发了高阶文图协作）
         if page_texts is not None and image_type == "picturebook":
             if work_text and work_text.strip():
                 contents.append(f"【作品整体故事说明/主旨】: {work_text}\n")
             
             contents.append(f"【高阶评审模式：逐页图文对位审查】以下为系统从原书中提取的 {len(processed_pairs)} 个跨页/分镜剧本：\n")
-            
-            # 将图文像三明治一样交织组装
             for pair in processed_pairs:
                 contents.append(f"--- 📖 原书第 {pair['original_page']} 跨页/分镜 ---")
                 contents.append(f"📄 本页文本/剧本: {pair['text']}")
@@ -229,13 +240,11 @@ class VisionLLMService:
             contents.append("\n【终审指令】：请严格根据上方逐页映射的图文关系，评估图画是否填补了文字的留白？是否存在高级的反讽、对位或互补关系？警惕图文完全重复的“复读机”现象。")
             
         else:
-            # 基础降级模式：全局文本 + 图片瀑布流
             if work_text and work_text.strip():
                 contents.append(f"【作品整体补充说明】: {work_text}")
             for pair in processed_pairs:
                 contents.append(pair['image'])
 
-        # 5. 调用模型
         try:
             model = genai.GenerativeModel(
                 model_name=target_model,
@@ -245,7 +254,7 @@ class VisionLLMService:
             res = await model.generate_content_async(
                 contents,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.2, # 恢复艺术感知的黄金温度
+                    temperature=0.2, 
                     response_mime_type="application/json"
                 )
             )
@@ -253,15 +262,12 @@ class VisionLLMService:
             if res.candidates and res.candidates[0].content.parts:
                 result_json = json.loads(res.text)
                 
-                # 自动解包防御
                 if isinstance(result_json, list):
-                    print("⚠️ 接收到 list 格式响应，正在执行自动解包...")
                     if len(result_json) > 0 and isinstance(result_json[0], dict):
                         result_json = result_json[0]
                     else:
                         raise ValueError("视觉模型返回了非法的空列表或格式错误。")
                 
-                # 渲染最终 Markdown 报告
                 artistry = result_json.get('score_artistry', 'N/A')
                 subject = result_json.get('score_subject', 'N/A')
                 narrative = result_json.get('score_narrative', 'N/A')
@@ -283,7 +289,7 @@ class VisionLLMService:
 #### 🔬 理论映射与专项诊断 (陷阱自查与思维链)
 {result_json.get('v65_synergy_report', 'N/A')}
 
-#### 🤖 视觉指纹与 AI 浓度评估
+#### 🤖 AI 辅助声明记录与浓度审查
 {ai_assessment}
 """
                 return markdown_report
@@ -291,8 +297,6 @@ class VisionLLMService:
                 raise ValueError("视觉模型未生成有效内容。")
                 
         except json.JSONDecodeError:
-            print(f"🚨 JSON 解析失败，原始返回：{res.text}")
             raise HTTPException(status_code=500, detail="模型未返回标准 JSON 格式。")
         except Exception as e:
-            print(f"🚨 视觉引擎调用异常: {e}")
             raise HTTPException(status_code=500, detail=str(e))
