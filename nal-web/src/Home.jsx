@@ -164,12 +164,12 @@ export default function Home() {
           <div style={styles.featureCard}>
             <div style={styles.featureIcon}><span role="img" aria-label="paint">🎨</span></div>
             <h3 style={styles.featureTitle}>绘本分镜解析</h3>
-            <p style={styles.featureDesc}>多维度评估插画视觉张力与图文互文效果，打破“弱文本”的绘本创作瓶颈。</p>
+            <p style={styles.featureDesc}>多维度评估绘本插画视觉张力与图文互文效果，打破“弱文本”的绘本创作瓶颈。</p>
           </div>
           <div style={styles.featureCard}>
             <div style={styles.featureIcon}><span role="img" aria-label="brain">🧠</span></div>
             <h3 style={styles.featureTitle}>七大专家模型</h3>
-            <p style={styles.featureDesc}>独家内置“首席专家锐评”、“宽泛理论”等 7 个垂直学术模型，多视角交叉会诊。</p>
+            <p style={styles.featureDesc}>独家内置“首席专家锐评”、“宽泛理论”等 7 个垂直儿童文学学术模型，多视角交叉会诊。</p>
           </div>
         </div>
       </section>
