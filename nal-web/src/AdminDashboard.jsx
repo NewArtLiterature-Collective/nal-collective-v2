@@ -19,7 +19,7 @@ export default function AdminDashboard() {
   const [isContestActive, setIsContestActive] = useState(false); 
   const [isGalleryActive, setIsGalleryActive] = useState(false);
 
-  // 🚨 新增：沉浸式作品审阅室与全景沙盘状态
+  // 沉浸式作品审阅室与全景沙盘状态
   const [previewWork, setPreviewWork] = useState(null);
   const [showGalleryPreview, setShowGalleryPreview] = useState(false);
 
@@ -130,12 +130,13 @@ export default function AdminDashboard() {
       if (pendingError) console.error("🚨 抓取待审被拦截:", pendingError.message);
       setPendingCount(pendingCount || 0);
 
-      // 🚨 绝对保留你这版原汁原味的查询方式，保证一定能查出作品
+      // 🚨 剔除与策展无关的 AI 声明字段，保持纯净
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
-        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls, has_declared_ai')
+        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls')
         .eq('status', 'success')
         .eq('contest_id', contestId) 
+        .order('manual_rank', { ascending: false })
         .order('ai_total_score', { ascending: false });
 
       if (successError) console.error("🚨 抓取展厅数据被拦截:", successError.message);
@@ -199,7 +200,6 @@ export default function AdminDashboard() {
     } catch (err) { addLog(`❌ 切换失败: ${err.message}`); }
   };
 
-  // 🚨 新增：展厅大闸开关控制器
   const handleToggleGalleryActive = async () => {
     const nextStatus = !isGalleryActive;
     try {
@@ -209,6 +209,8 @@ export default function AdminDashboard() {
       if (data && data.length > 0) {
         setIsGalleryActive(data[0].is_gallery_active);
         addLog(`✅ 展厅大闸同步成功！当前入展信息对全网作者：${data[0].is_gallery_active ? '可见' : '隐藏'}`);
+        // 🚨 如果大闸被开启，自动关闭预览弹窗（防误操作）
+        if (data[0].is_gallery_active) setShowGalleryPreview(false);
       }
     } catch (err) { addLog(`❌ 展厅开关切换失败: ${err.message}`); }
   };
@@ -283,23 +285,23 @@ export default function AdminDashboard() {
     syncTimeState(cid, contests);
   };
 
-  // 🚨 提取入选展厅的所有作品 (从原生 works 中过滤，安全无损)
+  // 提取已被推举的作品供画廊预览使用
   const curatedWorks = works.filter(w => w.is_manual_recommended);
 
   return (
     <div style={{ padding: '30px', backgroundColor: '#0a0a0a', minHeight: '100vh', color: '#e0e0e0', fontFamily: 'monospace', position: 'relative' }}>
       
       {/* =========================================================
-          🚨 全景沙盘预览弹窗 (全真模拟前台展厅排版)
+          🚨 展厅全景沙盘预览弹窗
           ========================================================= */}
-      {showGalleryPreview && (
+      {showGalleryPreview && !isGalleryActive && (
         <div style={styles.overlay} onClick={() => setShowGalleryPreview(false)}>
           <div style={{ ...styles.previewModal, width: '95%', maxWidth: '1400px', height: '95vh', padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', padding: '20px 30px', backgroundColor: '#111827' }}>
               <div>
                 <h2 style={{ margin: 0, color: '#ebcb8b', fontSize: '24px' }}>👁️ 展厅全景沙盘 (预览模式)</h2>
                 <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '13px' }}>
-                  当前共推举出 <strong style={{ color: '#a3be8c' }}>{curatedWorks.length}</strong> 件入展作品。
+                  当前共推举出 <strong style={{ color: '#a3be8c' }}>{curatedWorks.length}</strong> 件入展作品。排版与排序完全对齐前台真实展厅效果。
                 </p>
               </div>
               <button onClick={() => setShowGalleryPreview(false)} style={styles.closeBtn}>×</button>
@@ -308,7 +310,7 @@ export default function AdminDashboard() {
             <div style={{ padding: '30px', overflowY: 'auto', height: 'calc(100% - 90px)', backgroundColor: '#0a0a0a' }}>
               {curatedWorks.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '100px 0', color: '#4c566a', fontSize: '18px' }}>
-                  📭 当前暂无入展作品。请先在列表中点击“⚪ 选入展厅”。
+                  📭 暂无入展作品。请在列表中点击“⚪ 选入展厅”。
                 </div>
               ) : (
                 <div style={styles.galleryGrid}>
@@ -342,7 +344,7 @@ export default function AdminDashboard() {
       )}
 
       {/* =========================================================
-          🚨 单篇作品沉浸式审阅弹窗 (Preview Modal)
+          🚨 单篇作品沉浸式审阅弹窗
           ========================================================= */}
       {previewWork && (
         <div style={styles.overlay} onClick={() => setPreviewWork(null)}>
@@ -358,12 +360,6 @@ export default function AdminDashboard() {
               <div><span style={{ color: '#888' }}>AI 综合分：</span> <strong style={{ color: '#a3be8c', fontSize: '16px' }}>{previewWork.ai_total_score?.toFixed(1)}</strong></div>
               <div><span style={{ color: '#888' }}>AI 方差：</span> <strong style={{ color: previewWork.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{previewWork.ai_variance?.toFixed(2)}</strong></div>
               <div><span style={{ color: '#888' }}>作者字数：</span> <strong style={{ color: '#d8dee9' }}>{previewWork.word_count}</strong></div>
-              <div>
-                <span style={{ color: '#888' }}>创作诚信：</span> 
-                <strong style={{ color: previewWork.has_declared_ai ? '#d08770' : '#a3be8c' }}>
-                  {previewWork.has_declared_ai ? '⚠️ 声明使用AI辅助' : '✅ 声明纯原创'}
-                </strong>
-              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '10px' }}>
@@ -467,7 +463,6 @@ export default function AdminDashboard() {
           <h3 style={{ margin: '0 0 20px 0', color: '#ebcb8b', display: 'flex', alignItems: 'center', gap: '8px' }}>⏳ 赛事生命周期与展厅时空大闸</h3>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            {/* 第一行：截稿防线 */}
             <div style={{ display: 'flex', alignItems: 'center', paddingBottom: '15px', borderBottom: '1px dashed #333' }}>
               <label style={{ color: '#d08770', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
                 🔴 前台截稿死线 (截止后转入死库评审，不可提交新稿): 
@@ -480,7 +475,6 @@ export default function AdminDashboard() {
               </label>
             </div>
 
-            {/* 第二行：展厅大闸配置 */}
             <div style={{ display: 'flex', gap: '25px', alignItems: 'center', flexWrap: 'wrap' }}>
               <label style={{ color: '#a3be8c', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
                 🏛️ 展厅启封日期: 
@@ -533,9 +527,9 @@ export default function AdminDashboard() {
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '20px', paddingBottom: '15px', borderBottom: '1px dashed #333' }}>
             <div>
-              <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 展厅作品库选拔（共 {works.length} 篇）</h3>
+              <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 展厅作品库人工策展（共 {works.length} 篇）</h3>
               <p style={{ margin: 0, color: '#64748b', fontSize: '12px', maxWidth: '600px', lineHeight: '1.5' }}>
-                💡 <strong>工作流提示</strong>：您可以在下方列表中单独审阅并挑选作品。选定后，点击右侧的“预览展厅排版”，即可从上帝视角俯瞰这些作品拼凑在一起的最终展出效果。排版确认无误后，再开启全网展厅大闸。
+                💡 <strong>工作流提示</strong>：您可以在下方列表中单独审阅并挑选作品。选定后，在【闭馆状态下】点击右侧的“预览展厅排版”，即可从上帝视角俯瞰最终展出效果。确认无误后，再开启全网展厅大闸。
               </p>
             </div>
             
@@ -547,16 +541,18 @@ export default function AdminDashboard() {
                     {isGalleryActive ? "🟢 已公开" : "🔴 锁定中"}
                   </strong>
                 </span>
-                {/* 🚨 触发展厅预览的按钮 */}
-                <button 
-                  onClick={() => setShowGalleryPreview(true)}
-                  style={{ padding: '8px 16px', backgroundColor: 'transparent', color: '#ebcb8b', border: '1px solid #ebcb8b', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px' }}
-                >
-                  👁️ 预览展厅最终排版
-                </button>
+                
+                {/* 🚨 核心逻辑修复：展厅处于未公开（锁定）状态时，才显示预览按钮 */}
+                {!isGalleryActive && (
+                  <button 
+                    onClick={() => setShowGalleryPreview(true)}
+                    style={{ padding: '8px 16px', backgroundColor: 'transparent', color: '#ebcb8b', border: '1px solid #ebcb8b', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px' }}
+                  >
+                    👁️ 预览展厅最终排版
+                  </button>
+                )}
               </div>
 
-              {/* 🚨 展厅大闸总开关 */}
               <button 
                 onClick={handleToggleGalleryActive} 
                 style={{ padding: '8px 20px', backgroundColor: isGalleryActive ? '#bf616a' : '#a3be8c', color: isGalleryActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px', width: '100%' }}
@@ -574,7 +570,6 @@ export default function AdminDashboard() {
                   <th style={{ padding: '10px' }}>字数</th>
                   <th style={{ padding: '10px' }}>AI 综合均分</th>
                   <th style={{ padding: '10px' }}>专家分歧度 (方差)</th>
-                  {/* 🚨 新增：单卷审阅入口列 */}
                   <th style={{ padding: '10px', textAlign: 'center' }}>策展审阅</th>
                   <th style={{ padding: '10px' }}>主编推举金标</th>
                   <th style={{ padding: '10px' }}>展厅展示权重</th>
@@ -588,7 +583,6 @@ export default function AdminDashboard() {
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
                     <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
                     <td style={{ padding: '10px', textAlign: 'center' }}>
-                      {/* 🚨 单卷审阅按钮 */}
                       <button 
                         onClick={() => setPreviewWork(work)} 
                         style={{ padding: '4px 10px', backgroundColor: 'transparent', color: '#88c0d0', border: '1px solid #88c0d0', cursor: 'pointer', fontSize: '12px', borderRadius: '4px' }}
@@ -616,7 +610,7 @@ export default function AdminDashboard() {
   );
 }
 
-// 统一封装样式，保持组件整洁
+// 统一提取的样式对象
 const styles = {
   overlay: {
     position: 'fixed',
