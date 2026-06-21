@@ -17,6 +17,9 @@ export default function AdminDashboard() {
   const [selectedContestId, setSelectedContestId] = useState(''); 
   const [activeContestId, setActiveContestId] = useState(''); 
   const [isContestActive, setIsContestActive] = useState(false); 
+  
+  // 🚨 新增：展厅大闸开关状态
+  const [isGalleryActive, setIsGalleryActive] = useState(false);
 
   const [newContestName, setNewContestName] = useState('');
   const [newContestDesc, setNewContestDesc] = useState('');
@@ -69,15 +72,17 @@ export default function AdminDashboard() {
 
       if (cErr) console.error("🚨 抓取赛事表发生错误:", cErr.message);
 
+      // 🚨 抓取 site_settings 时一并获取 is_gallery_active
       const { data: settings, error: sErr } = await supabase
         .from('site_settings')
-        .select('current_contest_id, is_contest_active')
+        .select('current_contest_id, is_contest_active, is_gallery_active')
         .eq('id', 1)
         .maybeSingle();
 
       if (settings) {
         setActiveContestId(settings.current_contest_id || '');
         setIsContestActive(settings.is_contest_active);
+        setIsGalleryActive(settings.is_gallery_active || false); // 🚨 同步展厅大闸状态
       }
 
       if (contestList && contestList.length > 0) {
@@ -105,7 +110,6 @@ export default function AdminDashboard() {
     const target = list.find(c => c.id === contestId);
     if (target) {
       setGalleryTime({
-        // 🌟 核心修正：substring 截取前 10 位 (YYYY-MM-DD)，剔除时分干扰
         deadline: target.submission_deadline ? target.submission_deadline.substring(0, 10) : '',
         start: target.gallery_start_time ? target.gallery_start_time.substring(0, 10) : '',
         end: target.gallery_end_time ? target.gallery_end_time.substring(0, 10) : ''
@@ -181,9 +185,23 @@ export default function AdminDashboard() {
       if (error) throw error;
       if (data && data.length > 0) {
         setIsContestActive(data[0].is_contest_active);
-        addLog(`✅ 大闸同步成功！当前全网状态：${data[0].is_contest_active ? '激活中' : '休眠中'}`);
+        addLog(`✅ 大闸同步成功！当前全网准入状态：${data[0].is_contest_active ? '激活中' : '休眠中'}`);
       }
     } catch (err) { addLog(`❌ 切换失败: ${err.message}`); }
+  };
+
+  // 🚨 新增：切换展厅大闸状态 (Preview模式 vs 公开模式)
+  const handleToggleGalleryActive = async () => {
+    const nextStatus = !isGalleryActive;
+    try {
+      addLog(`🎛️ 正在将全局展厅大闸调整为: ${nextStatus ? '🟢 正式开放' : '🔴 内部 Preview'}...`);
+      const { data, error } = await supabase.from('site_settings').update({ is_gallery_active: nextStatus }).eq('id', 1).select();
+      if (error) throw error;
+      if (data && data.length > 0) {
+        setIsGalleryActive(data[0].is_gallery_active);
+        addLog(`✅ 展厅大闸同步成功！当前入展信息对全网作者：${data[0].is_gallery_active ? '可见' : '隐藏'}`);
+      }
+    } catch (err) { addLog(`❌ 展厅开关切换失败: ${err.message}`); }
   };
 
   const handleSaveTime = async () => {
@@ -262,7 +280,7 @@ export default function AdminDashboard() {
           <h1 style={{ margin: 0, fontSize: '24px', color: '#fff' }}>🏛️ NAL 中央管理台</h1>
           <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '13px' }}>算法共治与离线全局策展</p>
         </div>
-        <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: '#bf616a', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+        <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: '#bf616a', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
           退出登入
         </button>
       </header>
@@ -274,15 +292,15 @@ export default function AdminDashboard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h3 style={{ margin: 0, color: '#ebcb8b' }}>📅 当前调度赛季视角:</h3>
-              <select value={selectedContestId} onChange={handleContestSelectionChange} style={{ padding: '8px 12px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', cursor: 'pointer', fontSize: '14px' }}>
+              <select value={selectedContestId} onChange={handleContestSelectionChange} style={{ padding: '8px 12px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', cursor: 'pointer', fontSize: '14px', borderRadius: '4px' }}>
                 {contests.map(c => <option key={c.id} value={c.id}>{c.name} {c.id === activeContestId ? " 🟢 [激活]" : ""}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
               {selectedContestId !== activeContestId && (
-                <button onClick={handleSwitchGlobalActiveContest} style={{ padding: '8px 16px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🚀 推举为全局主赛场</button>
+                <button onClick={handleSwitchGlobalActiveContest} style={{ padding: '8px 16px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>🚀 推举为全局主赛场</button>
               )}
-              <button onClick={() => setShowCreateForm(!showCreateForm)} style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+              <button onClick={() => setShowCreateForm(!showCreateForm)} style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
                 {showCreateForm ? "收起" : "➕ 筹备新赛季"}
               </button>
             </div>
@@ -292,21 +310,21 @@ export default function AdminDashboard() {
             <form onSubmit={handleCreateNewContest} style={{ marginTop: '20px', borderTop: '1px dashed #333', paddingTop: '20px' }}>
               <div style={{ marginBottom: '15px' }}>
                 <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>赛季名称:</label>
-                <input type="text" value={newContestName} onChange={e => setNewContestName(e.target.value)} style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444' }} />
+                <input type="text" value={newContestName} onChange={e => setNewContestName(e.target.value)} style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px' }} />
               </div>
               <div style={{ marginBottom: '15px' }}>
                 <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>章程宣发文案:</label>
-                <textarea value={newContestDesc} onChange={e => setNewContestDesc(e.target.value)} rows={3} style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444' }} />
+                <textarea value={newContestDesc} onChange={e => setNewContestDesc(e.target.value)} rows={3} style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px' }} />
               </div>
-              <button type="submit" style={{ padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🔨 确认铸造新赛季</button>
+              <button type="submit" style={{ padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>🔨 确认铸造新赛季</button>
             </form>
           )}
 
           <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: '#888', fontSize: '13px' }}>当前主赛场准入状态：<strong style={{ color: isContestActive ? '#a3be8c' : '#bf616a' }}>{isContestActive ? "🟢 大闸开启中" : "🔴 全网休眠中"}</strong></span>
             {selectedContestId === activeContestId && (
-              <button onClick={handleToggleContestActive} style={{ padding: '5px 15px', backgroundColor: isContestActive ? '#bf616a' : '#a3be8c', color: isContestActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
-                {isContestActive ? "封印当前大闸" : "激活当前大闸"}
+              <button onClick={handleToggleContestActive} style={{ padding: '5px 15px', backgroundColor: isContestActive ? '#bf616a' : '#a3be8c', color: isContestActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px', borderRadius: '4px' }}>
+                {isContestActive ? "封印当前投稿大闸" : "激活当前投稿大闸"}
               </button>
             )}
           </div>
@@ -322,7 +340,7 @@ export default function AdminDashboard() {
               <label style={{ color: '#d08770', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
                 🔴 前台截稿死线 (截止后转入死库评审，不可提交新稿): 
                 <input 
-                  type="date" // 🌟 核心修正：类型调整为 date，彻底移除时分选择
+                  type="date"
                   value={galleryTime.deadline} 
                   onChange={e => setGalleryTime(prev => ({ ...prev, deadline: e.target.value }))} 
                   style={{ marginLeft: '15px', padding: '6px', background: '#222', color: '#fff', border: '1px solid #444', outline: 'none', borderRadius: '4px', fontFamily: 'monospace' }}
@@ -330,7 +348,7 @@ export default function AdminDashboard() {
               </label>
             </div>
 
-            {/* 第二行：展厅大闸 */}
+            {/* 第二行：展厅大闸配置 */}
             <div style={{ display: 'flex', gap: '25px', alignItems: 'center', flexWrap: 'wrap' }}>
               <label style={{ color: '#a3be8c', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
                 🏛️ 展厅启封日期: 
@@ -366,12 +384,12 @@ export default function AdminDashboard() {
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
           <h3 style={{ margin: '0 0 15px 0', color: '#88c0d0' }}>⚡ 评审引擎与全局中控</h3>
           <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginBottom: '20px' }}>
-            <div style={{ background: '#222', padding: '10px 20px', borderLeft: '4px solid #bf616a' }}>
+            <div style={{ background: '#222', padding: '10px 20px', borderLeft: '4px solid #bf616a', borderRadius: '4px' }}>
               <span style={{ color: '#888' }}>当前视角下待审 (Pending): </span>
               <strong style={{ fontSize: '20px', color: '#bf616a', marginLeft: '10px' }}>{pendingCount}</strong> 篇
             </div>
-            <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0} style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>{isReviewing ? "🤖 会诊中..." : "⚡ 启动离线评审"}</button>
-            <button onClick={handleRunGlobalCuration} disabled={isCurating || works.length === 0} style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>{isCurating ? "📊 计算中..." : "📊 全局策展划线 (Top 5%)"}</button>
+            <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0} style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isReviewing ? "🤖 会诊中..." : "⚡ 启动离线评审"}</button>
+            <button onClick={handleRunGlobalCuration} disabled={isCurating || works.length === 0} style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isCurating ? "📊 计算中..." : "📊 全局策展划线 (Top 5%)"}</button>
           </div>
           <div style={{ background: '#000', padding: '15px', borderRadius: '4px', height: '120px', overflowY: 'auto', border: '1px solid #333', fontSize: '12px', lineHeight: '1.6' }}>
             {logMessages.length === 0 ? <span style={{ color: '#4c566a' }}>&gt;_ 等待中控调度...</span> : logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)}
@@ -380,7 +398,32 @@ export default function AdminDashboard() {
 
         {/* 展厅推荐管理 */}
         <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px' }}>
-          <h3 style={{ margin: '0 0 15px 0', color: '#b48ead' }}>🏆 展厅作品库选拔（共 {works.length} 篇）</h3>
+          
+          {/* 🚨 展厅大闸控制面板 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '20px', paddingBottom: '15px', borderBottom: '1px dashed #333' }}>
+            <div>
+              <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 展厅作品库人工策展（共 {works.length} 篇）</h3>
+              <p style={{ margin: 0, color: '#64748b', fontSize: '12px', maxWidth: '600px', lineHeight: '1.5' }}>
+                💡 <strong>Preview 模式提示</strong>：在关闭展厅大闸期间，您可以从容挑选和标记作品。在此阶段打上“推举金标”的作品，在创作者终端仍会隐藏入展状态（仅显示“评审通过”）。挑选完毕后，请点击右侧开启展厅，全网将同步公开入选结果。
+              </p>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
+              <span style={{ color: '#888', fontSize: '13px' }}>
+                前台展厅对公众与作者可见状态：
+                <strong style={{ color: isGalleryActive ? '#a3be8c' : '#bf616a', marginLeft: '8px' }}>
+                  {isGalleryActive ? "🟢 展厅大门已全网开启" : "🔴 内部 Preview (入选状态对作者隐藏)"}
+                </strong>
+              </span>
+              <button 
+                onClick={handleToggleGalleryActive} 
+                style={{ padding: '8px 20px', backgroundColor: isGalleryActive ? '#bf616a' : '#a3be8c', color: isGalleryActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px' }}
+              >
+                {isGalleryActive ? "🔒 紧急闭馆 (转入Preview)" : "📢 确认放行 (全网公开展厅)"}
+              </button>
+            </div>
+          </div>
+
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
               <thead>
