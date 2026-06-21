@@ -17,9 +17,10 @@ export default function AdminDashboard() {
   const [selectedContestId, setSelectedContestId] = useState(''); 
   const [activeContestId, setActiveContestId] = useState(''); 
   const [isContestActive, setIsContestActive] = useState(false); 
-  
-  // 🚨 新增：展厅大闸开关状态
   const [isGalleryActive, setIsGalleryActive] = useState(false);
+
+  // 🚨 新增：沉浸式作品审阅室状态
+  const [previewWork, setPreviewWork] = useState(null);
 
   const [newContestName, setNewContestName] = useState('');
   const [newContestDesc, setNewContestDesc] = useState('');
@@ -72,7 +73,6 @@ export default function AdminDashboard() {
 
       if (cErr) console.error("🚨 抓取赛事表发生错误:", cErr.message);
 
-      // 🚨 抓取 site_settings 时一并获取 is_gallery_active
       const { data: settings, error: sErr } = await supabase
         .from('site_settings')
         .select('current_contest_id, is_contest_active, is_gallery_active')
@@ -82,7 +82,7 @@ export default function AdminDashboard() {
       if (settings) {
         setActiveContestId(settings.current_contest_id || '');
         setIsContestActive(settings.is_contest_active);
-        setIsGalleryActive(settings.is_gallery_active || false); // 🚨 同步展厅大闸状态
+        setIsGalleryActive(settings.is_gallery_active || false);
       }
 
       if (contestList && contestList.length > 0) {
@@ -129,15 +129,22 @@ export default function AdminDashboard() {
       if (pendingError) console.error("🚨 抓取待审被拦截:", pendingError.message);
       setPendingCount(pendingCount || 0);
 
+      // 🚨 核心升级：增加对 text_content, image_urls, has_declared_ai 的抓取，供人工预览使用
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
-        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank')
+        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls, has_declared_ai')
         .eq('status', 'success')
         .eq('contest_id', contestId) 
         .order('ai_total_score', { ascending: false });
 
       if (successError) console.error("🚨 抓取展厅数据被拦截:", successError.message);
+      
+      // 若当前弹窗中的作品状态发生改变，同步更新弹窗状态
       setWorks(submissions || []);
+      if (previewWork) {
+        const updatedWork = submissions?.find(w => w.id === previewWork.id);
+        if (updatedWork) setPreviewWork(updatedWork);
+      }
     } catch (err) {
       console.error('管理台数据加载错误:', err);
     }
@@ -190,7 +197,6 @@ export default function AdminDashboard() {
     } catch (err) { addLog(`❌ 切换失败: ${err.message}`); }
   };
 
-  // 🚨 新增：切换展厅大闸状态 (Preview模式 vs 公开模式)
   const handleToggleGalleryActive = async () => {
     const nextStatus = !isGalleryActive;
     try {
@@ -274,7 +280,69 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div style={{ padding: '30px', backgroundColor: '#0a0a0a', minHeight: '100vh', color: '#e0e0e0', fontFamily: 'monospace' }}>
+    <div style={{ padding: '30px', backgroundColor: '#0a0a0a', minHeight: '100vh', color: '#e0e0e0', fontFamily: 'monospace', position: 'relative' }}>
+      
+      {/* 🚨 沉浸式作品审阅弹窗 (Preview Modal) */}
+      {previewWork && (
+        <div style={styles.overlay}>
+          <div style={styles.previewModal}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0, color: '#ebcb8b', fontSize: '20px' }}>
+                📖 策展室预览档案 <span style={{ color: '#888', fontSize: '14px' }}>[{previewWork.id.substring(0,8)}]</span>
+              </h2>
+              <button onClick={() => setPreviewWork(null)} style={{ background: 'none', border: 'none', color: '#bf616a', fontSize: '24px', cursor: 'pointer', fontWeight: 'bold' }}>×</button>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', backgroundColor: '#1a1a1a', padding: '15px', borderRadius: '8px', border: '1px solid #333' }}>
+              <div><span style={{ color: '#888' }}>AI 综合分：</span> <strong style={{ color: '#a3be8c', fontSize: '16px' }}>{previewWork.ai_total_score?.toFixed(1)}</strong></div>
+              <div><span style={{ color: '#888' }}>AI 方差：</span> <strong style={{ color: previewWork.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{previewWork.ai_variance?.toFixed(2)}</strong></div>
+              <div><span style={{ color: '#888' }}>作者字数：</span> <strong style={{ color: '#d8dee9' }}>{previewWork.word_count}</strong></div>
+              <div>
+                <span style={{ color: '#888' }}>创作诚信：</span> 
+                <strong style={{ color: previewWork.has_declared_ai ? '#d08770' : '#a3be8c' }}>
+                  {previewWork.has_declared_ai ? '⚠️ 声明使用AI辅助' : '✅ 声明纯原创'}
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '10px' }}>
+              <div>
+                <h4 style={{ color: '#88c0d0', margin: '0 0 10px 0', borderBottom: '1px dashed #444', paddingBottom: '5px' }}>📝 作者正文 / 故事大纲</h4>
+                <div style={{ backgroundColor: '#111', padding: '20px', borderRadius: '8px', color: '#eceff4', whiteSpace: 'pre-wrap', lineHeight: '1.8', fontSize: '14px', border: '1px solid #222' }}>
+                  {previewWork.text_content || <span style={{ color: '#4c566a' }}>[作者未提供正文描述]</span>}
+                </div>
+              </div>
+
+              <div>
+                <h4 style={{ color: '#b48ead', margin: '0 0 10px 0', borderBottom: '1px dashed #444', paddingBottom: '5px' }}>🎨 视觉附件 ({previewWork.image_urls?.length || 0} 张)</h4>
+                {previewWork.image_urls && previewWork.image_urls.length > 0 ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '15px' }}>
+                    {previewWork.image_urls.map((url, i) => (
+                      <div key={i} style={{ border: '1px solid #333', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#000' }}>
+                        <img src={url} alt={`attachment-${i}`} style={{ width: '100%', height: 'auto', display: 'block', objectFit: 'contain', maxHeight: '400px' }} />
+                        <div style={{ padding: '8px', textAlign: 'center', backgroundColor: '#222', fontSize: '12px', color: '#888' }}>图 {i + 1}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: '#4c566a', fontStyle: 'italic', padding: '10px' }}>[该作品无视觉附件]</div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginTop: '25px', paddingTop: '15px', borderTop: '1px solid #333', display: 'flex', justifyContent: 'flex-end', gap: '15px' }}>
+              <button onClick={() => setPreviewWork(null)} style={{ padding: '10px 20px', backgroundColor: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '4px', cursor: 'pointer' }}>返回列表</button>
+              <button 
+                onClick={() => handleToggleManualRecommend(previewWork.id, previewWork.is_manual_recommended)} 
+                style={{ padding: '10px 25px', backgroundColor: previewWork.is_manual_recommended ? '#bf616a' : '#5e81ac', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                {previewWork.is_manual_recommended ? "撤销展厅推举" : "💎 选入全球展厅"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '30px' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '24px', color: '#fff' }}>🏛️ NAL 中央管理台</h1>
@@ -404,7 +472,7 @@ export default function AdminDashboard() {
             <div>
               <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 展厅作品库人工策展（共 {works.length} 篇）</h3>
               <p style={{ margin: 0, color: '#64748b', fontSize: '12px', maxWidth: '600px', lineHeight: '1.5' }}>
-                💡 <strong>Preview 模式提示</strong>：在关闭展厅大闸期间，您可以从容挑选和标记作品。在此阶段打上“推举金标”的作品，在创作者终端仍会隐藏入展状态（仅显示“评审通过”）。挑选完毕后，请点击右侧开启展厅，全网将同步公开入选结果。
+                💡 <strong>Preview 模式提示</strong>：在关闭展厅大闸期间，您可以从容挑选和审阅作品。打上“推举金标”的作品在全网开启前对作者依然隐藏。挑选完毕后，请点击右侧开启展厅，全网将同步公开入选结果。
               </p>
             </div>
             
@@ -412,7 +480,7 @@ export default function AdminDashboard() {
               <span style={{ color: '#888', fontSize: '13px' }}>
                 前台展厅对公众与作者可见状态：
                 <strong style={{ color: isGalleryActive ? '#a3be8c' : '#bf616a', marginLeft: '8px' }}>
-                  {isGalleryActive ? "🟢 展厅大门已全网开启" : "🔴 内部 Preview (入选状态对作者隐藏)"}
+                  {isGalleryActive ? "🟢 展厅大门已全网开启" : "🔴 内部 Preview (入选隐藏)"}
                 </strong>
               </span>
               <button 
@@ -431,18 +499,27 @@ export default function AdminDashboard() {
                   <th style={{ padding: '10px' }}>作品 UUID</th>
                   <th style={{ padding: '10px' }}>字数</th>
                   <th style={{ padding: '10px' }}>AI 综合均分</th>
-                  <th style={{ padding: '10px' }}>专家分歧度 (方差)</th>
+                  <th style={{ padding: '10px' }}>专家分歧度</th>
+                  <th style={{ padding: '10px', textAlign: 'center' }}>策展审阅</th>
                   <th style={{ padding: '10px' }}>主编推举金标</th>
-                  <th style={{ padding: '10px' }}>展厅展示权重</th>
+                  <th style={{ padding: '10px' }}>人工展位权重</th>
                 </tr>
               </thead>
               <tbody>
                 {works.map((work) => (
                   <tr key={work.id} style={{ borderBottom: '1px solid #222' }}>
-                    <td style={{ padding: '10px', color: '#a3be8c' }}>{work.id}</td>
+                    <td style={{ padding: '10px', color: '#a3be8c' }}>{work.id.substring(0, 12)}...</td>
                     <td style={{ padding: '10px' }}>{work.word_count} 字</td>
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
                     <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
+                    <td style={{ padding: '10px', textAlign: 'center' }}>
+                      <button 
+                        onClick={() => setPreviewWork(work)} 
+                        style={{ padding: '4px 10px', backgroundColor: 'transparent', color: '#88c0d0', border: '1px solid #88c0d0', cursor: 'pointer', fontSize: '12px', borderRadius: '4px' }}
+                      >
+                        👁️ 审阅内容
+                      </button>
+                    </td>
                     <td style={{ padding: '10px' }}>
                       <button onClick={() => handleToggleManualRecommend(work.id, work.is_manual_recommended)} style={{ padding: '4px 10px', backgroundColor: work.is_manual_recommended ? '#5e81ac' : '#333', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', borderRadius: '4px' }}>
                         {work.is_manual_recommended ? "💎 已推举" : "⚪ 选入展厅"}
@@ -462,3 +539,29 @@ export default function AdminDashboard() {
     </div>
   );
 }
+
+// 提取 Modal 的暗黑风格样式，保持代码整洁
+const styles = {
+  overlay: {
+    position: 'fixed',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+    backdropFilter: 'blur(5px)'
+  },
+  previewModal: {
+    backgroundColor: '#0a0a0a',
+    border: '1px solid #444',
+    borderRadius: '12px',
+    padding: '30px',
+    width: '90%',
+    maxWidth: '900px',
+    maxHeight: '90vh',
+    display: 'flex',
+    flexDirection: 'column',
+    boxShadow: '0 20px 50px rgba(0,0,0,0.5)'
+  }
+};
