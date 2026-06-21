@@ -10,6 +10,9 @@ export default function Gallery() {
   const [works, setWorks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   
+  // 🚨 新增：用于存储当前正在“完整赏析”的作品对象
+  const [selectedWork, setSelectedWork] = useState(null);
+  
   // 展厅时空大闸状态
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
@@ -105,6 +108,45 @@ export default function Gallery() {
 
   return (
     <div style={styles.container}>
+      {/* 🚨 沉浸式赏析弹窗 (点击背景或关闭按钮均可退出) */}
+      {selectedWork && (
+        <div style={styles.modalOverlay} onClick={() => setSelectedWork(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>
+                📖 完整赏析档案 <span style={styles.modalId}>[{selectedWork.id.substring(0, 8)}]</span>
+              </h2>
+              <button onClick={() => setSelectedWork(null)} style={styles.closeBtn}>×</button>
+            </div>
+            
+            <div style={styles.modalBody}>
+              <div style={styles.modalScoreBar}>
+                <span style={styles.scoreBadge}>AI 综合评级: {selectedWork.ai_total_score?.toFixed(1)}</span>
+                {selectedWork.is_manual_recommended && (
+                  <span style={styles.goldenBadgeInline}>💎 主编特别推举</span>
+                )}
+              </div>
+
+              {/* 完整正文渲染 */}
+              <div style={styles.modalTextContent}>
+                {selectedWork.text_content || <span style={{color: '#6b7280', fontStyle: 'italic'}}>[暂无正文内容]</span>}
+              </div>
+
+              {/* 完整插画瀑布流 */}
+              {selectedWork.image_urls && selectedWork.image_urls.length > 0 && (
+                <div style={styles.modalImageGallery}>
+                  {selectedWork.image_urls.map((url, idx) => (
+                    <div key={idx} style={styles.modalImageWrapper}>
+                      <img src={url} alt={`作品原图 ${idx + 1}`} style={styles.modalImage} loading="lazy" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 极简顶导 */}
       <nav style={styles.navbar}>
         <div style={styles.navLogoContainer} onClick={() => navigate('/')}>
@@ -153,10 +195,10 @@ export default function Gallery() {
                 {/* 如果有插画则展示插画 */}
                 {work.image_urls && work.image_urls.length > 0 && (
                   <div style={styles.imageContainer}>
-                    <img src={work.image_urls[0]} alt="作品插图" style={styles.cardImage} />
+                    <img src={work.image_urls[0]} alt="作品插图预览" style={styles.cardImage} loading="lazy" />
                     {/* 左上角特权角标 */}
                     {work.is_manual_recommended && (
-                      <div style={styles.goldenBadge}>💎 主编特别推举</div>
+                      <div style={styles.goldenBadge}>💎 主编推举</div>
                     )}
                   </div>
                 )}
@@ -177,7 +219,10 @@ export default function Gallery() {
                   </p>
                   
                   <div style={styles.cardFooter}>
-                    <button style={styles.readMoreBtn}>📖 完整赏析</button>
+                    {/* 🚨 触发弹窗的赏析入口 */}
+                    <button onClick={() => setSelectedWork(work)} style={styles.readMoreBtn}>
+                      📖 完整赏析
+                    </button>
                   </div>
                 </div>
               </div>
@@ -191,6 +236,22 @@ export default function Gallery() {
           0% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.5; transform: scale(1.05); }
           100% { opacity: 1; transform: scale(1); }
+        }
+        
+        /* 针对弹窗正文的滚动条美化 */
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #1f2937;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #4b5563;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #6b7280;
         }
       `}</style>
     </div>
@@ -229,5 +290,80 @@ const styles = {
   cardText: { fontSize: '14px', lineHeight: '1.8', color: '#9ca3af', marginBottom: '25px', textAlign: 'justify' },
   
   cardFooter: { borderTop: '1px solid #1f2937', paddingTop: '15px', display: 'flex', justifyContent: 'flex-end' },
-  readMoreBtn: { background: 'none', border: 'none', color: '#818cf8', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }
+  readMoreBtn: { background: 'none', border: 'none', color: '#818cf8', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' },
+
+  // ====================================
+  // 🚨 弹窗专属样式 (Modal Styles)
+  // ====================================
+  modalOverlay: {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    display: 'flex', justifyContent: 'center', alignItems: 'center',
+    zIndex: 9999,
+    backdropFilter: 'blur(5px)',
+    padding: '20px'
+  },
+  modalContent: {
+    backgroundColor: '#111827',
+    border: '1px solid #374151',
+    borderRadius: '16px',
+    width: '100%',
+    maxWidth: '900px',
+    maxHeight: '90vh',
+    display: 'flex',
+    flexDirection: 'column',
+    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+  },
+  modalHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '20px 30px',
+    borderBottom: '1px solid #1f2937'
+  },
+  modalTitle: { margin: 0, fontSize: '20px', color: '#f3f4f6', display: 'flex', alignItems: 'center', gap: '10px' },
+  modalId: { fontSize: '14px', color: '#6b7280', fontFamily: 'monospace', fontWeight: 'normal' },
+  closeBtn: { background: 'none', border: 'none', color: '#9ca3af', fontSize: '28px', cursor: 'pointer', lineHeight: 1 },
+  
+  modalBody: {
+    padding: '30px',
+    overflowY: 'auto',
+    className: 'custom-scrollbar' // 配合注入的 CSS
+  },
+  modalScoreBar: {
+    display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '25px',
+    backgroundColor: '#1f2937', padding: '12px 20px', borderRadius: '8px'
+  },
+  goldenBadgeInline: {
+    backgroundColor: '#fbbf24', color: '#78350f', padding: '4px 10px',
+    fontSize: '12px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #f59e0b'
+  },
+  
+  modalTextContent: {
+    fontSize: '16px',
+    lineHeight: '2.0',
+    color: '#d1d5db',
+    whiteSpace: 'pre-wrap',
+    textAlign: 'justify',
+    marginBottom: '40px',
+    padding: '0 10px'
+  },
+  
+  modalImageGallery: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    borderTop: '1px dashed #374151',
+    paddingTop: '30px'
+  },
+  modalImageWrapper: {
+    width: '100%',
+    backgroundColor: '#000',
+    borderRadius: '8px',
+    overflow: 'hidden',
+    border: '1px solid #1f2937'
+  },
+  modalImage: {
+    width: '100%',
+    height: 'auto',
+    display: 'block'
+  }
 };
