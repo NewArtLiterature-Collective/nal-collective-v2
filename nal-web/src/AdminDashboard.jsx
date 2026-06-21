@@ -19,8 +19,11 @@ export default function AdminDashboard() {
   const [isContestActive, setIsContestActive] = useState(false); 
   const [isGalleryActive, setIsGalleryActive] = useState(false);
 
-  // 🚨 新增：沉浸式作品审阅室状态
+  // 沉浸式作品审阅室状态 (单篇作品审核)
   const [previewWork, setPreviewWork] = useState(null);
+  
+  // 🚨 新增：全局展厅大盘预览状态
+  const [showGalleryPreview, setShowGalleryPreview] = useState(false);
 
   const [newContestName, setNewContestName] = useState('');
   const [newContestDesc, setNewContestDesc] = useState('');
@@ -129,17 +132,17 @@ export default function AdminDashboard() {
       if (pendingError) console.error("🚨 抓取待审被拦截:", pendingError.message);
       setPendingCount(pendingCount || 0);
 
-      // 🚨 核心升级：增加对 text_content, image_urls, has_declared_ai 的抓取，供人工预览使用
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
-        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls, has_declared_ai')
+        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls, has_declared_ai, exhibition_ready')
         .eq('status', 'success')
         .eq('contest_id', contestId) 
+        // 渲染列表时，按人工权重优先，其次是 AI 总分
+        .order('manual_rank', { ascending: false })
         .order('ai_total_score', { ascending: false });
 
       if (successError) console.error("🚨 抓取展厅数据被拦截:", successError.message);
       
-      // 若当前弹窗中的作品状态发生改变，同步更新弹窗状态
       setWorks(submissions || []);
       if (previewWork) {
         const updatedWork = submissions?.find(w => w.id === previewWork.id);
@@ -267,6 +270,8 @@ export default function AdminDashboard() {
       if (error) throw error;
       if (!data || data.length === 0) { addLog(`❌ 权重修正失败：权限拦截。`); return; }
       addLog(`🎯 作品 [${id.substring(0,8)}] 权重修正为: ${rankValue}`);
+      // 更新排序
+      fetchDashboardData(selectedContestId);
     } catch (err) { console.error(err); }
   };
 
@@ -279,18 +284,75 @@ export default function AdminDashboard() {
     syncTimeState(cid, contests);
   };
 
+  // 🚨 提取入选展厅的所有作品
+  const curatedWorks = works.filter(w => w.is_manual_recommended || w.exhibition_ready);
+
   return (
     <div style={{ padding: '30px', backgroundColor: '#0a0a0a', minHeight: '100vh', color: '#e0e0e0', fontFamily: 'monospace', position: 'relative' }}>
       
-      {/* 🚨 沉浸式作品审阅弹窗 (Preview Modal) */}
+      {/* =========================================================
+          🚨 新增模块：全屏展厅大盘预览 (所见即所得的展位效果)
+          ========================================================= */}
+      {showGalleryPreview && (
+        <div style={styles.overlay} onClick={() => setShowGalleryPreview(false)}>
+          <div style={{ ...styles.previewModal, width: '95%', maxWidth: '1400px', height: '95vh', padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            <div style={{ ...styles.modalHeader, padding: '20px 30px', backgroundColor: '#111827' }}>
+              <div>
+                <h2 style={{ margin: 0, color: '#ebcb8b', fontSize: '24px' }}>👁️ 展厅全景沙盘 (预览模式)</h2>
+                <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '13px' }}>
+                  当前共筛选出 <strong style={{ color: '#a3be8c' }}>{curatedWorks.length}</strong> 件入展作品。排版与排序完全对齐前台真实展厅效果。
+                </p>
+              </div>
+              <button onClick={() => setShowGalleryPreview(false)} style={styles.closeBtn}>×</button>
+            </div>
+            
+            <div style={{ padding: '30px', overflowY: 'auto', height: 'calc(100% - 90px)', backgroundColor: '#0a0a0a' }}>
+              {curatedWorks.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '100px 0', color: '#4c566a', fontSize: '18px' }}>
+                  📭 当前没有任何作品入选展厅。请先在管理列表中打上“💎推举”或进行“📊全局策展划线”。
+                </div>
+              ) : (
+                <div style={styles.galleryGrid}>
+                  {curatedWorks.map((work) => (
+                    <div key={work.id} style={styles.galleryCard}>
+                      {work.image_urls && work.image_urls.length > 0 && (
+                        <div style={styles.galleryImageContainer}>
+                          <img src={work.image_urls[0]} alt="cover" style={styles.galleryCardImage} />
+                          {work.is_manual_recommended && (
+                            <div style={styles.galleryGoldenBadge}>💎 主编推举</div>
+                          )}
+                        </div>
+                      )}
+                      <div style={styles.galleryCardBody}>
+                        <div style={styles.galleryCardHeader}>
+                          <span style={styles.galleryWorkId}>UUID: {work.id.substring(0, 8)}</span>
+                          <span style={styles.galleryScoreBadge}>评级: {work.ai_total_score?.toFixed(1)}</span>
+                        </div>
+                        <p style={styles.galleryCardText}>
+                          {work.text_content?.substring(0, 100)}
+                          {work.text_content?.length > 100 ? '...' : ''}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================
+          原有模块：单篇作品沉浸式审阅弹窗 (Preview Modal)
+          ========================================================= */}
       {previewWork && (
         <div style={styles.overlay}>
           <div style={styles.previewModal}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '20px' }}>
+            <div style={styles.modalHeader}>
               <h2 style={{ margin: 0, color: '#ebcb8b', fontSize: '20px' }}>
-                📖 策展室预览档案 <span style={{ color: '#888', fontSize: '14px' }}>[{previewWork.id.substring(0,8)}]</span>
+                📖 策展室单卷审阅 <span style={{ color: '#888', fontSize: '14px' }}>[{previewWork.id.substring(0,8)}]</span>
               </h2>
-              <button onClick={() => setPreviewWork(null)} style={{ background: 'none', border: 'none', color: '#bf616a', fontSize: '24px', cursor: 'pointer', fontWeight: 'bold' }}>×</button>
+              <button onClick={() => setPreviewWork(null)} style={styles.closeBtn}>×</button>
             </div>
             
             <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', backgroundColor: '#1a1a1a', padding: '15px', borderRadius: '8px', border: '1px solid #333' }}>
@@ -343,6 +405,9 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* =========================================================
+          主界面区域
+          ========================================================= */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '30px' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '24px', color: '#fff' }}>🏛️ NAL 中央管理台</h1>
@@ -472,22 +537,32 @@ export default function AdminDashboard() {
             <div>
               <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 展厅作品库人工策展（共 {works.length} 篇）</h3>
               <p style={{ margin: 0, color: '#64748b', fontSize: '12px', maxWidth: '600px', lineHeight: '1.5' }}>
-                💡 <strong>Preview 模式提示</strong>：在关闭展厅大闸期间，您可以从容挑选和审阅作品。打上“推举金标”的作品在全网开启前对作者依然隐藏。挑选完毕后，请点击右侧开启展厅，全网将同步公开入选结果。
+                💡 <strong>工作流提示</strong>：您可以在下方列表中单独审阅并挑选作品。选定后，点击右侧的“预览展厅排版”，即可从上帝视角俯瞰这些作品拼凑在一起的最终展出效果。排版确认无误后，再开启全网展厅大闸。
               </p>
             </div>
             
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
-              <span style={{ color: '#888', fontSize: '13px' }}>
-                前台展厅对公众与作者可见状态：
-                <strong style={{ color: isGalleryActive ? '#a3be8c' : '#bf616a', marginLeft: '8px' }}>
-                  {isGalleryActive ? "🟢 展厅大门已全网开启" : "🔴 内部 Preview (入选隐藏)"}
-                </strong>
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <span style={{ color: '#888', fontSize: '13px' }}>
+                  全网展出状态：
+                  <strong style={{ color: isGalleryActive ? '#a3be8c' : '#bf616a', marginLeft: '5px' }}>
+                    {isGalleryActive ? "🟢 已公开" : "🔴 锁定中"}
+                  </strong>
+                </span>
+                {/* 🚨 核心新按钮：上帝视角预览展厅排版 */}
+                <button 
+                  onClick={() => setShowGalleryPreview(true)}
+                  style={{ padding: '8px 16px', backgroundColor: 'transparent', color: '#ebcb8b', border: '1px solid #ebcb8b', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px' }}
+                >
+                  👁️ 预览展厅最终排版
+                </button>
+              </div>
+
               <button 
                 onClick={handleToggleGalleryActive} 
-                style={{ padding: '8px 20px', backgroundColor: isGalleryActive ? '#bf616a' : '#a3be8c', color: isGalleryActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px' }}
+                style={{ padding: '8px 20px', backgroundColor: isGalleryActive ? '#bf616a' : '#a3be8c', color: isGalleryActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', borderRadius: '4px', width: '100%' }}
               >
-                {isGalleryActive ? "🔒 紧急闭馆 (转入Preview)" : "📢 确认放行 (全网公开展厅)"}
+                {isGalleryActive ? "🔒 紧急闭馆 (隐藏入展信息)" : "📢 确认放行 (全网公开展厅)"}
               </button>
             </div>
           </div>
@@ -517,7 +592,7 @@ export default function AdminDashboard() {
                         onClick={() => setPreviewWork(work)} 
                         style={{ padding: '4px 10px', backgroundColor: 'transparent', color: '#88c0d0', border: '1px solid #88c0d0', cursor: 'pointer', fontSize: '12px', borderRadius: '4px' }}
                       >
-                        👁️ 审阅内容
+                        👁️ 单卷审阅
                       </button>
                     </td>
                     <td style={{ padding: '10px' }}>
@@ -540,7 +615,9 @@ export default function AdminDashboard() {
   );
 }
 
-// 提取 Modal 的暗黑风格样式，保持代码整洁
+// ==========================================
+// 提取统一样式，保持组件内部代码整洁
+// ==========================================
 const styles = {
   overlay: {
     position: 'fixed',
@@ -563,5 +640,24 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     boxShadow: '0 20px 50px rgba(0,0,0,0.5)'
-  }
+  },
+  modalHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '20px'
+  },
+  closeBtn: {
+    background: 'none', border: 'none', color: '#bf616a', fontSize: '28px', cursor: 'pointer', fontWeight: 'bold'
+  },
+  
+  // 🚨 移植过来的前台展厅瀑布流样式，确保预览 100% 还原
+  galleryGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '25px' },
+  galleryCard: { backgroundColor: '#111827', borderRadius: '12px', overflow: 'hidden', border: '1px solid #1f2937' },
+  galleryImageContainer: { position: 'relative', width: '100%', height: '200px', backgroundColor: '#000' },
+  galleryCardImage: { width: '100%', height: '100%', objectFit: 'cover', opacity: 0.9 },
+  galleryGoldenBadge: { position: 'absolute', top: '12px', left: '12px', backgroundColor: '#fbbf24', color: '#000', padding: '4px 10px', fontSize: '11px', fontWeight: 'bold', borderRadius: '4px' },
+  galleryCardBody: { padding: '20px' },
+  galleryCardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
+  galleryWorkId: { fontSize: '11px', color: '#6b7280', fontFamily: 'monospace' },
+  galleryScoreBadge: { fontSize: '12px', fontWeight: 'bold', color: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', padding: '3px 8px', borderRadius: '20px' },
+  galleryCardText: { fontSize: '13px', lineHeight: '1.6', color: '#9ca3af', marginBottom: '10px', textAlign: 'justify' }
 };
