@@ -20,6 +20,9 @@ export default function Dashboard({ session }) {
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
   const [submissionDeadline, setSubmissionDeadline] = useState(null); 
+  
+  // 🚨 新增：全局展厅开关状态，用于控制是否向作者公开入展信息
+  const [isGalleryActive, setIsGalleryActive] = useState(false); 
 
   const [imageTexts, setImageTexts] = useState([]); 
 
@@ -92,11 +95,13 @@ export default function Dashboard({ session }) {
   const hasAddon = !isProExpired && (displayUsage.pro_credits > 0);
   const isEligibleForContest = isContestant || isPro;
 
+  // 🚨 根据用户类型与图片类型计算上传数量上限
   const maxImageCount = (() => {
     if (imageType === 'illustration') return isPro ? 10 : (isContestant || hasAddon ? 5 : 2);
     return isPro ? 50 : (isContestant || hasAddon ? 5 : 2); 
   })();
 
+  // 🚨 严格执行设定的各项配额
   const currentLimits = (() => {
      // 🚀 Pro 用户：Word 10MB, 图片 10MB
      if (isPro) return { count: maxImageCount, bytes: 10 * 1024 * 1024, mb: 10, display: '10MB' };
@@ -160,6 +165,7 @@ export default function Dashboard({ session }) {
       const { data: settings } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle();
       if (settings) {
         setIsContestActive(settings.is_contest_active);
+        setIsGalleryActive(settings.is_gallery_active || false); // 🚨 读取展厅大闸状态
         if (settings.current_contest_id) {
           setActiveContestId(settings.current_contest_id); 
           const { data: contestData } = await supabase.from('contests').select('*').eq('id', settings.current_contest_id).maybeSingle();
@@ -270,7 +276,7 @@ export default function Dashboard({ session }) {
   const handleDocxChange = useCallback((e) => {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
-      if (file.size > maxDocxSize) return alert(`文件过大！最多上传 ${maxDocSizeDisplay} 的文档。`);
+      if (file.size > maxDocxSize) return alert(`文件过大！您当前账户状态最多上传 ${maxDocSizeDisplay} 的文档。`);
       setSelectedDocx(file);
     }
   }, [maxDocxSize, maxDocSizeDisplay]); 
@@ -354,7 +360,7 @@ export default function Dashboard({ session }) {
       pending: { label: '⏳ 待校验', color: '#94a3b8' },
       processing: { label: '🧠 评审中', color: '#4f46e5' },
       success: { label: '✅ 评审通过', color: '#10b981' },
-      selected: { label: '🎉 评审通过', color: '#10b981' }, 
+      selected: { label: '🎉 评审通过', color: '#10b981' }, // 🚨 注意：即便是 selected 也只显示评审通过，绝不提前剧透入展信息
       rejected: { label: '🥀 遗憾落选', color: '#64748b' }, 
       invalid: { label: '❌ 未通过', color: '#ef4444' }
     };
@@ -760,12 +766,13 @@ export default function Dashboard({ session }) {
                 ) : (
                   <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
                     {userSubmissions.map(sub => {
-                      const isExhibitionReady = sub.exhibition_ready || sub.is_manual_recommended;
+                      // 🚨 核心大闸逻辑：只有在作品被人工或AI标记为可展出，并且全局展厅开关开启时，才显示“成功入展”！
+                      const isActuallyExhibited = (sub.exhibition_ready || sub.is_manual_recommended) && isGalleryActive;
                       return (
                         <div key={sub.id} style={{padding: '12px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'}}>
                           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
                             <span style={{fontSize: '11px', color: '#94a3b8'}}>{new Date(sub.created_at).toLocaleDateString()}</span>
-                            {isExhibitionReady ? (
+                            {isActuallyExhibited ? (
                               <span style={{ backgroundColor: '#fbbf24', color: '#78350f', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', border: '1px solid #f59e0b' }}>
                                 🏆 成功入展
                               </span>
@@ -937,7 +944,7 @@ export default function Dashboard({ session }) {
                   ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '');
 
                 let btnText = "启动评审分析";
-                if (loading) btnText = "AI 专家评审中...";
+                if (loading) btnText = "AI 专家计算中...";
                 else if ((activeTab === 'text' || activeTab === 'picturebook') && aiDeclaration === '') btnText = "⛔ 请先完成上方 AI 声明";
                 else if (activeTab === 'text' && !selectedDocx) btnText = "⛔ 请先上传 Word 评审文档";
                 else if (activeTab === 'picturebook' && (!workText || workText.trim().length === 0)) btnText = "⛔ 请填写整体故事说明";
