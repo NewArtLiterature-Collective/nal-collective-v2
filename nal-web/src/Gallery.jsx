@@ -10,7 +10,7 @@ export default function Gallery() {
   const [works, setWorks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // 🚨 新增：用于存储当前正在“完整赏析”的作品对象
+  // 用于存储当前正在“完整赏析”的作品对象
   const [selectedWork, setSelectedWork] = useState(null);
   
   // 展厅时空大闸状态
@@ -24,17 +24,27 @@ export default function Gallery() {
     const fetchGalleryData = async () => {
       try {
         // ==========================================
-        // 阶段 1：获取当前主赛场指针 (修正：只取指针)
+        // 阶段 1：获取当前主赛场指针 & 全局大闸状态
         // ==========================================
         const { data: settings, error: sErr } = await supabase
           .from('site_settings')
-          .select('is_contest_active, current_contest_id')
+          .select('is_contest_active, current_contest_id, is_gallery_active')
           .eq('id', 1)
           .maybeSingle();
 
         if (sErr) throw sErr;
 
         let activeContestId = settings?.current_contest_id;
+
+        // 🚨 大闸拦截：如果管理员在后台没有开启 is_gallery_active，直接锁死展厅！
+        if (!settings?.is_gallery_active) {
+          setGalleryState({ 
+            isOpen: false, 
+            message: '🔒 展厅大门尚未全网开启。\n目前正处于内部策展与布展阶段，请耐心等待官方放行。' 
+          });
+          setIsLoading(false);
+          return;
+        }
 
         if (!activeContestId) {
           setGalleryState({ isOpen: false, message: '🌙 当前没有正在展出的赛季档案。' });
@@ -43,7 +53,7 @@ export default function Gallery() {
         }
 
         // ==========================================
-        // 阶段 2：校验具体赛季的时空大闸与名称 (修正：从 contests 表读取)
+        // 阶段 2：校验具体赛季的时空大闸与名称
         // ==========================================
         const { data: contestData, error: cErr } = await supabase
           .from('contests')
@@ -74,25 +84,25 @@ export default function Gallery() {
         }
 
         // ==========================================
-        // 阶段 3：策展门禁查询（纯正的双引擎混合工作流）
+        // 阶段 3：策展门禁查询（万无一失的前端绝对过滤法）
         // ==========================================
+        // 提取该赛季所有 status 为 success 的作品
         const { data: submissions, error: subErr } = await supabase
           .from('contest_submissions')
           .select('id, text_content, image_urls, ai_total_score, is_manual_recommended, manual_rank, exhibition_ready, created_at')
-          // 条件 1：必须是处理成功的作品
           .eq('status', 'success')
-          // 条件 2：当前激活赛季的数据隔离
           .eq('contest_id', activeContestId)
-          // 🚨 条件 3：混合双轨准入机制 —— 后台算力划定的 Top 5% 门槛，【或者】主编人工推举金标
-          .or('exhibition_ready.eq.true,is_manual_recommended.eq.true')
-          // 排序 1：优先按后台管理员手动赋予的 rank 权重排位
           .order('manual_rank', { ascending: false })
-          // 排序 2：同等权重下，按 AI 分数从高到低自然排序
           .order('ai_total_score', { ascending: false });
 
         if (subErr) throw subErr;
 
-        setWorks(submissions || []);
+        // 🚨 核心修复：防丢失过滤。只要 exhibition_ready 或 is_manual_recommended 有一个是 true，就绝对放行。
+        const exhibitedWorks = (submissions || []).filter(work => 
+          work.exhibition_ready === true || work.is_manual_recommended === true
+        );
+
+        setWorks(exhibitedWorks);
         setGalleryState(prev => ({ ...prev, isOpen: true }));
 
       } catch (err) {
@@ -173,17 +183,17 @@ export default function Gallery() {
           </div>
         ) : !galleryState.isOpen ? (
           <div style={styles.statusBox}>
-            <div style={{ fontSize: '24px', color: '#4c566a', marginBottom: '15px' }}>🔒</div>
-            <div style={{ whiteSpace: 'pre-wrap', color: '#d8dee9', lineHeight: '1.6' }}>
+            <div style={{ fontSize: '64px', marginBottom: '20px' }}>🔐</div>
+            <div style={{ whiteSpace: 'pre-wrap', color: '#d8dee9', lineHeight: '1.8', fontSize: '16px' }}>
               {galleryState.message}
             </div>
-            <button onClick={() => navigate('/')} style={styles.homeBtn}>返回首页</button>
+            <button onClick={() => navigate('/dashboard')} style={styles.homeBtn}>返回工作区</button>
           </div>
         ) : works.length === 0 ? (
           <div style={styles.statusBox}>
-            <div style={{ fontSize: '24px', color: '#4c566a', marginBottom: '15px' }}>📭</div>
-            <div style={{ color: '#d8dee9' }}>
-              当前展厅暂无展品。所有投稿均在进行严苛的算法共治与离线会诊中。
+            <div style={{ fontSize: '48px', marginBottom: '20px' }}>📭</div>
+            <div style={{ color: '#d8dee9', lineHeight: '1.8', fontSize: '15px' }}>
+              当前展厅暂无展品。<br/>所有投稿均在进行严苛的算法共治与离线会诊中。
             </div>
           </div>
         ) : (
@@ -326,7 +336,7 @@ const styles = {
   modalBody: {
     padding: '30px',
     overflowY: 'auto',
-    className: 'custom-scrollbar' // 配合注入的 CSS
+    className: 'custom-scrollbar'
   },
   modalScoreBar: {
     display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '25px',
