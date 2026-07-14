@@ -5,6 +5,20 @@ import { usePayment } from './hooks/usePayment';
 import { useEvaluation } from './hooks/useEvaluation';
 import logo from './assets/nal_logo.png';
 
+// 🚨 提交格式硬约束：全站仅接受 JPG/PNG（与后端 PIL 管线及 OSS 安全策略对齐）
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png'];
+const ALLOWED_IMAGE_EXTS = ['jpg', 'jpeg', 'png'];
+const IMAGE_ACCEPT_ATTR = '.jpg,.jpeg,.png,image/jpeg,image/png';
+const validateImageFiles = (files) => {
+  const invalid = files.filter(f => {
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    return !ALLOWED_IMAGE_TYPES.includes(f.type) || !ALLOWED_IMAGE_EXTS.includes(ext);
+  });
+  return invalid;
+};
+// 扩展名由已校验的 MIME 推导，绝不信任用户文件名（防公开桶投毒）
+const safeExtFromType = (f) => (f.type === 'image/png' ? 'png' : 'jpg');
+
 export default function Dashboard({ session }) {
   const navigate = useNavigate();
 
@@ -102,18 +116,19 @@ export default function Dashboard({ session }) {
   })();
 
   // 🚨 严格执行设定的各项配额
+  // 🚨 配额拆分为文档/图片两个明确物种，避免未来改配额时改错行
   const currentLimits = (() => {
      // 🚀 Pro 用户：Word 10MB, 图片 10MB
-     if (isPro) return { count: maxImageCount, bytes: 10 * 1024 * 1024, mb: 10, display: '10MB' };
+     if (isPro) return { count: maxImageCount, docxBytes: 10 * 1024 * 1024, docxDisplay: '10MB', imageMB: 10 };
      // 🚀 参赛/加油包用户：Word 150KB, 图片 1.5MB
-     if (isContestant || hasAddon) return { count: maxImageCount, bytes: 150 * 1024, mb: 1.5, display: '150KB' };
+     if (isContestant || hasAddon) return { count: maxImageCount, docxBytes: 150 * 1024, docxDisplay: '150KB', imageMB: 1.5 };
      // 🚀 免费普通用户：Word 50KB, 图片 1MB
-     return { count: maxImageCount, bytes: 50 * 1024, mb: 1, display: '50KB' };
+     return { count: maxImageCount, docxBytes: 50 * 1024, docxDisplay: '50KB', imageMB: 1 };
   })();
 
-  const maxDocxSize = currentLimits.bytes;
-  const maxImageSizeMB = currentLimits.mb;
-  const maxDocSizeDisplay = currentLimits.display;
+  const maxDocxSize = currentLimits.docxBytes;
+  const maxImageSizeMB = currentLimits.imageMB;
+  const maxDocSizeDisplay = currentLimits.docxDisplay;
 
   const { payLoading, handlePayment, setPayLoading } = usePayment();
   const { loading, report, evaluate } = useEvaluation(userRole, usage); 
@@ -254,6 +269,22 @@ export default function Dashboard({ session }) {
     newTexts[index] = text;
     setImageTexts(newTexts);
   };
+  // 🚨 页序调整：图与文必须同步换位——页序直接决定 AI 的图文叙事评审
+  const moveSelectedImage = (index, direction) => {
+    const target = index + direction;
+    setSelectedImages(prev => {
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    setImageTexts(prev => {
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
 
   const handleImageChange = useCallback((e) => {
     const files = Array.from(e.target.files);
@@ -262,6 +293,12 @@ export default function Dashboard({ session }) {
       if (newList.length > maxImageCount) {
         alert(`数量超限！当前账户最多允许上传 ${maxImageCount} 张图片。`);
         return prev; 
+      }
+      // 🚨 格式白名单：仅 JPG/PNG（MIME 与扩展名双重校验）
+      const invalidFiles = validateImageFiles(files);
+      if (invalidFiles.length > 0) {
+        alert(`格式不支持！仅接受 JPG/PNG 格式。\n问题文件：${invalidFiles.map(f => f.name).join('、')}`);
+        return prev;
       }
       const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
       if (oversizedFiles.length > 0) {
@@ -283,6 +320,9 @@ export default function Dashboard({ session }) {
   
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
+    // 🚨 格式白名单：仅 JPG/PNG（MIME 与扩展名双重校验）
+    const invalidFiles = validateImageFiles(files);
+    if (invalidFiles.length > 0) return alert(`格式不支持！仅接受 JPG/PNG 格式。\n问题文件：${invalidFiles.map(f => f.name).join('、')}`);
     const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
     if (oversizedFiles.length > 0) return alert(`文件过大！单张插画不得超过 ${maxImageSizeMB}MB。`);
     setContestImages(prev => [...prev, ...files].slice(0, 2));
@@ -322,7 +362,8 @@ export default function Dashboard({ session }) {
     try {
       const imageUrls = [];
       for (const file of contestImages) {
-        const fileExt = file.name.split('.').pop();
+        // 🚨 扩展名由已校验 MIME 推导，不信任用户文件名（contest_works 为公开桶）
+        const fileExt = safeExtFromType(file);
         const fileName = `${session?.user?.id}_${Date.now()}.${fileExt}`;
         const { error: uploadError } = await supabase.storage.from('contest_works').upload(fileName, file);
         if (uploadError) throw uploadError;
@@ -720,7 +761,7 @@ export default function Dashboard({ session }) {
                         ))}
                         {contestImages.length < 2 && (
                           <div style={{...styles.uploadArea, padding: '15px'}}>
-                            <input type="file" id="c-img" hidden multiple accept="image/*" onChange={handleContestImageUpload} />
+                            <input type="file" id="c-img" hidden multiple accept={IMAGE_ACCEPT_ATTR} onChange={handleContestImageUpload} />
                             <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>{contestImages.length === 0 ? "➕ 上传第一幅插画" : "➕ 上传第二幅插画"}</label>
                           </div>
                         )}
@@ -861,6 +902,10 @@ export default function Dashboard({ session }) {
                                 <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>{`第 ${index + 1} 页 / 跨页`}</span>
                                 <span style={{ fontSize: '12px', color: '#64748b', wordBreak: 'break-all' }}>📄 {file.name.length > 20 ? `${file.name.substring(0, 15)}...` : file.name}</span>
                                 <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', textAlign: 'left', padding: 0, fontWeight: 'bold' }}>❌ 移除此页</button>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                  <button onClick={() => moveSelectedImage(index, -1)} disabled={index === 0} style={{ background: 'none', border: 'none', color: index === 0 ? '#cbd5e1' : '#6366f1', cursor: index === 0 ? 'not-allowed' : 'pointer', fontSize: '12px', padding: 0, fontWeight: 'bold' }}>⬆️ 上移</button>
+                                  <button onClick={() => moveSelectedImage(index, 1)} disabled={index === selectedImages.length - 1} style={{ background: 'none', border: 'none', color: index === selectedImages.length - 1 ? '#cbd5e1' : '#6366f1', cursor: index === selectedImages.length - 1 ? 'not-allowed' : 'pointer', fontSize: '12px', padding: 0, fontWeight: 'bold' }}>⬇️ 下移</button>
+                                </div>
                               </div>
                               <div style={{ width: '75%' }}>
                                 <textarea
@@ -886,8 +931,11 @@ export default function Dashboard({ session }) {
                   )}
                   {selectedImages.length < maxImageCount && (
                     <div style={styles.uploadArea}>
-                      <input type="file" id="up" hidden multiple onChange={handleImageChange} accept="image/*" />
+                      <input type="file" id="up" hidden multiple onChange={handleImageChange} accept={IMAGE_ACCEPT_ATTR} />
                       <label htmlFor="up" style={styles.uploadBtn}>➕ 点击上传插画素材 (还可传 {maxImageCount - selectedImages.length} 张)</label>
+                      {imageType === 'picturebook' && (
+                        <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px', marginBottom: 0 }}>📖 请按翻页顺序上传（仅限 JPG/PNG）——页序将直接决定 AI 对图文叙事的评审，上传后可用 ⬆️⬇️ 调整。</p>
+                      )}
                     </div>
                   )}
                 </div>
