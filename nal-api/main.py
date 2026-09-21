@@ -12,10 +12,12 @@ from routes import payment
 app = FastAPI(title="NAL API")
 
 # --- 1. 配置 CORS (允许前端访问) ---
+# 注意：allow_origins=["*"] 时 allow_credentials 必须为 False
+# 前端用 Authorization header 传 token，不依赖 cookie，所以没有影响
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://v2.nal-ai.org"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
