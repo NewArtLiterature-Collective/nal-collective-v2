@@ -17,8 +17,8 @@ export function useEvaluation(userRole, usage) {
     return urls;
   };
 
-  // 🆕 v3：参数对象中增加 ai_declaration，移除 page_texts_json（全量读取模式不再需要逐页文字）
-  const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, ai_declaration }) => {
+  // 🆕 v3：ai_declaration + page_format，移除 page_texts_json
+  const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, ai_declaration, page_format }) => {
     const isPro = userRole === 'pro';
     const isContestant = userRole === 'contestant';
     const hasAddon = usage && usage.pro_credits > 0;
@@ -78,8 +78,9 @@ export function useEvaluation(userRole, usage) {
       const hasProLimit = usage && usage.pro_credits > 0;
       formData.append('has_pro_limit', hasProLimit ? "true" : "false");
 
-      // 🆕 v3：传递 AI 辅助声明（视觉赛道必填，后端强制核验）
+      // 🆕 v3：AI 辅助声明 + 图片格式
       formData.append('ai_declaration', ai_declaration || '');
+      formData.append('page_format', page_format || 'single');
 
       if (activeTab === 'picturebook') {
         formData.append('image_urls', JSON.stringify(publicImageUrls));
