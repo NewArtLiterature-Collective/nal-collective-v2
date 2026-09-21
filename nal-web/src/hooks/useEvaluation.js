@@ -43,7 +43,7 @@ export function useEvaluation(userRole, usage) {
         return alert(`数量超限！您当前最多只能上传 ${maxImgCount} 张图片。`);
       }
 
-      const maxImgSize = isPro ? 5 * 1024 * 1024 : (isContestant || hasAddon ? 1.5 * 1024 * 1024 : 1 * 1024 * 1024);
+      const maxImgSize = isPro ? 8 * 1024 * 1024 : (isContestant || hasAddon ? 1.5 * 1024 * 1024 : 1 * 1024 * 1024);
       for (let img of selectedImages) {
         if (img.size > maxImgSize) {
           return alert(`单张图片过大！文件 "${img.name}" 超出了您当前级别 ${maxImgSize / (1024 * 1024)} MB 的单张限制。`);
