@@ -855,25 +855,54 @@ export default function Dashboard({ session }) {
               {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
                   {selectedImages.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
-                      {selectedImages.map((file, index) => (
-                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: imageType === 'picturebook' ? '#f8fafc' : '#f0fdf4', border: `1px solid ${imageType === 'picturebook' ? '#e2e8f0' : '#bbf7d0'}`, borderRadius: '8px' }}>
-                          <span style={{ fontSize: '13px', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>
-                            {imageType === 'picturebook' ? `📖 第 ${index + 1} 页／跨页` : `🖼️ 第 ${index + 1} 幅`}{'　'}
-                            {file.name.length > 20 ? `${file.name.substring(0, 18)}...` : file.name}{'　'}
-                            <span style={{ color: '#94a3b8' }}>({(file.size / 1024 / 1024).toFixed(1)}MB)</span>
-                          </span>
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            {imageType === 'picturebook' && (
-                              <>
-                                <button onClick={() => moveSelectedImage(index, -1)} disabled={index === 0} style={{ background: 'none', border: 'none', color: index === 0 ? '#cbd5e1' : '#6366f1', cursor: index === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', padding: 0 }}>⬆️</button>
-                                <button onClick={() => moveSelectedImage(index, 1)} disabled={index === selectedImages.length - 1} style={{ background: 'none', border: 'none', color: index === selectedImages.length - 1 ? '#cbd5e1' : '#6366f1', cursor: index === selectedImages.length - 1 ? 'not-allowed' : 'pointer', fontSize: '14px', padding: 0 }}>⬇️</button>
-                              </>
-                            )}
-                            <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>移除</button>
-                          </div>
-                        </div>
-                      ))}
+                    <div style={{ marginBottom: '20px' }}>
+                      {/* 缩略图网格：绘本按页序排列，插画网格展示 */}
+                      <div style={{ display: 'grid', gridTemplateColumns: imageType === 'picturebook' ? '1fr' : 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px' }}>
+                        {selectedImages.map((file, index) => {
+                          const previewUrl = URL.createObjectURL(file);
+                          return (
+                            <div key={index} style={{ position: 'relative', borderRadius: '8px', overflow: 'hidden', border: `2px solid ${imageType === 'picturebook' ? '#6366f1' : '#10b981'}`, backgroundColor: '#f8fafc' }}>
+                              {imageType === 'picturebook' ? (
+                                /* 绘本：横向布局，左侧缩略图 + 右侧信息与操作 */
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px' }}>
+                                  <img
+                                    src={previewUrl}
+                                    alt={`第 ${index + 1} 页`}
+                                    style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '4px', flexShrink: 0 }}
+                                    onLoad={() => URL.revokeObjectURL(previewUrl)}
+                                  />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#4f46e5', marginBottom: '2px' }}>第 {index + 1} 页／跨页</div>
+                                    <div style={{ fontSize: '11px', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>{(file.size / 1024 / 1024).toFixed(1)}MB</div>
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                                    <button onClick={() => moveSelectedImage(index, -1)} disabled={index === 0} style={{ background: 'none', border: 'none', color: index === 0 ? '#cbd5e1' : '#6366f1', cursor: index === 0 ? 'not-allowed' : 'pointer', fontSize: '16px', padding: 0, lineHeight: 1 }}>⬆️</button>
+                                    <button onClick={() => moveSelectedImage(index, 1)} disabled={index === selectedImages.length - 1} style={{ background: 'none', border: 'none', color: index === selectedImages.length - 1 ? '#cbd5e1' : '#6366f1', cursor: index === selectedImages.length - 1 ? 'not-allowed' : 'pointer', fontSize: '16px', padding: 0, lineHeight: 1 }}>⬇️</button>
+                                    <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', padding: 0 }}>移除</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                /* 插画：纵向卡片，上方缩略图 + 下方信息 */
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                  <img
+                                    src={previewUrl}
+                                    alt={`第 ${index + 1} 幅`}
+                                    style={{ width: '100%', height: '120px', objectFit: 'cover' }}
+                                    onLoad={() => URL.revokeObjectURL(previewUrl)}
+                                  />
+                                  <div style={{ padding: '6px 8px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#059669' }}>第 {index + 1} 幅</div>
+                                    <div style={{ fontSize: '10px', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                                    <div style={{ fontSize: '10px', color: '#94a3b8' }}>{(file.size / 1024 / 1024).toFixed(1)}MB</div>
+                                    <button onClick={() => removeSelectedImage(index)} style={{ marginTop: '4px', background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', padding: 0 }}>移除</button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                   {selectedImages.length < maxImageCount && (
