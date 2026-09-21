@@ -65,8 +65,10 @@ export default function Dashboard({ session }) {
   // 专家模型与引擎配置状态
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
-  const [imageType, setImageType] = useState('picturebook');
+  const [imageType, setImageType] = useState('picturebook'); 
   const [pageFormat, setPageFormat] = useState('single'); // 'single' 单页 / 'spread' 跨页合图
+  const [currentImagePage, setCurrentImagePage] = useState(0);    // 当前翻页查看的索引
+  const [imageDimensions, setImageDimensions] = useState({});     // { index: {w, h} }
 
   // 防止 undefined 穿透
   const initialMeta = session?.user?.user_metadata || {};
@@ -262,7 +264,20 @@ export default function Dashboard({ session }) {
 
   const removeContestImage = (index) => setContestImages(prev => prev.filter((_, i) => i !== index));
   const removeSelectedImage = (index) => {
-    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+    setSelectedImages(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      setCurrentImagePage(p => Math.min(p, Math.max(0, next.length - 1)));
+      return next;
+    });
+    setImageDimensions(prev => {
+      const next = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = parseInt(k);
+        if (ki < index) next[ki] = v;
+        else if (ki > index) next[ki - 1] = v;
+      });
+      return next;
+    });
   };
 
   // 🚨 页序调整：页序直接决定 AI 的图文叙事评审
@@ -326,7 +341,7 @@ export default function Dashboard({ session }) {
       imageType,
       selectedModelId,
       ai_declaration: aiDeclaration,
-      page_format: imageType === 'picturebook' ? pageFormat : 'single'  // 绘本传格式，插画固定 single
+      page_format: imageType === 'picturebook' ? pageFormat : 'single'
     });
     setTimeout(refreshUserMetadata, 1500);
     if (success) {
@@ -849,7 +864,6 @@ export default function Dashboard({ session }) {
                   </div>
                 )}
 
-                {/* 📐 绘本专属：图片格式选择 */}
                 {activeTab === 'picturebook' && imageType === 'picturebook' && (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>📐 图片格式</label>
@@ -875,29 +889,85 @@ export default function Dashboard({ session }) {
 
               {activeTab === 'picturebook' && (
                 <div style={{ marginBottom: '20px' }}>
-                  {selectedImages.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
-                      {selectedImages.map((file, index) => (
-                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: imageType === 'picturebook' ? '#f8fafc' : '#f0fdf4', border: `1px solid ${imageType === 'picturebook' ? '#e2e8f0' : '#bbf7d0'}`, borderRadius: '8px' }}>
-                          <span style={{ fontSize: '13px', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>
-                            {imageType === 'picturebook' ? `📖 第 ${index + 1} 页／跨页` : `🖼️ 第 ${index + 1} 幅`}{'　'}
-                            {file.name.length > 20 ? `${file.name.substring(0, 18)}...` : file.name}{'　'}
-                            <span style={{ color: '#94a3b8' }}>({(file.size / 1024 / 1024).toFixed(1)}MB)</span>
-                          </span>
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            {imageType === 'picturebook' && (
-                              <>
-                                <button onClick={() => moveSelectedImage(index, -1)} disabled={index === 0} style={{ background: 'none', border: 'none', color: index === 0 ? '#cbd5e1' : '#6366f1', cursor: index === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', padding: 0 }}>⬆️</button>
-                                <button onClick={() => moveSelectedImage(index, 1)} disabled={index === selectedImages.length - 1} style={{ background: 'none', border: 'none', color: index === selectedImages.length - 1 ? '#cbd5e1' : '#6366f1', cursor: index === selectedImages.length - 1 ? 'not-allowed' : 'pointer', fontSize: '14px', padding: 0 }}>⬇️</button>
-                              </>
-                            )}
-                            <button onClick={() => removeSelectedImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>移除</button>
-                          </div>
+                  {selectedImages.length > 0 && (() => {
+                    const isSingleIllustration = imageType === 'illustration' && selectedImages.length === 1;
+                    const file = selectedImages[currentImagePage];
+                    const previewUrl = URL.createObjectURL(file);
+                    const dim = imageDimensions[currentImagePage];
+                    const total = selectedImages.length;
+
+                    return (
+                      <div style={{ marginBottom: '20px' }}>
+                        {/* 图片显示区 */}
+                        <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden', border: `2px solid ${imageType === 'picturebook' ? '#6366f1' : '#10b981'}`, backgroundColor: '#0f0f0f', textAlign: 'center' }}>
+                          <img
+                            src={previewUrl}
+                            alt={`第 ${currentImagePage + 1} 页`}
+                            style={{ maxWidth: '100%', maxHeight: '420px', objectFit: 'contain', display: 'block', margin: '0 auto' }}
+                            onLoad={(e) => {
+                              URL.revokeObjectURL(previewUrl);
+                              setImageDimensions(prev => ({ ...prev, [currentImagePage]: { w: e.target.naturalWidth, h: e.target.naturalHeight } }));
+                            }}
+                          />
                         </div>
-                      ))}
-                    </div>
-                  )}
-                  )}
+
+                        {/* 翻页控件行 */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', padding: '8px 12px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                          
+                          {/* 左：页序调整 */}
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              onClick={() => { moveSelectedImage(currentImagePage, -1); setCurrentImagePage(p => Math.max(0, p - 1)); }}
+                              disabled={currentImagePage === 0}
+                              title="上移（调整页序）"
+                              style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: currentImagePage === 0 ? '#f1f5f9' : 'white', color: currentImagePage === 0 ? '#cbd5e1' : '#6366f1', cursor: currentImagePage === 0 ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                            >↑</button>
+                            <button
+                              onClick={() => { moveSelectedImage(currentImagePage, 1); setCurrentImagePage(p => Math.min(total - 1, p + 1)); }}
+                              disabled={currentImagePage === total - 1}
+                              title="下移（调整页序）"
+                              style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: currentImagePage === total - 1 ? '#f1f5f9' : 'white', color: currentImagePage === total - 1 ? '#cbd5e1' : '#6366f1', cursor: currentImagePage === total - 1 ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                            >↓</button>
+                          </div>
+
+                          {/* 中：翻页（单幅插画隐藏） */}
+                          {!isSingleIllustration ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <button
+                                onClick={() => setCurrentImagePage(p => Math.max(0, p - 1))}
+                                disabled={currentImagePage === 0}
+                                style={{ width: '32px', height: '32px', borderRadius: '50%', border: '1px solid #cbd5e1', background: currentImagePage === 0 ? '#f1f5f9' : 'white', color: currentImagePage === 0 ? '#cbd5e1' : '#111827', cursor: currentImagePage === 0 ? 'not-allowed' : 'pointer', fontSize: '18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              >‹</button>
+                              <span style={{ fontSize: '13px', color: '#475569', fontWeight: 'bold', minWidth: '60px', textAlign: 'center' }}>
+                                {currentImagePage + 1} / {total}
+                              </span>
+                              <button
+                                onClick={() => setCurrentImagePage(p => Math.min(total - 1, p + 1))}
+                                disabled={currentImagePage === total - 1}
+                                style={{ width: '32px', height: '32px', borderRadius: '50%', border: '1px solid #cbd5e1', background: currentImagePage === total - 1 ? '#f1f5f9' : 'white', color: currentImagePage === total - 1 ? '#cbd5e1' : '#111827', cursor: currentImagePage === total - 1 ? 'not-allowed' : 'pointer', fontSize: '18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              >›</button>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '12px', color: '#94a3b8' }}>单幅插画</span>
+                          )}
+
+                          {/* 右：移除当前页 */}
+                          <button
+                            onClick={() => removeSelectedImage(currentImagePage)}
+                            style={{ padding: '4px 10px', borderRadius: '4px', border: '1px solid #fca5a5', background: '#fff5f5', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >移除</button>
+                        </div>
+
+                        {/* 图片信息行 */}
+                        <div style={{ marginTop: '6px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+                          {imageType === 'picturebook' ? `📖 第 ${currentImagePage + 1} 页／跨页` : `🖼️ 第 ${currentImagePage + 1} 幅`}
+                          　{file.name.length > 30 ? `${file.name.substring(0, 28)}...` : file.name}
+                          　{(file.size / 1024 / 1024).toFixed(1)}MB
+                          {dim ? `　${dim.w} × ${dim.h} px` : ''}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {selectedImages.length < maxImageCount && (
                     <div style={styles.uploadArea}>
                       <input type="file" id="up" hidden multiple onChange={handleImageChange} accept={IMAGE_ACCEPT_ATTR} />
