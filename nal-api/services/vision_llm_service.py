@@ -8,7 +8,7 @@
 #   3. Flash / Pro 双通道：
 #      - Flash：一次调用，输出分析报告 + 学术判词
 #      - Pro：两次调用，Flash 快速读图 → Pro 高清深度学术判词
-#   4. 内容安全前置审查：色情/gore/仇恨符号/自残，触发立即终止
+#   4. 内容安全审查：合并进 Flash 主调用（节省内存，不再独立加载图片）
 #   5. AI 声明强制核验：声明纯原创但查出指纹 → 立即终止，不扣额度
 #   6. 去除总分、去除入围预测、去除逐页文字、去除权重说明
 #   7. 保留单项分数（供用户直观参考）、保留审美通道路由、保留章程 v2
@@ -26,8 +26,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 PIL.Image.MAX_IMAGE_PIXELS = None
 
 # 分辨率分层
-FLASH_MAX_DIM = 1536   # Flash 初读：够路由+读故事
-PRO_MAX_DIM   = 2048   # Pro 终审：细判东方笔触/材质
+FLASH_MAX_DIM = 1024   # Flash 初读：降低内存峰值
+PRO_MAX_DIM   = 1536   # Pro 终审：细判东方笔触/材质
 
 # AI 元数据指纹库
 AI_KEYWORDS = [
@@ -266,8 +266,19 @@ class VisionLLMService:
 {calibration}
 {cot_steps}
 
+【🚨 内容安全前置审查（最高优先级，先于一切评审）】
+在进行任何评审之前，先检查所有图片是否包含以下任一内容：
+1. 色情性行为描绘，或针对未成年人的任何性暗示（裸体人体艺术/雕塑/低幼无性意味裸体不拦截）
+2. 写实的血腥、gore、肢体残缺（象征性死亡、战争隐喻不拦截）
+3. 仇恨符号、纳粹标志、极端主义视觉符号
+4. 自残或自杀的具象描绘
+发现上述任一内容 → content_violation 填 true，violation_type 填对应类型
+未发现 → content_violation 填 false，violation_type 填空字符串，继续正常评审
+
 【强制 JSON 输出格式（不含任何 Markdown 标记）】
 {{
+    "content_violation": false 或 true,
+    "violation_type": "空字符串 或 sexual_content / gore_violence / hate_symbol / self_harm",
     "visual_observation": "纯事实观察记录（150字内）：画面内容、色彩主导、笔触质地、视线动线、跨页/跨图变化。严禁评价性词汇。",
     "dominant_tradition": "限五个固定值之一：'西方写实'、'东方意象'、'原生态装饰'、'稚拙先锋'、'综合无明显传统'",
     "has_traditional_elements": "YES 或 NO",
@@ -521,20 +532,7 @@ class VisionLLMService:
                 )
             )
 
-        # ---- 3. 内容安全前置审查 ----
-        safety_result = await cls._check_content_safety(images_flash, flash_model)
-        if safety_result.get("content_violation"):
-            violation_type = safety_result.get("violation_type", "未知违规类型")
-            violation_label = VIOLATION_LABELS.get(violation_type, violation_type)
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"⚠️ 提交审核中止\n\n"
-                    f"系统在您提交的图片中检测到不适合本平台的内容（{violation_label}）。\n\n"
-                    f"本次分析已终止，本次额度不予扣除。"
-                    f"如您认为这是误判，请联系人工审核团队。"
-                )
-            )
+        # ---- 3. 内容安全审查已合并进 Flash JSON schema，不再独立调用 ----
 
         # ---- 4. 构建 Flash 调用内容 ----
         flash_instruction = cls._get_flash_instruction(
@@ -576,6 +574,20 @@ class VisionLLMService:
                 flash_result = flash_result[0] if flash_result else {}
             if not isinstance(flash_result, dict):
                 raise ValueError(f"Flash 返回了非预期类型: {type(flash_result).__name__}")
+
+            # ---- 内容安全检查（从 Flash 结果里读取） ----
+            if flash_result.get("content_violation"):
+                violation_type = flash_result.get("violation_type", "未知违规类型")
+                violation_label = VIOLATION_LABELS.get(violation_type, violation_type)
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"⚠️ 提交审核中止\n\n"
+                        f"系统在您提交的图片中检测到不适合本平台的内容（{violation_label}）。\n\n"
+                        f"本次分析已终止，本次额度不予扣除。"
+                        f"如您认为这是误判，请联系人工审核团队。"
+                    )
+                )
 
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail="Flash 模型未返回标准 JSON 格式。")
