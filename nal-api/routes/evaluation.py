@@ -28,6 +28,7 @@ async def process_evaluation(
     image_type: str = Form(""),
     image_urls: str = Form("[]"),
     ai_declaration: str = Form(""),        # 🆕 "no" = 纯人类原创 / "yes" = 已使用 AI
+    page_format: str = Form("single"),     # 📐 "single" 单页 / "spread" 跨页合图（绘本专属）
     has_pro_limit: str = Form("false"),
     file: UploadFile = File(None)
 ):
@@ -191,12 +192,13 @@ async def process_evaluation(
             # AI 声明核验 + 内容安全审查均在服务内部执行，422 时不扣费
             report = await VisionLLMService.evaluate_visual_work(
                 flash_model=FLASH_MODEL,
-                pro_model=target_model,        # Pro 用户时为 PRO_MODEL_DAILY / PRO_MODEL_CREDIT
-                image_type=task_type,          # "picturebook" 或 "illustration"
+                pro_model=target_model,
+                image_type=task_type,
                 image_urls=urls_list,
                 work_text=extracted_text,
                 has_declared_ai=has_declared_ai,
-                use_pro=use_pro_vision
+                use_pro=use_pro_vision,
+                page_format=page_format if task_type == "picturebook" else "single"
             )
 
     except HTTPException as e:
