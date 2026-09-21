@@ -134,6 +134,28 @@ class LiteraryLLMService:
         """
 
         eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
+
+        【🚨 内容安全前置审查（最高优先级，先于一切评审）】
+        在进行任何评审之前，先检查文本是否包含以下任一内容：
+        1. 任何性暗示或性描写（无论对象年龄）
+        2. 写实的血腥暴力、肢体残缺、gore 描写
+        3. 仇恨符号、极端主义内容、种族歧视煽动
+        4. 自残或自杀的具象描绘（方法、过程的详细描述）
+
+        不拦截的内容（正常评审）：
+        - 死亡、悲伤等情感主题（抽象或象征性表达）
+        - 战争的象征性描绘（非写实 gore）
+        - 裸体但无性意味的低幼绘本形象
+        - 神怪、恐怖氛围（非 gore）
+
+        如发现上述违规内容：
+        → 立即停止评审，仅输出以下 JSON，不输出任何其他内容：
+        {{"content_violation": true, "violation_type": "sexual_content 或 gore_violence 或 hate_symbol 或 self_harm"}}
+
+        如未发现违规内容：
+        → 正常进行评审，在报告最开头输出一行：CONTENT_SAFE
+        → 然后继续输出完整评审报告
+
         当前执行的评审体系：【{selected_model}】
         这四个维度的【最高满分】分别是：{base_weights}
 
@@ -183,7 +205,40 @@ class LiteraryLLMService:
             )
             
             if res.candidates and res.candidates[0].content.parts:
-                return res.text
+                result_text = res.text.strip()
+
+                # 检查内容安全违规（模型返回 JSON 标记时）
+                if result_text.startswith('{') or result_text.startswith('['):
+                    try:
+                        safety_check = json.loads(result_text)
+                        if isinstance(safety_check, list):
+                            safety_check = safety_check[0] if safety_check else {}
+                        if isinstance(safety_check, dict) and safety_check.get("content_violation"):
+                            violation_type = safety_check.get("violation_type", "未知违规类型")
+                            violation_labels = {
+                                "sexual_content": "性暗示或性描写内容",
+                                "gore_violence": "写实的血腥暴力或肢体残缺",
+                                "hate_symbol": "仇恨符号或极端主义内容",
+                                "self_harm": "自残或自杀的具象描绘",
+                            }
+                            violation_label = violation_labels.get(violation_type, violation_type)
+                            raise HTTPException(
+                                status_code=422,
+                                detail=(
+                                    f"⚠️ 提交审核中止\n\n"
+                                    f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
+                                    f"本次分析已终止，本次额度不予扣除。"
+                                    f"如您认为这是误判，请联系人工审核团队。"
+                                )
+                            )
+                    except (json.JSONDecodeError, KeyError):
+                        pass  # 不是 JSON，正常评审结果，继续处理
+
+                # 去掉前置安全通过标记
+                if result_text.startswith("CONTENT_SAFE"):
+                    result_text = result_text[len("CONTENT_SAFE"):].lstrip("\n").strip()
+
+                return result_text
             else:
                 raise ValueError("模型未返回有效文本，可能触发了安全拦截。")
                 
