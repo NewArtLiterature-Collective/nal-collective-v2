@@ -148,7 +148,6 @@ class VisionLLMService:
 
             if res.candidates and res.candidates[0].content.parts:
                 result = json.loads(res.text)
-                print(f"🔍 安全审查原始返回类型: {type(result).__name__}, 内容: {str(result)[:200]}")
                 # 模型有时返回列表而非对象，取第一个元素
                 if isinstance(result, list):
                     result = result[0] if result else {}
@@ -569,7 +568,6 @@ class VisionLLMService:
                 raise ValueError("Flash 模型未生成有效内容。")
 
             flash_result = json.loads(flash_res.text)
-            print(f"🔍 Flash 原始返回类型: {type(flash_result).__name__}, 内容预览: {str(flash_result)[:200]}")
             if isinstance(flash_result, list):
                 flash_result = flash_result[0] if flash_result else {}
             if not isinstance(flash_result, dict):
