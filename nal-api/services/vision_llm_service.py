@@ -165,7 +165,7 @@ class VisionLLMService:
     # =========================================================
 
     @classmethod
-    def _get_flash_instruction(cls, image_type: str, has_declared_ai: bool, found_ai_fingerprints: list) -> str:
+    def _get_flash_instruction(cls, image_type: str, has_declared_ai: bool, found_ai_fingerprints: list, page_format: str = "single") -> str:
         """Flash 一次调用的 system instruction（绘本 / 插画共用框架，维度分流）"""
 
         core_philosophy = """
@@ -204,14 +204,26 @@ class VisionLLMService:
 
         # 维度定义（绘本 / 插画分流）
         if image_type == "picturebook":
-            dimensions = """
+            if page_format == "spread":
+                synergy_note = """3. 图文协同与翻页节奏 score_synergy（满分 2.5）：
+   【跨页合图模式】每张图为左右两页合并，请重点评审：
+   - 跨页构图张力：装订线两侧的视觉重量是否平衡？画面元素是否跨越装订线形成完整动势？
+   - 翻页悬念设计：右页末尾的视觉元素是否引导读者迫切翻页？左页开篇是否承接上一跨页的情绪？
+   - 【巴德留白测试】文字少说的地方，图画接住了吗？
+   - 【间隙判据】文与图之间刻意的错位、反讽与张力是最高级形态，须重点识别并奖励。"""
+            else:
+                synergy_note = """3. 图文协同与翻页节奏 score_synergy（满分 2.5）：
+   【单页模式】每张图为单独一页，翻页节奏基于页序推断：
+   - 【巴德留白测试】文字少说的地方，图画接住了吗？
+   - 【复读机判据】画出来的与写出来的完全重合 = 图像沦为文字附庸，本维度重扣。
+   - 【间隙判据】文与图之间刻意的错位、反讽与张力是最高级形态，须重点识别并奖励。
+   - 注意：跨页构图张力无法在单页模式下评审，请勿以此扣分。"""
+
+            dimensions = f"""
 【核心评分维度】
 1. 故事与立意完成度 score_narrative（满分 4.0）：情节完整自洽、情感共鸣与母题深度。
 2. 图像语言与视觉张力 score_visual（满分 3.5）：造型、构图、色彩与风格统一度。按审美通道法度评判。含传统元素时计入"文化活化张力"。
-3. 图文协同与翻页节奏 score_synergy（满分 2.5）：
-   - 【巴德留白测试】文字少说的地方，图画接住了吗？
-   - 【复读机判据】画出来的与写出来的完全重合 = 图像沦为文字附庸，本维度重扣。
-   - 【间隙判据】文与图之间刻意的错位、反讽与张力是最高级形态，须重点识别并奖励。"""
+{synergy_note}"""
 
             analysis_fields = """
 "narrative_reading": "【故事还原】150字以内，讲清核心故事线与角色心理转变，指明起点、转折点与结局。不套用空洞理论。",
@@ -492,7 +504,8 @@ class VisionLLMService:
         image_urls: list,
         work_text: str = "",
         has_declared_ai: bool = False,
-        use_pro: bool = False
+        use_pro: bool = False,
+        page_format: str = "single"   # 'single' 单页 / 'spread' 跨页合图（绘本专属）
     ) -> str:
         """
         主入口。
@@ -535,7 +548,7 @@ class VisionLLMService:
 
         # ---- 4. 构建 Flash 调用内容 ----
         flash_instruction = cls._get_flash_instruction(
-            image_type, has_declared_ai, list(found_ai_fingerprints)
+            image_type, has_declared_ai, list(found_ai_fingerprints), page_format
         )
 
         flash_contents = []
