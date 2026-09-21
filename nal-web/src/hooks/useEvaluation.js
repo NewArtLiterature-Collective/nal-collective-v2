@@ -17,8 +17,8 @@ export function useEvaluation(userRole, usage) {
     return urls;
   };
 
-  // 🚨 核心改动 1：参数对象中增加 page_texts_json 接收
-  const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, page_texts_json }) => {
+  // 🆕 v3：参数对象中增加 ai_declaration，移除 page_texts_json（全量读取模式不再需要逐页文字）
+  const evaluate = async ({ activeTab, workText, selectedImages, selectedDocx, imageType, selectedModelId, ai_declaration }) => {
     const isPro = userRole === 'pro';
     const isContestant = userRole === 'contestant';
     const hasAddon = usage && usage.pro_credits > 0;
@@ -78,10 +78,8 @@ export function useEvaluation(userRole, usage) {
       const hasProLimit = usage && usage.pro_credits > 0;
       formData.append('has_pro_limit', hasProLimit ? "true" : "false");
 
-      // 🚨 核心改动 2：将图文协作描述的 JSON 字符串加入表单发往后端网关
-      if (page_texts_json) {
-        formData.append('page_texts_json', page_texts_json);
-      }
+      // 🆕 v3：传递 AI 辅助声明（视觉赛道必填，后端强制核验）
+      formData.append('ai_declaration', ai_declaration || '');
 
       if (activeTab === 'picturebook') {
         formData.append('image_urls', JSON.stringify(publicImageUrls));
