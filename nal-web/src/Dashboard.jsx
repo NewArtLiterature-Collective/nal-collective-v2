@@ -876,7 +876,6 @@ export default function Dashboard({ session }) {
                       ))}
                     </div>
                   )}
-                  )}
                   {selectedImages.length < maxImageCount && (
                     <div style={styles.uploadArea}>
                       <input type="file" id="up" hidden multiple onChange={handleImageChange} accept={IMAGE_ACCEPT_ATTR} />
