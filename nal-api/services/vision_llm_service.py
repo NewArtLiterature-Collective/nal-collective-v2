@@ -6,8 +6,8 @@
 #   1. 全量读取：去除采样机制，所有图片全部送入模型
 #   2. 分析模式：不做入围切片，只做分析与修改建议
 #   3. Flash / Pro 双通道：
-#      - Flash：一次调用，输出分析报告 + 学术判词
-#      - Pro：两次调用，Flash 快速读图 → Pro 高清深度学术判词
+#      - Flash：一次调用，输出分析报告 + 总评判词
+#      - Pro：两次调用，Flash 快速读图 → Pro 高清终评判词
 #   4. 内容安全审查：合并进 Flash 主调用（节省内存，不再独立加载图片）
 #   5. AI 声明强制核验：声明纯原创但查出指纹 → 立即终止，不扣额度
 #   6. 去除总分、去除入围预测、去除逐页文字、去除权重说明
@@ -226,8 +226,8 @@ class VisionLLMService:
 {synergy_note}"""
 
             analysis_fields = """
-"narrative_reading": "【故事还原】150字以内，讲清核心故事线与角色心理转变，指明起点、转折点与结局。不套用空洞理论。",
-"visual_text_interplay": "【图文互文】指出画面在哪些具象细节上补充、推翻或超越了作者提供的故事说明。","""
+"narrative_reading": "【故事还原】150字以内，用平实的话讲清核心故事线与角色心理转变，指明起点、转折点与结局。只讲从画面读出的内容，不套理论。",
+"visual_text_interplay": "【图文互文】指出画面在哪些具体细节上补充、推翻或超越了作者提供的故事说明，举出具体的画面之处。","""
 
             score_fields = """
 "score_narrative": 浮点数 (0.0-4.0，故事与立意完成度),
@@ -244,8 +244,8 @@ class VisionLLMService:
    - 【静默张力】克制、留白与负空间的情绪蓄势同样是张力，不得将安静误判为乏力。"""
 
             analysis_fields = """
-"visual_reading": "【画面读解】150字以内，讲清这（组）画在描绘/暗示什么：情境、情绪、以及它作为插画暗示了怎样一个未完全展开的故事。不套用空洞理论。",
-"series_coherence": "【系列统一性】系列填：系列内部的风格是否贯通、多幅之间有无构成视觉序列或情绪递进；指出具体的贯通点或断裂处。单幅填：单幅无系列。","""
+"visual_reading": "【画面读解】150字以内，用平实的话讲清这（组）画在描绘或暗示什么：情境、情绪，以及它作为插画暗示了怎样一个未完全展开的故事。只讲从画面读出的内容，不套理论。",
+"series_coherence": "【系列统一性】系列填：风格是否贯通、多幅之间有无构成视觉序列或情绪递进，指出具体的贯通点或断裂处在哪几幅。单幅填：单幅无系列。","""
 
             score_fields = """
 "score_mood": 浮点数 (0.0-4.0，意境与叙事张力),
@@ -268,6 +268,15 @@ class VisionLLMService:
 
         work_name = "绘本作品" if image_type == "picturebook" else "插画作品"
 
+        verdict_rules = """
+【判词的三条铁律（贯穿所有文字评价，尤其是点评与判词）】
+一、落到具体处：每一句判断都要咬住画面里的具体对象——哪一页、画面的哪个位置、哪个视觉元素（某个色块、某条线、某处留白、某个角色的神态）。放到任何作品上都成立的话，不要写。
+二、讲清为什么：不要停在"意境深远""构图精妙"这类结论上。要说清因为画面上的什么（具体现象），所以得出什么判断。遇到形容词，后面必须跟上"体现在哪里"。
+三、术语为判断服务：气韵、留白、互文、骨法用笔、张力这类概念，只在它此刻最能一针见血时才用，且用完立刻用一句话说清它在这幅画里具体指什么。为显得专业而堆砌术语，是不专业的表现，明确禁止。
+
+【定位与语气】
+你是一位资深的儿童文学编辑与插画评审，判词写给创作者本人看，他要靠它判断画好在哪、弱在哪、怎么改。专业体现在判断准确、依据扎实，不在词汇艰深。语气客观中肯、就事论事，好就是好、不好就是不好，不夸大也不打压。"""
+
         return f"""你是 NAL 儿童文学视觉分析专家与艺术指导顾问。请对这组【{work_name}】进行深度分析，重点提出具体可执行的修改建议。严格以 JSON 格式输出。
 
 {core_philosophy}
@@ -275,6 +284,7 @@ class VisionLLMService:
 {ai_policy}
 {dimensions}
 {calibration}
+{verdict_rules}
 {cot_steps}
 
 【🚨 内容安全前置审查（最高优先级，先于一切评审）】
@@ -294,17 +304,17 @@ class VisionLLMService:
     "dominant_tradition": "限五个固定值之一：'西方写实'、'东方意象'、'原生态装饰'、'稚拙先锋'、'综合无明显传统'",
     "has_traditional_elements": "YES 或 NO",
     {analysis_fields}
-    "irreplaceable_value": "30-60字：这部作品最不可替代的情感经验。答不出则以'可替代'开头说明。",
-    "main_weakness": "30-60字：最主要的一处视觉短板，落实到具体元素。禁止填'无'。",
-    "critique": "综合艺术点评与可执行修改建议，必须使用所属通道的艺术法度，针对具体画面缺陷提出改进方向。",
-    "ai_assessment": "基于声明策略与底层指纹证据，客观评估 AI 痕迹或机器感浓度（约100字）。",
+    "irreplaceable_value": "30-60字：这部作品最打动人、最难被替代的一处，指明是画面上的哪个具体之处。答不出则以'可替代'开头说明原因。",
+    "main_weakness": "30-60字：最主要的一处短板，指明在画面的哪个位置、是什么问题。禁止填'无'。",
+    "critique": "综合点评与可执行的修改建议。每个判断都咬住画面具体之处，按该作品所属审美通道的法度来谈，说清好在哪、弱在哪、具体怎么改。",
+    "ai_assessment": "基于声明情况与指纹证据，客观说明是否存在 AI 痕迹或机器感，依据要具体到画面的哪一处（约100字）。",
     {score_fields}
-    "flash_verdict": "学术判词：80-150字，综合指出核心亮点与短板，风格精炼、有学术分量。"
+    "flash_verdict": "总评判词，80-150字：综合说清这组画最站得住的地方和最该改的地方，每句都落到画面具体处，讲清为什么。不堆砌术语，不说放之四海皆准的空话。"
 }}"""
 
     @classmethod
     def _get_pro_instruction(cls, image_type: str, flash_result: dict) -> str:
-        """Pro 第二次调用的 system instruction，基于 Flash 结果做深度学术判词。"""
+        """Pro 第二次调用的 system instruction，基于 Flash 结果做高清终评。"""
 
         work_name = "绘本作品" if image_type == "picturebook" else "插画作品"
 
@@ -322,36 +332,39 @@ class VisionLLMService:
 - 图文互文：{flash_result.get('visual_text_interplay', '未提供')}
 - 初读分数：故事/立意 {flash_result.get('score_narrative', 'N/A')}/4.0 | 图像语言 {flash_result.get('score_visual', 'N/A')}/3.5 | 图文协同 {flash_result.get('score_synergy', 'N/A')}/2.5"""
             score_fields = """
-    "score_text_philosophy": 浮点数 (0.0-4.0，叙事哲思与全龄内核：穿透年龄界限的全龄叙事深度),
-    "score_visual_tension": 浮点数 (0.0-3.5，视觉张力与材质语言：高清细判东方笔触/材质/构图的艺术深度),
-    "score_synergy_depth": 浮点数 (0.0-2.5，图文协同深度：巴德留白测试 + 间隙判据的深度解读),"""
+    "score_text_philosophy": 浮点数 (0.0-4.0，故事深度：故事与立意能否打动不同年龄的读者),
+    "score_visual_tension": 浮点数 (0.0-3.5，画面语言：高清下细看笔触、材质、构图的表现力),
+    "score_synergy_depth": 浮点数 (0.0-2.5，图文配合：文字与画面是互相补充、还是互相重复),"""
         else:
             flash_summary += f"""
 - 画面读解：{flash_result.get('visual_reading', '未提供')}
 - 系列统一性：{flash_result.get('series_coherence', '未提供')}
 - 初读分数：意境/张力 {flash_result.get('score_mood', 'N/A')}/4.0 | 技法 {flash_result.get('score_craft', 'N/A')}/3.5 | 独创性 {flash_result.get('score_originality', 'N/A')}/2.5"""
             score_fields = """
-    "score_mood_depth": 浮点数 (0.0-4.0，意境深度与叙事张力：高清细判画面情感浓度与叙事密度),
-    "score_visual_tension": 浮点数 (0.0-3.5，视觉张力与材质语言：高清细判笔触/材质/构图的艺术深度),
-    "score_originality_depth": 浮点数 (0.0-2.5，独创性深度：个人视觉语法的唯一性与不可替代性),"""
+    "score_mood_depth": 浮点数 (0.0-4.0，画面感染力：画面的情绪浓度和它暗示的故事张力),
+    "score_visual_tension": 浮点数 (0.0-3.5，画面语言：高清下细看笔触、材质、构图的表现力),
+    "score_originality_depth": 浮点数 (0.0-2.5，独创性：个人风格的辨识度与不可替代性),"""
 
-        return f"""你是 NAL 顶尖儿童文学视觉终审专家。你正在对这组【{work_name}】进行高清深度终审，撰写具有学术分量的最终判词。
+        return f"""你是一位资深的儿童文学插画终审评审。你正在对这组【{work_name}】做高清细看后的最终评定，写一段写给创作者本人看的终评。
 
 {flash_summary}
 
+【判词的三条铁律】（终评全文都要遵守）
+一、落到具体处：每一句判断都咬住画面里的具体对象——哪一页、画面哪个位置、哪个视觉元素。放到任何作品上都成立的话，不要写。
+二、讲清为什么：说清因为画面上的什么（具体现象），所以得出什么判断。不要停在"意境深远""笔触精到"这类结论上。
+三、术语为判断服务：用某个专业概念时，必须是它此刻最能说清问题，且用完立刻用一句话解释它在这幅画里具体指什么。不为显得专业而堆砌术语。
+
+【语气】客观、中肯、就事论事。专业体现在判断准确、依据扎实，不在词汇艰深。
+
 【你的任务】
-1. 重新以高清图片为主要依据，对 Flash 初读结论进行深化或修正（如发现初读有误，请明确指出）。
-2. 在高清图片中细判：东方笔触的骨法用笔、材质肌理的情感传达、构图节奏的精密设计。
-3. 撰写 300-500 字的深度学术判词（final_review），要求：
-   - 有具体画面证据支撑每一个判断
-   - 有学术理论依托（但不能脱离画面凌空说理）
-   - 既指出亮点，也提出可执行的深度改进方向
-   - 语言精炼，有学术分量，避免套话
+1. 以高清图为主要依据，对 Flash 初读结论做确认、深化或修正。若初读有明显看错之处，直接指出错在哪、实际是什么。
+2. 高清下能看清的东西要用上：笔触的轻重、材质的肌理、构图的安排——但都要落到具体画面，说清它带来了什么效果，而不是罗列这些名词。
+3. 写一段 300-500 字的终评（final_review）：既说清这组画最站得住的地方，也指出最该改的地方，并给出具体怎么改。每个判断都要有画面依据，不说空话、不堆术语。
 
 【强制 JSON 输出格式（不含任何 Markdown 标记）】
 {{
     {score_fields}
-    "final_review": "300-500字深度学术判词，有画面证据、有理论依托、有改进建议。"
+    "final_review": "300-500字终评，每个判断都落到画面具体处、讲清为什么，既有亮点也有可执行的改进方向，不堆砌术语、不说套话。"
 }}"""
 
     # =========================================================
@@ -412,7 +425,7 @@ class VisionLLMService:
 #### 💡 综合点评与修改建议
 {result.get('critique', 'N/A')}
 
-#### 🎓 学术判词
+#### 🎓 总评判词
 {result.get('flash_verdict', 'N/A')}
 
 #### 🤖 AI 辅助声明与浓度审查
@@ -429,9 +442,9 @@ class VisionLLMService:
                 f"图文协同 **{flash_result.get('score_synergy', 'N/A')}**/2.5"
             )
             pro_score_line = (
-                f"叙事哲思 **{pro_result.get('score_text_philosophy', 'N/A')}**/4.0 　｜　"
-                f"视觉张力 **{pro_result.get('score_visual_tension', 'N/A')}**/3.5 　｜　"
-                f"图文协同深度 **{pro_result.get('score_synergy_depth', 'N/A')}**/2.5"
+                f"故事深度 **{pro_result.get('score_text_philosophy', 'N/A')}**/4.0 　｜　"
+                f"画面语言 **{pro_result.get('score_visual_tension', 'N/A')}**/3.5 　｜　"
+                f"图文配合 **{pro_result.get('score_synergy_depth', 'N/A')}**/2.5"
             )
             analysis_section = f"""
 #### 📚 故事还原
@@ -446,9 +459,9 @@ class VisionLLMService:
                 f"独创性 **{flash_result.get('score_originality', 'N/A')}**/2.5"
             )
             pro_score_line = (
-                f"意境深度 **{pro_result.get('score_mood_depth', 'N/A')}**/4.0 　｜　"
-                f"视觉张力 **{pro_result.get('score_visual_tension', 'N/A')}**/3.5 　｜　"
-                f"独创性深度 **{pro_result.get('score_originality_depth', 'N/A')}**/2.5"
+                f"画面感染力 **{pro_result.get('score_mood_depth', 'N/A')}**/4.0 　｜　"
+                f"画面语言 **{pro_result.get('score_visual_tension', 'N/A')}**/3.5 　｜　"
+                f"独创性 **{pro_result.get('score_originality_depth', 'N/A')}**/2.5"
             )
             analysis_section = f"""
 #### 🖼️ 画面读解
@@ -485,7 +498,7 @@ class VisionLLMService:
 #### 💡 综合点评与修改建议
 {flash_result.get('critique', 'N/A')}
 
-#### 🎓 深度学术判词（Pro 终审）
+#### 🎓 终评判词（Pro 高清终审）
 {pro_result.get('final_review', 'N/A')}
 
 #### 🤖 AI 辅助声明与浓度审查
