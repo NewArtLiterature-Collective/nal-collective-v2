@@ -63,8 +63,8 @@ async def process_evaluation(
     if not extracted_text.strip() and task_type not in ("picturebook", "illustration"):
         raise HTTPException(status_code=400, detail="提交的文本内容为空。")
 
-    # 视觉赛道：AI 声明必须有值
-    if task_type in ("picturebook", "illustration") and ai_declaration not in ("yes", "no"):
+    # 视觉赛道与文字赛道：AI 声明必须有值（创作指导 guide 不需要）
+    if task_type in ("picturebook", "illustration", "text") and ai_declaration not in ("yes", "no"):
         raise HTTPException(status_code=400, detail="请先完成 AI 辅助创作声明。")
 
     # ==========================================
@@ -171,13 +171,17 @@ async def process_evaluation(
             )
 
         elif task_type == "text":
+            # 🆕 文字赛道：传入 AI 声明状态，服务内部执行声明核验
+            # 未声明却查出确凿 AI 痕迹时，服务抛 422，下方统一不扣费透传
+            has_declared_ai = (ai_declaration == "yes")
             report = await LiteraryLLMService.evaluate_work(
                 raw_text=extracted_text,
                 selected_model=selected_model_name,
                 base_weights=base_weights,
                 model_system_instruction=model_system_instruction,
                 user_note="请重点关注文本的原创性与叙事深度",
-                target_model=target_model
+                target_model=target_model,
+                has_declared_ai=has_declared_ai
             )
 
         elif task_type in ("picturebook", "illustration"):
