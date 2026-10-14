@@ -132,6 +132,32 @@ class LiteraryLLMService:
         在报告末尾新增 `### 🤖 AI 使用参考评估` 一节。
         判断文本是否带有明显的大模型写作惯性（如空泛的概括句、缺少个人经验支撑的抒情、结构过于工整而无呼吸），依据要具体到段落，而不是笼统给个印象。如果读起来是作者本人的笔迹，也如实说明，不必为凑内容而硬挑毛病。"""
 
+        # 🆕 AI 声明核查（前置第二步）：仅在作者【未声明使用 AI】时启用；门槛设高，只在确凿时停止
+        if has_declared_ai:
+            ai_gate_policy = """
+        【第二步 · AI 声明核查】
+        作者已声明使用了 AI 辅助。本步直接通过，不因 AI 使用而停止——AI 辅助本身不构成拦截理由，正常进入评审。"""
+        else:
+            ai_gate_policy = """
+        【🚨 第二步 · AI 声明核查（作者声明为"纯人类原创，未使用 AI"）】
+        请判断本文是否存在"明显、大面积、确凿"的 AI 代写痕迹。本步的门槛必须设得很高——宁可放过，也不可误伤真实的人类作品。
+
+        只有同时满足"痕迹强、覆盖全文、几乎没有人类作者个人印记"时，才算确凿。可参考的确凿情形：
+        - 通篇机械排比、三段式套路，却始终没有实质推进；
+        - 论述自始至终悬浮在抽象概念上，从不落到具体的情节、细节与个人经验；
+        - 情感转折全靠套语完成，没有任何铺垫；
+        - 整体语感均质、工整到没有呼吸，是典型的"模型腔"，且贯穿全文。
+
+        以下情形【不构成】确凿，必须正常评审，不得停止：
+        - 仅仅是文笔干净、结构工整、用词规范；
+        - 应试作文腔、翻译腔、非母语但通顺的写作；
+        - 只有个别段落略显套路，而全文仍有作者自己的观察或语感。
+
+        判断结果：
+        · 若确凿（达到上述高门槛）→ 立即停止评审，仅输出以下 JSON，不输出任何其他内容：
+          {"ai_violation": true}
+        · 若像但拿不准、或只是局部可疑 → 不要停止，正常评审，并在报告末尾的 AI 评估一节如实写明"本文带有较明显的 AI 写作特征，建议作者核对 AI 辅助声明"，指出依据的具体段落。"""
+
         eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
 
         【🚨 内容安全前置审查（最高优先级，先于一切评审）】
@@ -151,7 +177,9 @@ class LiteraryLLMService:
         → 立即停止评审，仅输出以下 JSON，不输出任何其他内容：
         {{"content_violation": true, "violation_type": "sexual_content 或 gore_violence 或 hate_symbol 或 self_harm"}}
 
-        如未发现违规内容：
+        {ai_gate_policy}
+
+        如以上两步前置核查都通过：
         → 正常进行评审，在报告最开头输出一行：CONTENT_SAFE
         → 然后继续输出完整评审报告
 
@@ -216,30 +244,46 @@ class LiteraryLLMService:
             if res.candidates and res.candidates[0].content.parts:
                 result_text = res.text.strip()
 
-                # 检查内容安全违规（模型返回 JSON 标记时）
+                # 检查前置核查违规（模型返回 JSON 标记时）：内容安全 或 AI 声明不符
                 if result_text.startswith('{') or result_text.startswith('['):
                     try:
-                        safety_check = json.loads(result_text)
-                        if isinstance(safety_check, list):
-                            safety_check = safety_check[0] if safety_check else {}
-                        if isinstance(safety_check, dict) and safety_check.get("content_violation"):
-                            violation_type = safety_check.get("violation_type", "未知违规类型")
-                            violation_labels = {
-                                "sexual_content": "性暗示或性描写内容",
-                                "gore_violence": "写实的血腥暴力或肢体残缺",
-                                "hate_symbol": "仇恨符号或极端主义内容",
-                                "self_harm": "自残或自杀的具象描绘",
-                            }
-                            violation_label = violation_labels.get(violation_type, violation_type)
-                            raise HTTPException(
-                                status_code=422,
-                                detail=(
-                                    f"⚠️ 提交审核中止\n\n"
-                                    f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
-                                    f"本次分析已终止，本次额度不予扣除。"
-                                    f"如您认为这是误判，请联系人工审核团队。"
+                        gate_check = json.loads(result_text)
+                        if isinstance(gate_check, list):
+                            gate_check = gate_check[0] if gate_check else {}
+
+                        if isinstance(gate_check, dict):
+                            # 内容安全违规
+                            if gate_check.get("content_violation"):
+                                violation_type = gate_check.get("violation_type", "未知违规类型")
+                                violation_labels = {
+                                    "sexual_content": "性暗示或性描写内容",
+                                    "gore_violence": "写实的血腥暴力或肢体残缺",
+                                    "hate_symbol": "仇恨符号或极端主义内容",
+                                    "self_harm": "自残或自杀的具象描绘",
+                                }
+                                violation_label = violation_labels.get(violation_type, violation_type)
+                                raise HTTPException(
+                                    status_code=422,
+                                    detail=(
+                                        f"⚠️ 提交审核中止\n\n"
+                                        f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
+                                        f"本次分析已终止，本次额度不予扣除。"
+                                        f"如您认为这是误判，请联系人工审核团队。"
+                                    )
                                 )
-                            )
+                            # AI 声明不符（未声明却查出确凿 AI 痕迹）
+                            if gate_check.get("ai_violation"):
+                                raise HTTPException(
+                                    status_code=422,
+                                    detail=(
+                                        f"⚠️ 提交审核中止\n\n"
+                                        f"系统在您提交的文本中检测到明显的 AI 代写痕迹，"
+                                        f"与您所做的【纯人类原创，未使用 AI 工具】声明不符。\n\n"
+                                        f"本次分析已终止，本次额度不予扣除。"
+                                        f"如您确实使用了 AI 工具辅助，请重新提交并如实选择【使用了 AI 工具进行辅助】；"
+                                        f"如您认为这是误判，请联系人工审核团队。"
+                                    )
+                                )
                     except (json.JSONDecodeError, KeyError):
                         pass  # 不是 JSON，正常评审结果，继续处理
 
@@ -250,7 +294,10 @@ class LiteraryLLMService:
                 return result_text
             else:
                 raise ValueError("模型未返回有效文本，可能触发了安全拦截。")
-                
+
+        except HTTPException:
+            # 前置核查的 422（内容违规 / AI 声明不符）必须原样向上抛，不能被转成 500
+            raise
         except Exception as e:
             print(f"🚨 评审引擎调用异常: {e}")
             raise HTTPException(status_code=500, detail=str(e))
