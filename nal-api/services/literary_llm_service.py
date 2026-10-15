@@ -165,10 +165,87 @@ class LiteraryLLMService:
             return {"ai_ghostwritten": False, "confidence": "low", "evidence": ""}
 
     @classmethod
+    async def _check_content_safety(cls, raw_text: str) -> dict:
+        """
+        独立的内容安全前置审查（只做安全判断，不掺评审）。
+        返回 {"content_violation": bool, "violation_type": "xxx"}
+        核心边界：写实、直接的描写 → 拦截；象征、情感主题、文学化处理 → 放行。
+        与视觉赛道的内容安全同一套标准。
+        """
+        excerpt = cls._build_detection_excerpt(raw_text)
+
+        safety_prompt = """你是一个内容安全审核系统，服务于一个儿童文学评奖平台。你的唯一任务是判断文本是否包含违规内容，不做任何文学评价。
+
+判定的核心分界线：【写实、直接、具象的描写】才拦截；【象征性、情感主题、文学化的处理】一律放行。
+
+【需要拦截的内容】
+1. sexual_content（色情/性）：色情或性行为的具体描写；针对未成年人的任何性暗示或性化描写。
+2. gore_violence（血腥/暴力）：写实的血腥、肢体残缺、gore 的具象描写；以及写实直接的暴力、殴打、虐待、酷刑过程描写。
+3. hate_symbol（仇恨/极端）：仇恨言论、极端主义煽动、种族歧视煽动。
+4. self_harm（自残/自杀）：自残或自杀的具体方法、过程的详细描写。
+
+【明确不拦截的内容（儿童文学的正常范畴，务必放行）】
+- 亲情、友情、爱等情感的正常表达。
+- 死亡、离别、悲伤等情感主题的抽象或象征性书写。
+- 战争、冲突的象征性或文学化描绘（非写实血腥）。
+- 打斗、追逐等非写实、无血腥细节的情节。
+- 神怪、妖魔、黑暗或恐怖的氛围营造（只要没有写实 gore 细节）。
+- 对负面事件的点到为止的交代（如"他受伤了""战争夺走了很多生命"）。
+
+判断时如果犹豫（像、但属于象征/情感主题/文学化处理），一律按【不拦截】处理——宁可放行，不可误伤正常的儿童文学创作。
+
+只输出纯 JSON，不含任何额外文字：
+发现违规 → {"content_violation": true, "violation_type": "sexual_content" 或 "gore_violence" 或 "hate_symbol" 或 "self_harm"}
+未发现违规 → {"content_violation": false}"""
+
+        try:
+            model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
+            res = await model.generate_content_async(
+                f"{safety_prompt}\n\n【待审查文本（长文为头/中/尾节选）】：\n{excerpt}",
+                generation_config=genai.types.GenerationConfig(
+                    response_mime_type="application/json", temperature=0.0
+                )
+            )
+            data = json.loads(res.text)
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            if not isinstance(data, dict):
+                return {"content_violation": False}
+            return data
+        except Exception as e:
+            print(f"⚠️ 内容安全前置审查降级（默认放行）: {e}")
+            return {"content_violation": False}
+
+    @classmethod
     async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str, has_declared_ai: bool = False, is_contest: bool = False) -> str:
         """
         ⚖️ 深度学术评审系统 (融合 AI 痕迹筛查与动态惩罚)
         """
+        # ==========================================
+        # 🆕 内容安全前置闸（独立调用，最高优先级，代码强制执行）
+        # 对所有文字都查，不分声明。命中违规 → 评审前直接 422，不扣费。
+        # 独立成一次专职判断，避免让评审模型"既评审又当裁判"导致漏拦。
+        # ==========================================
+        safety_result = await cls._check_content_safety(raw_text)
+        if isinstance(safety_result, dict) and safety_result.get("content_violation"):
+            violation_type = safety_result.get("violation_type", "未知违规类型")
+            violation_labels = {
+                "sexual_content": "性暗示或性描写内容",
+                "gore_violence": "写实的血腥暴力或肢体残缺",
+                "hate_symbol": "仇恨言论或极端主义内容",
+                "self_harm": "自残或自杀的具象描绘",
+            }
+            violation_label = violation_labels.get(violation_type, violation_type)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"⚠️ 提交审核中止\n\n"
+                    f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
+                    f"本次分析已终止，本次额度不予扣除。"
+                    f"如您认为这是误判，请联系人工审核团队。"
+                )
+            )
+
         # ==========================================
         # 🆕 AI 代写前置闸（独立调用，代码强制执行）
         # 仅在作者声明"未使用 AI"时执行；高置信命中 → 直接 422 终止，
@@ -213,26 +290,7 @@ class LiteraryLLMService:
 
         eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
 
-        【🚨 内容安全前置审查（最高优先级，先于一切评审）】
-        在进行任何评审之前，先检查文本是否包含以下任一内容：
-        1. 任何性暗示或性描写（无论对象年龄）
-        2. 写实的血腥暴力、肢体残缺、gore 描写
-        3. 仇恨符号、极端主义内容、种族歧视煽动
-        4. 自残或自杀的具象描绘（方法、过程的详细描述）
-
-        不拦截的内容（正常评审）：
-        - 死亡、悲伤等情感主题（抽象或象征性表达）
-        - 战争的象征性描绘（非写实 gore）
-        - 裸体但无性意味的低幼绘本形象
-        - 神怪、恐怖氛围（非 gore）
-
-        如发现上述违规内容：
-        → 立即停止评审，仅输出以下 JSON，不输出任何其他内容：
-        {{"content_violation": true, "violation_type": "sexual_content 或 gore_violence 或 hate_symbol 或 self_harm"}}
-
-        如未发现违规内容：
-        → 正常进行评审，在报告最开头输出一行：CONTENT_SAFE
-        → 然后继续输出完整评审报告
+        （内容安全已在评审前由独立环节完成审核，此处无需再做内容安全判断，专注文学评审即可。）
 
         当前执行的评审体系：【{selected_model}】
         评审维度与各自满分：
@@ -294,41 +352,7 @@ class LiteraryLLMService:
             
             if res.candidates and res.candidates[0].content.parts:
                 result_text = res.text.strip()
-
-                # 检查内容安全违规（模型以 JSON 标记返回时）；AI 代写闸已在评审前独立拦截
-                if result_text.startswith('{') or result_text.startswith('['):
-                    try:
-                        gate_check = json.loads(result_text)
-                        if isinstance(gate_check, list):
-                            gate_check = gate_check[0] if gate_check else {}
-
-                        if isinstance(gate_check, dict):
-                            # 内容安全违规
-                            if gate_check.get("content_violation"):
-                                violation_type = gate_check.get("violation_type", "未知违规类型")
-                                violation_labels = {
-                                    "sexual_content": "性暗示或性描写内容",
-                                    "gore_violence": "写实的血腥暴力或肢体残缺",
-                                    "hate_symbol": "仇恨符号或极端主义内容",
-                                    "self_harm": "自残或自杀的具象描绘",
-                                }
-                                violation_label = violation_labels.get(violation_type, violation_type)
-                                raise HTTPException(
-                                    status_code=422,
-                                    detail=(
-                                        f"⚠️ 提交审核中止\n\n"
-                                        f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
-                                        f"本次分析已终止，本次额度不予扣除。"
-                                        f"如您认为这是误判，请联系人工审核团队。"
-                                    )
-                                )
-                    except (json.JSONDecodeError, KeyError):
-                        pass  # 不是 JSON，正常评审结果，继续处理
-
-                # 去掉前置安全通过标记
-                if result_text.startswith("CONTENT_SAFE"):
-                    result_text = result_text[len("CONTENT_SAFE"):].lstrip("\n").strip()
-
+                # 内容安全与 AI 代写均已在评审前独立拦截，此处直接返回评审正文
                 return result_text
             else:
                 raise ValueError("模型未返回有效文本，可能触发了安全拦截。")
