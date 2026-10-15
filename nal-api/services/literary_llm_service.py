@@ -119,6 +119,25 @@ class LiteraryLLMService:
         tail = text[-seg:]
         return f"{head}\n……（中段节选）……\n{mid}\n……（尾段节选）……\n{tail}"
 
+    @staticmethod
+    def _norm_confidence(v) -> str:
+        """把模型可能返回的中英文/大小写置信度统一成 high/medium/low。"""
+        s = str(v if v is not None else "").strip().lower()
+        if s in ("high", "高", "h", "强", "确凿"):
+            return "high"
+        if s in ("medium", "中", "mid", "m", "中等", "一般"):
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _is_affirmative(v) -> bool:
+        """把模型可能返回的 bool / 'true' / '是' / 'yes' 统一成布尔真。"""
+        if isinstance(v, bool):
+            return v
+        return str(v if v is not None else "").strip().lower() in (
+            "true", "yes", "y", "1", "是", "存在", "疑似", "确认"
+        )
+
     @classmethod
     async def _check_ai_authenticity(cls, raw_text: str) -> dict:
         """
@@ -127,7 +146,9 @@ class LiteraryLLMService:
         返回 {"ai_ghostwritten": bool, "confidence": "high|medium|low", "evidence": str}
         门槛设高：只有痕迹强、贯穿全文、几乎无人类个人印记时才给 high。
         """
-        excerpt = cls._build_detection_excerpt(raw_text)
+        # 读近乎全文（长篇多章的"每章结尾升华"等模型腔需看到多章才识别得稳；
+        # gemini-flash 上下文足够，检测准确比省 token 更重要）
+        excerpt = cls._build_detection_excerpt(raw_text, budget=40000)
 
         detect_prompt = """你是一个严谨的 AI 代写检测器，服务于一个儿童文学评奖平台。作者已声明本文为"纯人类原创，未使用 AI 工具"。你的任务是判断这一声明是否属实。
 
@@ -143,8 +164,12 @@ class LiteraryLLMService:
 - 应试作文腔、翻译腔、非母语但通顺的写作；
 - 只有个别段落略显套路，而全文仍有作者自己的观察、细节或语感。
 
-只输出纯 JSON，不要任何额外文字：
-{"ai_ghostwritten": true 或 false, "confidence": "high" 或 "medium" 或 "low", "evidence": "30-80字，指出你依据的最关键的 1-2 处具体特征"}"""
+补充判据（命中其一即属强痕迹，confidence 应给 high）：
+- 几乎每一章／每一节结尾都用一句短句强行升华或制造悬念，形成贯穿全文的三段式模型腔；
+- 情感描写长期靠直接宣告（"我放声大哭""所有情感涌了进来"）而非具体可感的细节推出。
+
+只输出纯 JSON。confidence 字段只许填英文小写 high / medium / low（不要用中文）：
+{"ai_ghostwritten": true, "confidence": "high", "evidence": "30-80字，指出你依据的最关键的 1-2 处具体特征"}"""
 
         try:
             model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
@@ -164,17 +189,37 @@ class LiteraryLLMService:
             print(f"⚠️ AI 代写前置检测降级（默认放行）: {e}")
             return {"ai_ghostwritten": False, "confidence": "low", "evidence": ""}
 
+    # 内容安全分块参数：违规是局部的，必须全文覆盖，不能只读节选
+    SAFETY_CHUNK_SIZE = 12000
+    SAFETY_CHUNK_OVERLAP = 600
+
+    @classmethod
+    def _chunk_text(cls, text: str, size: int, overlap: int) -> list:
+        """把全文切成带重叠的块（重叠防止违规句恰好被切在块边界而漏判）。"""
+        text = text or ""
+        if not text.strip():
+            return []
+        if len(text) <= size:
+            return [text]
+        step = max(1, size - overlap)
+        chunks, i = [], 0
+        while i < len(text):
+            chunks.append(text[i:i + size])
+            if i + size >= len(text):
+                break
+            i += step
+        return chunks
+
     @classmethod
     async def _check_content_safety(cls, raw_text: str) -> dict:
         """
         独立的内容安全前置审查（只做安全判断，不掺评审）。
+        🚨 全文分块扫描，任一块命中即违规——内容违规是局部的，必须全文覆盖，绝不能只读节选。
         返回 {"content_violation": bool, "violation_type": "xxx"}
         核心边界：写实、直接的描写 → 拦截；象征、情感主题、文学化处理 → 放行。
         与视觉赛道的内容安全同一套标准。
         """
-        excerpt = cls._build_detection_excerpt(raw_text)
-
-        safety_prompt = """你是一个内容安全审核系统，服务于一个儿童文学评奖平台。你的唯一任务是判断文本是否包含违规内容，不做任何文学评价。
+        safety_prompt = """你是一个内容安全审核系统，服务于一个儿童文学评奖平台。你的唯一任务是判断文本片段是否包含违规内容，不做任何文学评价。
 
 判定的核心分界线：【写实、直接、具象的描写】才拦截；【象征性、情感主题、文学化的处理】一律放行。
 
@@ -198,23 +243,29 @@ class LiteraryLLMService:
 发现违规 → {"content_violation": true, "violation_type": "sexual_content" 或 "gore_violence" 或 "hate_symbol" 或 "self_harm"}
 未发现违规 → {"content_violation": false}"""
 
-        try:
-            model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
-            res = await model.generate_content_async(
-                f"{safety_prompt}\n\n【待审查文本（长文为头/中/尾节选）】：\n{excerpt}",
-                generation_config=genai.types.GenerationConfig(
-                    response_mime_type="application/json", temperature=0.0
-                )
-            )
-            data = json.loads(res.text)
-            if isinstance(data, list):
-                data = data[0] if data else {}
-            if not isinstance(data, dict):
-                return {"content_violation": False}
-            return data
-        except Exception as e:
-            print(f"⚠️ 内容安全前置审查降级（默认放行）: {e}")
+        chunks = cls._chunk_text(raw_text, cls.SAFETY_CHUNK_SIZE, cls.SAFETY_CHUNK_OVERLAP)
+        if not chunks:
             return {"content_violation": False}
+
+        model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
+        for idx, chunk in enumerate(chunks):
+            try:
+                res = await model.generate_content_async(
+                    f"{safety_prompt}\n\n【待审查文本片段 {idx + 1}/{len(chunks)}】：\n{chunk}",
+                    generation_config=genai.types.GenerationConfig(
+                        response_mime_type="application/json", temperature=0.0
+                    )
+                )
+                data = json.loads(res.text)
+                if isinstance(data, list):
+                    data = data[0] if data else {}
+                if isinstance(data, dict) and data.get("content_violation"):
+                    return data   # 任一块命中即短路返回违规
+            except Exception as e:
+                # 单块异常默认放行该块（不因一次抖动误拦真人作品），其余块继续扫
+                print(f"⚠️ 内容安全前置审查第 {idx + 1} 块降级（默认放行该块）: {e}")
+                continue
+        return {"content_violation": False}
 
     @classmethod
     async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str, has_declared_ai: bool = False, is_contest: bool = False) -> str:
@@ -253,7 +304,7 @@ class LiteraryLLMService:
         # ==========================================
         if not has_declared_ai:
             auth = await cls._check_ai_authenticity(raw_text)
-            if auth.get("ai_ghostwritten") and str(auth.get("confidence", "")).lower() == "high":
+            if cls._is_affirmative(auth.get("ai_ghostwritten")) and cls._norm_confidence(auth.get("confidence")) == "high":
                 evidence = (auth.get("evidence") or "").strip()
                 raise HTTPException(
                     status_code=422,
