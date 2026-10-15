@@ -106,11 +106,90 @@ class LiteraryLLMService:
         ---
         按以上配比分配各维度权重执行评审。以上参数不对外呈现。"""
 
+    @staticmethod
+    def _build_detection_excerpt(text: str, budget: int = 9000) -> str:
+        """为 AI 代写检测构造代表性片段：短文全取，长文取 头+中+尾，便于判断痕迹是否贯穿全文。"""
+        text = text or ""
+        if len(text) <= budget:
+            return text
+        seg = budget // 3
+        head = text[:seg]
+        mid_start = max(0, len(text) // 2 - seg // 2)
+        mid = text[mid_start:mid_start + seg]
+        tail = text[-seg:]
+        return f"{head}\n……（中段节选）……\n{mid}\n……（尾段节选）……\n{tail}"
+
+    @classmethod
+    async def _check_ai_authenticity(cls, raw_text: str) -> dict:
+        """
+        🕵️ 独立的 AI 代写前置检测（仅在作者声明"未使用 AI"时调用）。
+        专职一件事：判断是否为 AI 代写，不掺杂评审，避免"既当运动员又当裁判"导致中止失效。
+        返回 {"ai_ghostwritten": bool, "confidence": "high|medium|low", "evidence": str}
+        门槛设高：只有痕迹强、贯穿全文、几乎无人类个人印记时才给 high。
+        """
+        excerpt = cls._build_detection_excerpt(raw_text)
+
+        detect_prompt = """你是一个严谨的 AI 代写检测器，服务于一个儿童文学评奖平台。作者已声明本文为"纯人类原创，未使用 AI 工具"。你的任务是判断这一声明是否属实。
+
+【判定门槛必须很高——宁可放过，也不可误伤真实的人类作品。】
+只有当文本同时满足"AI 痕迹强、贯穿全文、几乎没有人类作者的个人印记"时，confidence 才给 "high"。典型的 high 情形：
+- 通篇反复依赖同一种机械句式（例如"不是……而是……"）却无实质推进；
+- 每一章／每一节结尾都用极短断句强行升华，呈典型的三段式模型腔；
+- 论述自始至终悬浮在抽象概念上，从不落到具体的情节、细节与个人经验；
+- 情感转折全靠套语完成，没有任何铺垫。
+
+以下情形【绝不】给 high（至多 medium 或 low，且多数应判 ai_ghostwritten=false）：
+- 仅仅是文笔干净、结构工整、用词规范；
+- 应试作文腔、翻译腔、非母语但通顺的写作；
+- 只有个别段落略显套路，而全文仍有作者自己的观察、细节或语感。
+
+只输出纯 JSON，不要任何额外文字：
+{"ai_ghostwritten": true 或 false, "confidence": "high" 或 "medium" 或 "low", "evidence": "30-80字，指出你依据的最关键的 1-2 处具体特征"}"""
+
+        try:
+            model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
+            res = await model.generate_content_async(
+                f"{detect_prompt}\n\n【待检测文本（长文为头/中/尾节选）】：\n{excerpt}",
+                generation_config=genai.types.GenerationConfig(
+                    response_mime_type="application/json", temperature=0.1
+                )
+            )
+            data = json.loads(res.text)
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            if not isinstance(data, dict):
+                return {"ai_ghostwritten": False, "confidence": "low", "evidence": ""}
+            return data
+        except Exception as e:
+            print(f"⚠️ AI 代写前置检测降级（默认放行）: {e}")
+            return {"ai_ghostwritten": False, "confidence": "low", "evidence": ""}
+
     @classmethod
     async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str, has_declared_ai: bool = False, is_contest: bool = False) -> str:
         """
         ⚖️ 深度学术评审系统 (融合 AI 痕迹筛查与动态惩罚)
         """
+        # ==========================================
+        # 🆕 AI 代写前置闸（独立调用，代码强制执行）
+        # 仅在作者声明"未使用 AI"时执行；高置信命中 → 直接 422 终止，
+        # 在进入评审前就拦下，不扣费。门槛由 confidence=="high" 把守（方案 A）。
+        # ==========================================
+        if not has_declared_ai:
+            auth = await cls._check_ai_authenticity(raw_text)
+            if auth.get("ai_ghostwritten") and str(auth.get("confidence", "")).lower() == "high":
+                evidence = (auth.get("evidence") or "").strip()
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "⚠️ 提交审核中止\n\n"
+                        "系统在您提交的文本中检测到明显且贯穿全文的 AI 代写痕迹，"
+                        "与您所做的【纯人类原创，未使用 AI 工具】声明不符。\n"
+                        + (f"\n判定依据：{evidence}\n" if evidence else "")
+                        + "\n本次分析已终止，本次额度不予扣除。"
+                        "如您确实使用了 AI 工具辅助，请重新提交并如实选择【使用了 AI 工具进行辅助】；"
+                        "如您认为这是误判，请联系人工审核团队。"
+                    )
+                )
         # 列出维度清单供模型逐项评定（不提供范例句，避免模型照抄空洞句式）
         dims_list = "、".join(base_weights.keys())
         dims_lines = ""
@@ -132,32 +211,6 @@ class LiteraryLLMService:
         在报告末尾新增 `### 🤖 AI 使用参考评估` 一节。
         判断文本是否带有明显的大模型写作惯性（如空泛的概括句、缺少个人经验支撑的抒情、结构过于工整而无呼吸），依据要具体到段落，而不是笼统给个印象。如果读起来是作者本人的笔迹，也如实说明，不必为凑内容而硬挑毛病。"""
 
-        # 🆕 AI 声明核查（前置第二步）：仅在作者【未声明使用 AI】时启用；门槛设高，只在确凿时停止
-        if has_declared_ai:
-            ai_gate_policy = """
-        【第二步 · AI 声明核查】
-        作者已声明使用了 AI 辅助。本步直接通过，不因 AI 使用而停止——AI 辅助本身不构成拦截理由，正常进入评审。"""
-        else:
-            ai_gate_policy = """
-        【🚨 第二步 · AI 声明核查（作者声明为"纯人类原创，未使用 AI"）】
-        请判断本文是否存在"明显、大面积、确凿"的 AI 代写痕迹。本步的门槛必须设得很高——宁可放过，也不可误伤真实的人类作品。
-
-        只有同时满足"痕迹强、覆盖全文、几乎没有人类作者个人印记"时，才算确凿。可参考的确凿情形：
-        - 通篇机械排比、三段式套路，却始终没有实质推进；
-        - 论述自始至终悬浮在抽象概念上，从不落到具体的情节、细节与个人经验；
-        - 情感转折全靠套语完成，没有任何铺垫；
-        - 整体语感均质、工整到没有呼吸，是典型的"模型腔"，且贯穿全文。
-
-        以下情形【不构成】确凿，必须正常评审，不得停止：
-        - 仅仅是文笔干净、结构工整、用词规范；
-        - 应试作文腔、翻译腔、非母语但通顺的写作；
-        - 只有个别段落略显套路，而全文仍有作者自己的观察或语感。
-
-        判断结果：
-        · 若确凿（达到上述高门槛）→ 立即停止评审，仅输出以下 JSON，不输出任何其他内容：
-          {"ai_violation": true}
-        · 若像但拿不准、或只是局部可疑 → 不要停止，正常评审，并在报告末尾的 AI 评估一节如实写明"本文带有较明显的 AI 写作特征，建议作者核对 AI 辅助声明"，指出依据的具体段落。"""
-
         eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
 
         【🚨 内容安全前置审查（最高优先级，先于一切评审）】
@@ -177,9 +230,7 @@ class LiteraryLLMService:
         → 立即停止评审，仅输出以下 JSON，不输出任何其他内容：
         {{"content_violation": true, "violation_type": "sexual_content 或 gore_violence 或 hate_symbol 或 self_harm"}}
 
-        {ai_gate_policy}
-
-        如以上两步前置核查都通过：
+        如未发现违规内容：
         → 正常进行评审，在报告最开头输出一行：CONTENT_SAFE
         → 然后继续输出完整评审报告
 
@@ -244,7 +295,7 @@ class LiteraryLLMService:
             if res.candidates and res.candidates[0].content.parts:
                 result_text = res.text.strip()
 
-                # 检查前置核查违规（模型返回 JSON 标记时）：内容安全 或 AI 声明不符
+                # 检查内容安全违规（模型以 JSON 标记返回时）；AI 代写闸已在评审前独立拦截
                 if result_text.startswith('{') or result_text.startswith('['):
                     try:
                         gate_check = json.loads(result_text)
@@ -268,19 +319,6 @@ class LiteraryLLMService:
                                         f"⚠️ 提交审核中止\n\n"
                                         f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
                                         f"本次分析已终止，本次额度不予扣除。"
-                                        f"如您认为这是误判，请联系人工审核团队。"
-                                    )
-                                )
-                            # AI 声明不符（未声明却查出确凿 AI 痕迹）
-                            if gate_check.get("ai_violation"):
-                                raise HTTPException(
-                                    status_code=422,
-                                    detail=(
-                                        f"⚠️ 提交审核中止\n\n"
-                                        f"系统在您提交的文本中检测到明显的 AI 代写痕迹，"
-                                        f"与您所做的【纯人类原创，未使用 AI 工具】声明不符。\n\n"
-                                        f"本次分析已终止，本次额度不予扣除。"
-                                        f"如您确实使用了 AI 工具辅助，请重新提交并如实选择【使用了 AI 工具进行辅助】；"
                                         f"如您认为这是误判，请联系人工审核团队。"
                                     )
                                 )
