@@ -8,7 +8,7 @@
 #   3. Flash / Pro 双通道：
 #      - Flash：一次调用，输出分析报告 + 总评判词
 #      - Pro：两次调用，Flash 快速读图 → Pro 高清终评判词
-#   4. 内容安全审查：合并进 Flash 主调用（节省内存，不再独立加载图片）
+#   4. 内容安全审查：独立前置调用（复用已加载图片，评审前拦截，命中即 422 不扣费）
 #   5. AI 声明强制核验：声明纯原创但查出指纹 → 立即终止，不扣额度
 #   6. 去除总分、去除入围预测、去除逐页文字、去除权重说明
 #   7. 保留单项分数（供用户直观参考）、保留审美通道路由、保留章程 v2
@@ -108,24 +108,29 @@ class VisionLLMService:
     @classmethod
     async def _check_content_safety(cls, images: list, target_model: str) -> dict:
         """
-        对所有图片执行内容安全审查。
-        返回 {"safe": True} 或 {"safe": False, "violation_type": "xxx"}
+        独立的内容安全前置审查（只做安全判断，不掺评审）。
+        返回 {"content_violation": bool, "violation_type": "xxx"}
+        核心边界：写实、直接 → 拦截；象征、风格化、情感主题 → 放行。
         """
-        safety_instruction = """你是一个内容安全审核系统。你的唯一任务是检查图片是否包含违规内容。
+        safety_instruction = """你是一个内容安全审核系统，服务于一个儿童文学（绘本/插画）评奖平台。你的唯一任务是判断图片是否包含违规内容，不做任何艺术评价。
 
-【需要拦截的内容】：
-1. 色情性行为描绘，或针对未成年人的任何性暗示内容
-   （裸体人体艺术、雕塑、低幼绘本的无性意味裸体属于正常艺术范畴，不拦截）
-2. 写实的血腥、gore、肢体残缺（象征性死亡、战争隐喻不拦截）
-3. 仇恨符号、纳粹标志、极端主义视觉符号
-4. 自残或自杀的具象描绘
+判定的核心分界线：【写实、直接的呈现】才拦截；【象征性、风格化、作为情感或主题的表达】一律放行。
 
-【不拦截的内容】：
-- 裸体人体艺术、雕塑、无性意味的低幼绘本裸体
-- 死亡、悲伤等情感主题（抽象或象征性表达）
-- 战争的象征性描绘
-- 神怪、恐怖氛围（非gore）
-- 正常的亲密关系（拥抱、亲吻）
+【需要拦截的内容】
+1. sexual_content（色情/性）：色情或性行为的描绘；针对未成年人的任何性暗示或性化呈现。
+2. gore_violence（血腥/暴力）：写实的血腥、gore、肢体残缺、断肢；以及写实直接的暴力、殴打、虐待、酷刑的具象画面。
+3. hate_symbol（仇恨符号）：纳粹标志等仇恨符号、极端主义视觉符号。
+4. self_harm（自残/自杀）：自残或自杀的具象描绘。
+
+【明确不拦截的内容（儿童文学的正常范畴，务必放行）】
+- 亲情、友情、爱等情感的正常表达：拥抱、亲吻脸颊、牵手、依偎、陪伴等温情画面。
+- 无性意味的人体艺术、雕塑、低幼绘本中的裸体（如洗澡、婴儿）。
+- 死亡、离别、悲伤等情感主题的抽象或象征性表达。
+- 战争、冲突的象征性或风格化描绘（非写实血腥）。
+- 打斗、追逐等非写实、无血腥的情节画面。
+- 神怪、妖魔、黑暗或恐怖的氛围营造（只要没有写实 gore）。
+
+判断时如果犹豫（像、但属于象征/风格化/情感主题），一律按【不拦截】处理——宁可放行，不可误伤正常的儿童文学创作。
 
 【输出格式】严格 JSON，不含任何 Markdown：
 发现违规 → {"content_violation": true, "violation_type": "sexual_content" 或 "gore_violence" 或 "hate_symbol" 或 "self_harm"}
@@ -287,19 +292,10 @@ class VisionLLMService:
 {verdict_rules}
 {cot_steps}
 
-【🚨 内容安全前置审查（最高优先级，先于一切评审）】
-在进行任何评审之前，先检查所有图片是否包含以下任一内容：
-1. 色情性行为描绘，或针对未成年人的任何性暗示（裸体人体艺术/雕塑/低幼无性意味裸体不拦截）
-2. 写实的血腥、gore、肢体残缺（象征性死亡、战争隐喻不拦截）
-3. 仇恨符号、纳粹标志、极端主义视觉符号
-4. 自残或自杀的具象描绘
-发现上述任一内容 → content_violation 填 true，violation_type 填对应类型
-未发现 → content_violation 填 false，violation_type 填空字符串，继续正常评审
+（内容安全已在评审前由独立环节完成审核，此处无需再做内容安全判断，专注艺术分析即可。）
 
 【强制 JSON 输出格式（不含任何 Markdown 标记）】
 {{
-    "content_violation": false 或 true,
-    "violation_type": "空字符串 或 sexual_content / gore_violence / hate_symbol / self_harm",
     "visual_observation": "纯事实观察记录（150字内）：画面内容、色彩主导、笔触质地、视线动线、跨页/跨图变化。严禁评价性词汇。",
     "dominant_tradition": "限五个固定值之一：'西方写实'、'东方意象'、'原生态装饰'、'稚拙先锋'、'综合无明显传统'",
     "has_traditional_elements": "YES 或 NO",
@@ -557,7 +553,22 @@ class VisionLLMService:
                 )
             )
 
-        # ---- 3. 内容安全审查已合并进 Flash JSON schema，不再独立调用 ----
+        # ---- 3. 内容安全前置审查（独立调用，评审前拦截，命中即 422 不扣费） ----
+        # 复用已加载的 images_flash（1024px），不重新下载、不占额外内存。
+        # 独立成一次专职判断，避免让评审模型"既评画又当裁判"导致漏拦。
+        safety_result = await cls._check_content_safety(images_flash, flash_model)
+        if isinstance(safety_result, dict) and safety_result.get("content_violation"):
+            violation_type = safety_result.get("violation_type", "未知违规类型")
+            violation_label = VIOLATION_LABELS.get(violation_type, violation_type)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"⚠️ 提交审核中止\n\n"
+                    f"系统在您提交的图片中检测到不适合本平台的内容（{violation_label}）。\n\n"
+                    f"本次分析已终止，本次额度不予扣除。"
+                    f"如您认为这是误判，请联系人工审核团队。"
+                )
+            )
 
         # ---- 4. 构建 Flash 调用内容 ----
         flash_instruction = cls._get_flash_instruction(
@@ -599,19 +610,7 @@ class VisionLLMService:
             if not isinstance(flash_result, dict):
                 raise ValueError(f"Flash 返回了非预期类型: {type(flash_result).__name__}")
 
-            # ---- 内容安全检查（从 Flash 结果里读取） ----
-            if flash_result.get("content_violation"):
-                violation_type = flash_result.get("violation_type", "未知违规类型")
-                violation_label = VIOLATION_LABELS.get(violation_type, violation_type)
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"⚠️ 提交审核中止\n\n"
-                        f"系统在您提交的图片中检测到不适合本平台的内容（{violation_label}）。\n\n"
-                        f"本次分析已终止，本次额度不予扣除。"
-                        f"如您认为这是误判，请联系人工审核团队。"
-                    )
-                )
+            # 内容安全已在评审前独立拦截，此处不再重复判断
 
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail="Flash 模型未返回标准 JSON 格式。")
