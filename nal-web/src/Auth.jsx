@@ -37,6 +37,10 @@ export default function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  // 注册完成后的"成功页"状态（显示成功提示 + 前往登录按钮，不自动进工作区）
+  const [registered, setRegistered] = useState(false);
+  const [registeredMsg, setRegisteredMsg] = useState('');
+
   // --- 核心逻辑 ---
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -76,18 +80,18 @@ export default function Auth() {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
 
-        // 🚨 正确流程：注册完成后【不自动进工作区】，必须回到登录页重新登录。
-        //    若 Supabase 关闭了邮箱确认，signUp 会直接返回会话 → 立刻登出，强制走登录；
+        // 🚨 正确流程：注册完成后【不自动进工作区】，显示"注册成功"页，由用户点"前往登录"去登录。
+        //    若 Supabase 关闭了邮箱确认，signUp 会直接返回会话 → 立刻登出，避免自动入场；
         //    若开启了邮箱确认，signUp 不返回会话，提示去邮箱激活后登录。
         if (data?.session) {
           await supabase.auth.signOut();
-          setSuccessMsg('🎉 注册成功！请使用刚注册的邮箱和密码登录。');
+          setRegisteredMsg('您的账号已创建成功，请点击下方按钮前往登录。');
         } else {
-          setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
+          setRegisteredMsg('您的账号已创建成功！请先前往邮箱点击激活链接，再返回登录。');
         }
-        setAuthMode('login');   // 切回登录表单
         setPassword('');
         setConfirmPassword('');
+        setRegistered(true);   // 切到"注册成功"页
       } else if (authMode === 'reset') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${window.location.origin}/login`,
@@ -105,6 +109,43 @@ export default function Auth() {
       setLoading(false);
     }
   };
+
+  // 前往登录：从"注册成功"页切回登录表单
+  const goToLogin = () => {
+    setRegistered(false);
+    setRegisteredMsg('');
+    setErrorMsg('');
+    setSuccessMsg('');
+    setAuthMode('login');
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  // 🎉 注册成功页：只显示成功提示 + "前往登录" 按钮（不自动进工作区）
+  if (registered) {
+    return (
+      <div style={styles.container}>
+        <nav style={styles.navbar}>
+          <div style={styles.navLogoContainer} onClick={() => navigate('/')}>
+            <img src={logo} alt="NAL Logo" style={styles.navLogoImg} />
+            <div style={styles.logo}>NAL Collective</div>
+          </div>
+          <button onClick={() => navigate('/')} style={styles.navBackBtn}>← 返回首页</button>
+        </nav>
+
+        <div style={styles.authCard}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '56px', marginBottom: '16px' }}>🎉</div>
+            <h2 style={styles.title}>注册成功</h2>
+            <p style={{ ...styles.subtitle, lineHeight: '1.8', marginTop: '12px' }}>{registeredMsg}</p>
+            <button onClick={goToLogin} style={{ ...styles.submitBtn, width: '100%', marginTop: '28px' }}>
+              前往登录
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
