@@ -240,8 +240,32 @@ export default function Dashboard({ session }) {
     
     setIsUpdatingReg(true);
     try {
+      // 🆕 D：手机号去重落库（同一手机号每届仅限一次，跨账号也拦）。
+      //     归一化为纯数字，upsert 到本账号本届的报名行；若手机号已被【别的账号】占用，
+      //     会触发 (contest_id, phone_norm) 唯一冲突(23505) → 友好拦截，不予报名。
+      const phoneNorm = (regForm.phone || '').replace(/\D/g, '');
+      if (!phoneNorm) { setIsUpdatingReg(false); return alert("请输入有效的联系电话。"); }
+
+      const { error: regErr } = await supabase
+        .from('contest_registrations')
+        .upsert({
+          user_id: session?.user?.id,
+          contest_id: activeContestId,
+          real_name: regForm.name,
+          phone: regForm.phone,
+          phone_norm: phoneNorm
+        }, { onConflict: 'contest_id,user_id' });
+
+      if (regErr) {
+        if (regErr.code === '23505' || /duplicate|unique/i.test(regErr.message || '')) {
+          setIsUpdatingReg(false);
+          return alert("该手机号已在本届大赛报名，不能重复报名（每个手机号每届仅限一次）。");
+        }
+        throw regErr;
+      }
+
       const updatedAgreedContests = [...(rawUserMetadata.agreed_contests || []), activeContestId];
-      
+
       const { data, error } = await supabase.auth.updateUser({
         data: {
           real_name: regForm.name,
@@ -250,9 +274,9 @@ export default function Dashboard({ session }) {
           agreed_contests: updatedAgreedContests
         }
       });
-      
+
       if (error) throw error;
-      
+
       setRawUserMetadata(data.user.user_metadata);
       setShowRegModal(false); // 提交成功，关闭弹窗，瞬间解锁上传大厅
     } catch (error) {
