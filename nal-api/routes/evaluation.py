@@ -45,6 +45,7 @@ async def process_evaluation(
             raise Exception("会话无效")
         user = user_res.user
         metadata = user.user_metadata or {}
+        app_meta = user.app_metadata or {}   # 🔒 role 权威来源（仅 service_role 可写）
     except Exception:
         raise HTTPException(status_code=401, detail="身份验证失败，请重新登录")
 
@@ -70,7 +71,7 @@ async def process_evaluation(
     # ==========================================
     # 3. 商业路由：到期清算与模型分配
     # ==========================================
-    role = metadata.get("role")
+    role = app_meta.get("role")          # 🔒 从 app_metadata 取（权威、不可伪造）
     now = datetime.now(timezone.utc)
     expiry_date_str = metadata.get("expiry_date")
 
@@ -81,12 +82,15 @@ async def process_evaluation(
         if now > expiry_date:
             print(f"⏰ 用户 {user.id} 专业版已到期，执行降级清算。")
             role = None
-            metadata["role"] = None
+            metadata.pop("role", None)   # 清掉可能残留的旧 user_metadata.role
             metadata["is_paid"] = False
             metadata["expiry_date"] = None
             metadata["pro_credits"] = 0
             metadata["flash_left"] = 3
-            supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
+            # role 降级写回 app_metadata（权威来源），额度/到期仍写 user_metadata
+            new_app = {**app_meta, "role": "free"}
+            supabase_admin.auth.admin.update_user_by_id(
+                user.id, attributes={'user_metadata': metadata, 'app_metadata': new_app})
 
     flash_left = metadata.get("flash_left", 0)
     pro_credits = metadata.get("pro_credits", 0)
@@ -211,7 +215,7 @@ async def process_evaluation(
             return {
                 "report": e.detail,
                 "sync_usage": {
-                    "role": metadata.get("role"),
+                    "role": app_meta.get("role"),
                     "flash_left": metadata.get("flash_left", 0),
                     "pro_credits": metadata.get("pro_credits", 0)
                 }
@@ -241,7 +245,7 @@ async def process_evaluation(
     return {
         "report": report,
         "sync_usage": {
-            "role": metadata.get("role"),
+            "role": app_meta.get("role"),
             "flash_left": metadata.get("flash_left", 0),
             "pro_credits": metadata.get("pro_credits", 0)
         }
