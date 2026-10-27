@@ -58,8 +58,8 @@ export default function Auth() {
         if (error) throw error;
         
         if (data?.user) {
-          // 提取该账户在库中的真实元数据标签
-          const currentRole = data.user.user_metadata?.role;
+          // 🔒 role 权威来源 = app_metadata（用户不可改）
+          const currentRole = data.user.app_metadata?.role;
 
           // 🚨 物理分流防线：严禁角色错位
           if (currentRole === 'admin') {
@@ -70,17 +70,16 @@ export default function Auth() {
           }
         }
       } else if (authMode === 'signup') {
-        // 🌟 注册时动态分配角色与算力
-        let initialRole = 'free'; 
-        if (intent === 'pro') initialRole = 'pro';
-
-        const { error } = await supabase.auth.signUp({ 
-          email, 
+        // 🔒 注册【不再】写 role——role 只能由服务端(service_role)写 app_metadata。
+        //    app_metadata 无 role 即默认普通用户(free)；付费后由支付 webhook 授予 contestant/pro。
+        //    这样修掉“/login?intent=pro 注册即免费拿 Pro”的漏洞。
+        //    flash_left/pro_credits 仍放 user_metadata（免费基础额度，后续另行迁移）。
+        const { error } = await supabase.auth.signUp({
+          email,
           password,
           options: {
             data: {
-              role: initialRole,
-              flash_left: 3, // 默认赠送 5 次基础算力
+              flash_left: 3, // 默认赠送 3 次基础算力
               pro_credits: 0
             }
           }
