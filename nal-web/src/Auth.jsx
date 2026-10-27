@@ -73,10 +73,19 @@ export default function Auth() {
         // 🔒 注册不写任何权益字段：role / flash_left / pro_credits 全归 app_metadata，
         //    仅 service_role 可写。新用户默认 free；免费额度由后端读取时缺省为 3 次；
         //    付费后由支付 webhook 授予 contestant/pro。修掉“?intent=pro 注册即免费拿 Pro”。
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        
-        setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
+
+        // 🚨 正确流程：注册完成后【不自动进工作区】，必须回到登录页重新登录。
+        //    若 Supabase 关闭了邮箱确认，signUp 会直接返回会话 → 立刻登出，强制走登录；
+        //    若开启了邮箱确认，signUp 不返回会话，提示去邮箱激活后登录。
+        if (data?.session) {
+          await supabase.auth.signOut();
+          setSuccessMsg('🎉 注册成功！请使用刚注册的邮箱和密码登录。');
+        } else {
+          setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
+        }
+        setAuthMode('login');   // 切回登录表单
         setPassword('');
         setConfirmPassword('');
       } else if (authMode === 'reset') {
