@@ -47,6 +47,30 @@ export default function AdminGuard({ children }) {
 
   if (loading) return <div style={{ padding: '50px', textAlign: 'center', backgroundColor: '#0a0a0a', color: '#fff', height: '100vh', fontFamily: 'monospace' }}>核验安保身份中...</div>;
 
+  // 🔒 仅 app_metadata.role === 'admin' 才算管理员（用户不可伪造）
+  const isAdmin = session?.user?.app_metadata?.role === 'admin';
+
+  // 已登录但不是管理员：拒绝进入后台（否则任何登录用户都能看到管理台 UI）
+  if (session && !isAdmin) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0a0a0a', fontFamily: 'monospace', color: '#fff' }}>
+        <div style={{ margin: 'auto', textAlign: 'center', maxWidth: '420px', padding: '40px' }}>
+          <div style={{ fontSize: '56px', marginBottom: '20px' }}>🚫</div>
+          <h2 style={{ color: '#bf616a', marginBottom: '12px' }}>无管理员权限</h2>
+          <p style={{ color: '#9ca3af', fontSize: '14px', lineHeight: '1.8', marginBottom: '28px' }}>
+            当前账号不具备 NAL 中央控制台的访问权限。如需管理操作，请使用管理员账号登录。
+          </p>
+          <button
+            onClick={async () => { await supabase.auth.signOut(); setSession(null); }}
+            style={{ padding: '12px 28px', background: '#d08770', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            退出并切换账号
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // 如果没有 session，说明没登录，展示控制台专属暗黑登录框
   if (!session) {
     return (
