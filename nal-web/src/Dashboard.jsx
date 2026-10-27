@@ -73,27 +73,30 @@ export default function Dashboard({ session }) {
   // 防止 undefined 穿透
   const initialMeta = session?.user?.user_metadata || {};
   const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
-  
-  const [usage, setUsage] = useState({ 
-    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 3, 
+
+  // 🔒 role 权威来源 = app_metadata（用户不可改）。额度/到期/门票仍在 user_metadata。
+  const appRole = session?.user?.app_metadata?.role;
+
+  const [usage, setUsage] = useState({
+    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 3,
     pro_credits: initialMeta.pro_credits || 0
   });
 
   // 身份确权判定，拦截管理员误入普通用户控制台
-  const isAdmin = rawUserMetadata.role === 'admin';
+  const isAdmin = appRole === 'admin';
 
   // 1. 动态判定 Pro 是否过期
-  let processedRole = rawUserMetadata.role;
+  let processedRole = appRole;
   let isProExpired = false;
   if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
     if (new Date() > new Date(rawUserMetadata.expiry_date)) {
-      processedRole = null; 
-      isProExpired = true; 
+      processedRole = null;
+      isProExpired = true;
     }
   }
 
   // 2. 赛事门票动态防线（与当前激活的主赛场 ID 强绑定）
-  const isCurrentContestant = rawUserMetadata.role === 'contestant' && 
+  const isCurrentContestant = appRole === 'contestant' &&
                               rawUserMetadata.paid_contest_id === activeContestId;
 
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
