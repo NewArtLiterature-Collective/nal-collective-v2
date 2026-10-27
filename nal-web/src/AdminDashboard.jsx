@@ -3,7 +3,34 @@ import { supabase } from './supabaseClient';
 
 export default function AdminDashboard() {
   const API_BASE = 'https://nal-api-backend.onrender.com';
-  
+
+  // 🆕 取当前登录态的 access_token，作为管理员身份传给后端（后端校验 JWT 里 role=admin）
+  const authHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error("登录态失效，请重新登录管理台");
+    return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  };
+
+  // 🆕 私有桶：用管理员登录态为作品图批量签名（存储策略里 role=admin 可读 contest_works）
+  const CONTEST_BUCKET = 'contest_works';
+  const extractName = (u) => {
+    if (!u) return null;
+    const m = `/${CONTEST_BUCKET}/`;
+    return String(u).includes(m) ? String(u).split(m)[1].split('?')[0] : String(u).replace(/^\/+/, '');
+  };
+  const attachSignedUrls = async (rows) => {
+    const names = [];
+    rows.forEach(r => (r.image_urls || []).forEach(u => { const n = extractName(u); if (n) names.push(n); }));
+    if (names.length === 0) return rows.map(r => ({ ...r, signed_urls: [] }));
+    const map = {};
+    try {
+      const { data } = await supabase.storage.from(CONTEST_BUCKET).createSignedUrls(names, 3600);
+      (data || []).forEach(d => { if (d && d.path && d.signedUrl) map[d.path] = d.signedUrl; });
+    } catch (e) { console.error('⚠️ 管理台图片签名失败:', e); }
+    return rows.map(r => ({ ...r, signed_urls: (r.image_urls || []).map(u => map[extractName(u)]).filter(Boolean) }));
+  };
+
   // 1. 系统核心基础状态矩阵
   const [galleryTime, setGalleryTime] = useState({ start: '', end: '', deadline: '' });
   const [pendingCount, setPendingCount] = useState(0);
@@ -141,11 +168,13 @@ export default function AdminDashboard() {
 
       if (successError) console.error("🚨 抓取展厅数据被拦截:", successError.message);
       
-      setWorks(submissions || []);
-      
+      // 🆕 私有桶：为每件作品附签名图 URL（公开桶时期也照常工作，部署不挑顺序）
+      const signedWorks = await attachSignedUrls(submissions || []);
+      setWorks(signedWorks);
+
       // 更新单篇预览弹窗的内容
-      if (previewWork && submissions) {
-        const updatedWork = submissions.find(w => w.id === previewWork.id);
+      if (previewWork) {
+        const updatedWork = signedWorks.find(w => w.id === previewWork.id);
         if (updatedWork) setPreviewWork(updatedWork);
       }
     } catch (err) {
@@ -238,20 +267,22 @@ export default function AdminDashboard() {
   const handleStartReviewEngine = async () => {
     setIsReviewing(true); addLog("⚡ 向中控台发送唤醒指令...");
     try {
-      const res = await fetch(`${API_BASE}/admin/engine/start-review`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/admin/engine/start-review`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
-      if (data.status === 'success') addLog("🤖 [SUCCESS] Agent 正在消耗待审队列...");
-    } catch (err) { addLog(`❌ 引擎唤醒失败: ${err.message}`); } 
+      if (res.ok && data.status === 'success') addLog("🤖 [SUCCESS] Agent 正在消耗待审队列...");
+      else addLog(`❌ 引擎唤醒被拒(${res.status}): ${data.detail || '无管理员权限'}`);
+    } catch (err) { addLog(`❌ 引擎唤醒失败: ${err.message}`); }
     finally { setIsReviewing(false); setTimeout(() => fetchDashboardData(selectedContestId), 3000); }
   };
 
   const handleRunGlobalCuration = async () => {
     setIsCurating(true); addLog("📊 正在下达离线全局决算指令...");
     try {
-      const res = await fetch(`${API_BASE}/admin/engine/run-curation`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/admin/engine/run-curation`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
-      if (data.status === 'success') addLog("🏆 [SUCCESS] 动态策展执行完毕！");
-    } catch (err) { addLog(`❌ 策展执行失败: ${err.message}`); } 
+      if (res.ok && data.status === 'success') addLog("🏆 [SUCCESS] 动态策展执行完毕！");
+      else addLog(`❌ 策展被拒(${res.status}): ${data.detail || '无管理员权限'}`);
+    } catch (err) { addLog(`❌ 策展执行失败: ${err.message}`); }
     finally { setIsCurating(false); fetchDashboardData(selectedContestId); }
   };
 
@@ -316,9 +347,9 @@ export default function AdminDashboard() {
                 <div style={styles.galleryGrid}>
                   {curatedWorks.map((work) => (
                     <div key={work.id} style={styles.galleryCard}>
-                      {work.image_urls && work.image_urls.length > 0 && (
+                      {work.signed_urls && work.signed_urls.length > 0 && (
                         <div style={styles.galleryImageContainer}>
-                          <img src={work.image_urls[0]} alt="cover" style={styles.galleryCardImage} />
+                          <img src={work.signed_urls[0]} alt="cover" style={styles.galleryCardImage} />
                           {work.is_manual_recommended && (
                             <div style={styles.galleryGoldenBadge}>💎 主编推举</div>
                           )}
@@ -372,9 +403,9 @@ export default function AdminDashboard() {
 
               <div>
                 <h4 style={{ color: '#b48ead', margin: '0 0 10px 0', borderBottom: '1px dashed #444', paddingBottom: '5px' }}>🎨 视觉附件 ({previewWork.image_urls?.length || 0} 张)</h4>
-                {previewWork.image_urls && previewWork.image_urls.length > 0 ? (
+                {previewWork.signed_urls && previewWork.signed_urls.length > 0 ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '15px' }}>
-                    {previewWork.image_urls.map((url, i) => (
+                    {previewWork.signed_urls.map((url, i) => (
                       <div key={i} style={{ border: '1px solid #333', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#000' }}>
                         <img src={url} alt={`attachment-${i}`} style={{ width: '100%', height: 'auto', display: 'block', objectFit: 'contain', maxHeight: '400px' }} />
                         <div style={{ padding: '8px', textAlign: 'center', backgroundColor: '#222', fontSize: '12px', color: '#888' }}>图 {i + 1}</div>
