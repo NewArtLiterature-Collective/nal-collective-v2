@@ -70,20 +70,10 @@ export default function Auth() {
           }
         }
       } else if (authMode === 'signup') {
-        // 🔒 注册【不再】写 role——role 只能由服务端(service_role)写 app_metadata。
-        //    app_metadata 无 role 即默认普通用户(free)；付费后由支付 webhook 授予 contestant/pro。
-        //    这样修掉“/login?intent=pro 注册即免费拿 Pro”的漏洞。
-        //    flash_left/pro_credits 仍放 user_metadata（免费基础额度，后续另行迁移）。
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              flash_left: 3, // 默认赠送 3 次基础算力
-              pro_credits: 0
-            }
-          }
-        });
+        // 🔒 注册不写任何权益字段：role / flash_left / pro_credits 全归 app_metadata，
+        //    仅 service_role 可写。新用户默认 free；免费额度由后端读取时缺省为 3 次；
+        //    付费后由支付 webhook 授予 contestant/pro。修掉“?intent=pro 注册即免费拿 Pro”。
+        const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         
         setSuccessMsg('🎉 账号创建成功！请前往您的邮箱点击激活链接，然后回来登录。');
