@@ -406,8 +406,9 @@ export default function Dashboard({ session }) {
       processing: { label: '🧠 评审中', color: '#4f46e5' },
       success: { label: '✅ 评审通过', color: '#10b981' },
       selected: { label: '🎉 评审通过', color: '#10b981' }, // 🚨 注意：即便是 selected 也只显示评审通过，绝不提前剧透入展信息
-      rejected: { label: '🥀 遗憾落选', color: '#64748b' }, 
-      invalid: { label: '❌ 未通过', color: '#ef4444' }
+      rejected: { label: '🥀 遗憾落选', color: '#64748b' },
+      invalid: { label: '❌ 未通过', color: '#ef4444' },
+      content_blocked: { label: '⛔ 内容未通过·不予入围', color: '#b91c1c' }
     };
     const b = badges[status] || { label: status, color: '#374151' };
     return <span style={{ backgroundColor: b.color, color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{b.label}</span>;
@@ -814,6 +815,9 @@ export default function Dashboard({ session }) {
                           )}
                           {sub.status === 'invalid' && sub.error_msg && (
                             <div style={{fontSize: '10px', color: '#ef4444', marginTop: '6px', lineHeight: '1.4'}}>⚠️ {sub.error_msg}</div>
+                          )}
+                          {sub.status === 'content_blocked' && sub.error_msg && (
+                            <div style={{fontSize: '10px', color: '#b91c1c', marginTop: '6px', lineHeight: '1.4', whiteSpace: 'pre-wrap'}}>{sub.error_msg}</div>
                           )}
                         </div>
                       );
