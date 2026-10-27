@@ -80,3 +80,21 @@ async def run_global_curation(
     verify_admin(authorization)
     background_tasks.add_task(run_curator_script)
     return {"status": "success", "msg": "全局策展正在执行"}
+
+
+# 4. 重置卡死的评审（G）
+#    流水线用原子锁把作品从 pending→processing；若某次评审中途崩溃，作品会永久停在
+#    'processing'，占着唯一名额、选手既不能重投也等不到结果。此接口把它们退回 'pending'，
+#    下次启动评审即可重新消费。⚠️ 仅在当前没有评审批次正在运行时使用，避免与在跑的批次抢。
+@router.post("/engine/requeue-stuck")
+async def requeue_stuck_reviews(authorization: str = Header(None)):
+    verify_admin(authorization)
+    try:
+        res = supabase_admin.table("contest_submissions") \
+            .update({"status": "pending", "error_msg": None}) \
+            .eq("status", "processing") \
+            .execute()
+        n = len(res.data or [])
+        return {"status": "success", "msg": f"已将 {n} 篇卡在评审中的作品重置为待审", "count": n}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
