@@ -20,8 +20,8 @@ async def create_checkout_session_route(request: Request):
             user_res = UserService.get_user_by_id(user_id)
             meta = {}
             if user_res and hasattr(user_res, 'user'):
-                meta = user_res.user.user_metadata or {}
-            
+                meta = user_res.user.app_metadata or {}   # 🔒 权益在 app_metadata
+
             # 1. 如果是 Pro 会员，直接保底放行（无限额度用户前端已隐藏按钮）
             if meta.get("role") == "pro":
                 return {"url": PaymentService.create_checkout_session(user_id, user_email, plan)}
@@ -82,7 +82,7 @@ async def stripe_webhook(request: Request):
                     user_res = UserService.get_user_by_id(user_id)
                     current_meta = {}
                     if user_res and hasattr(user_res, 'user'):
-                        current_meta = user_res.user.user_metadata or {}
+                        current_meta = user_res.user.app_metadata or {}   # 🔒 权益在 app_metadata
 
                     current_flash = int(current_meta.get("flash_left") if current_meta.get("flash_left") is not None else 3)
                     current_pro = int(current_meta.get("pro_credits") or 0)
