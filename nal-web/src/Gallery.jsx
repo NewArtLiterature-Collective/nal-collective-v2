@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import logo from './assets/nal_logo.png';
 
+// 🆕 后端地址（与 AdminDashboard / useEvaluation 一致）。私有桶下，展厅图片经此签名获取。
+const API_BASE = 'https://nal-api-backend.onrender.com';
+
 export default function Gallery() {
   const navigate = useNavigate();
   
@@ -98,11 +101,28 @@ export default function Gallery() {
         if (subErr) throw subErr;
 
         // 🚨 核心修复：防丢失过滤。只要 exhibition_ready 或 is_manual_recommended 有一个是 true，就绝对放行。
-        const exhibitedWorks = (submissions || []).filter(work => 
+        const exhibitedWorks = (submissions || []).filter(work =>
           work.exhibition_ready === true || work.is_manual_recommended === true
         );
 
-        setWorks(exhibitedWorks);
+        // 🆕 私有桶：向后端换取每件入展作品的图片签名 URL（公开 URL 已失效）
+        let worksWithImages = exhibitedWorks.map(w => ({ ...w, signed_urls: [] }));
+        if (exhibitedWorks.length > 0) {
+          try {
+            const resp = await fetch(`${API_BASE}/api/v1/gallery/images`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ submission_ids: exhibitedWorks.map(w => w.id) }),
+            });
+            const payload = await resp.json();
+            const signedMap = payload?.data || {};
+            worksWithImages = exhibitedWorks.map(w => ({ ...w, signed_urls: signedMap[w.id] || [] }));
+          } catch (e) {
+            console.error("⚠️ 展厅图片签名获取失败，将仅显示文字档案:", e);
+          }
+        }
+
+        setWorks(worksWithImages);
         setGalleryState(prev => ({ ...prev, isOpen: true }));
 
       } catch (err) {
@@ -143,9 +163,9 @@ export default function Gallery() {
               </div>
 
               {/* 完整插画瀑布流 */}
-              {selectedWork.image_urls && selectedWork.image_urls.length > 0 && (
+              {selectedWork.signed_urls && selectedWork.signed_urls.length > 0 && (
                 <div style={styles.modalImageGallery}>
-                  {selectedWork.image_urls.map((url, idx) => (
+                  {selectedWork.signed_urls.map((url, idx) => (
                     <div key={idx} style={styles.modalImageWrapper}>
                       <img src={url} alt={`作品原图 ${idx + 1}`} style={styles.modalImage} loading="lazy" />
                     </div>
@@ -202,10 +222,10 @@ export default function Gallery() {
             {works.map((work) => (
               <div key={work.id} style={styles.card}>
                 
-                {/* 如果有插画则展示插画 */}
-                {work.image_urls && work.image_urls.length > 0 && (
+                {/* 如果有插画则展示插画（私有桶：用后端签名 URL） */}
+                {work.signed_urls && work.signed_urls.length > 0 && (
                   <div style={styles.imageContainer}>
-                    <img src={work.image_urls[0]} alt="作品插图预览" style={styles.cardImage} loading="lazy" />
+                    <img src={work.signed_urls[0]} alt="作品插图预览" style={styles.cardImage} loading="lazy" />
                     {/* 左上角特权角标 */}
                     {work.is_manual_recommended && (
                       <div style={styles.goldenBadge}>💎 主编推举</div>
