@@ -24,7 +24,11 @@ function ProtectedRoute({ session, children }) {
 // 🚨 参赛者登录页逻辑包装
 function LoginWrapper({ session }) {
   const location = useLocation();
-  if (session) {
+  // 注册刚完成时（nal_registered 标记存在），即便注册瞬间产生了临时会话，也不自动跳转到工作区，
+  // 让 Auth 停在"注册成功"页；用户点"前往登录"清除标记后，正常登录才会进工作区。
+  let justRegistered = false;
+  try { justRegistered = !!sessionStorage.getItem('nal_registered'); } catch {}
+  if (session && !justRegistered) {
     return <Navigate to={`/dashboard${location.search}`} replace />;
   }
   return <Auth />;
