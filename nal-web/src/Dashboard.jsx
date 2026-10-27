@@ -387,6 +387,10 @@ export default function Dashboard({ session }) {
     const hasExisting = userSubmissions.some(s => s.status !== 'invalid');
     if (hasExisting) return alert("您已经提交过参赛作品，每个账户限投一次。");
 
+    // 🚨 M1：必须有明确的当前赛事 ID（= current_contest_id）。不再用硬编码兜底，
+    //    否则 contest_id 与 current_contest_id 不符会被 RLS 直接拒、且上传出孤儿图。
+    if (!activeContestId) return alert("当前没有正在进行的赛事，暂时无法提交，请稍后再试或联系管理员。");
+
     setIsSubmitting(true);
     try {
       const imageUrls = [];
@@ -400,7 +404,7 @@ export default function Dashboard({ session }) {
         imageUrls.push(data.publicUrl);
       }
 
-      const targetContestId = activeContestId || '2026_contest';
+      const targetContestId = activeContestId;   // 已在前面校验非空
 
       const { error: dbError } = await supabase.from('contest_submissions').insert({
         user_id: session?.user?.id,
