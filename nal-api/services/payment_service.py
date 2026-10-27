@@ -19,16 +19,17 @@ class PaymentService:
                 amount = 2000   # 20.00 CNY
 
             # 2. 创建 Stripe 支付会话
+            #    ⚠️ 新版 Stripe 不再支持 payment_method_types：支付方式改由 Dashboard
+            #       (Settings → Payment methods) 的「动态支付方式」统一管理。此处不再传该参数，
+            #       要启用 微信/支付宝/卡 等请到 Dashboard 开启。
+            #    payment_method_options 仍可保留（微信支付 web 客户端声明，启用微信时必需）。
             session = stripe.checkout.Session.create(
-                payment_method_types=['card', 'alipay', 'wechat_pay'],
-                
-                # 🚨 核心补救：把微信支付的 web 声明补回来！否则会报 500 错误
                 payment_method_options={
                     "wechat_pay": {
                         "client": "web"
                     }
                 },
-                
+
                 line_items=[{
                     'price_data': {
                         'currency': 'cny', 
