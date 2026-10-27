@@ -8,6 +8,7 @@ from routes import admin
 # 导入你的路由模块
 from routes.evaluation import router as evaluation_router
 from routes import payment
+from routes import gallery  # 🆕 展厅签名接口（私有桶下展厅取图）
 
 app = FastAPI(title="NAL API")
 
@@ -30,6 +31,7 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 # --- 3. 注册路由 (核心修改点：统一在这里加前缀) ---
 app.include_router(evaluation_router, prefix="/api/v1/evaluate", tags=["Evaluation"])
 app.include_router(payment.router, prefix="/api/v1/payment", tags=["Payment"])
+app.include_router(gallery.router, prefix="/api/v1", tags=["Exhibition"])  # 🆕 → /api/v1/gallery/images
 
 # --- 4. 基础健康检查 ---
 @app.get("/")
