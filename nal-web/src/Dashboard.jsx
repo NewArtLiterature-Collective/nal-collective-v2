@@ -74,12 +74,13 @@ export default function Dashboard({ session }) {
   const initialMeta = session?.user?.user_metadata || {};
   const [rawUserMetadata, setRawUserMetadata] = useState(initialMeta);
 
-  // 🔒 role 权威来源 = app_metadata（用户不可改）。额度/到期/门票仍在 user_metadata。
-  const appRole = session?.user?.app_metadata?.role;
+  // 🔒 权益权威来源 = app_metadata（用户不可改）：role / 额度 / 到期 / 门票。
+  const appMeta = session?.user?.app_metadata || {};
+  const appRole = appMeta.role;
 
   const [usage, setUsage] = useState({
-    flash: initialMeta.flash_left !== undefined ? initialMeta.flash_left : 3,
-    pro_credits: initialMeta.pro_credits || 0
+    flash: appMeta.flash_left !== undefined ? appMeta.flash_left : 3,
+    pro_credits: appMeta.pro_credits || 0
   });
 
   // 身份确权判定，拦截管理员误入普通用户控制台
@@ -88,8 +89,8 @@ export default function Dashboard({ session }) {
   // 1. 动态判定 Pro 是否过期
   let processedRole = appRole;
   let isProExpired = false;
-  if (processedRole === 'pro' && rawUserMetadata.expiry_date) {
-    if (new Date() > new Date(rawUserMetadata.expiry_date)) {
+  if (processedRole === 'pro' && appMeta.expiry_date) {
+    if (new Date() > new Date(appMeta.expiry_date)) {
       processedRole = null;
       isProExpired = true;
     }
@@ -97,7 +98,7 @@ export default function Dashboard({ session }) {
 
   // 2. 赛事门票动态防线（与当前激活的主赛场 ID 强绑定）
   const isCurrentContestant = appRole === 'contestant' &&
-                              rawUserMetadata.paid_contest_id === activeContestId;
+                              appMeta.paid_contest_id === activeContestId;
 
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
@@ -161,15 +162,12 @@ export default function Dashboard({ session }) {
     const { data: { session: currentSession } } = await supabase.auth.refreshSession();
     const user = currentSession?.user || session?.user;
     if (user) {
-      let meta = user.user_metadata || {};
-      if (meta.flash_left === undefined) {
-        const { data, error } = await supabase.auth.updateUser({ data: { flash_left: 3 } }); 
-        if (!error && data?.user) meta = data.user.user_metadata;
-      }
+      const meta = user.user_metadata || {};   // 资料：姓名/电话/gender/agreed_contests
+      const aMeta = user.app_metadata || {};    // 🔒 权益：额度（用户不可改）
       setRawUserMetadata(meta);
       setUsage({
-        flash: meta.flash_left !== undefined ? meta.flash_left : 3,
-        pro_credits: meta.pro_credits || 0
+        flash: aMeta.flash_left !== undefined ? aMeta.flash_left : 3,
+        pro_credits: aMeta.pro_credits || 0
       });
       // 初始化报名表单数据
       setRegForm(prev => ({
