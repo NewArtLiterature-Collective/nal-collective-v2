@@ -71,9 +71,10 @@ async def process_evaluation(
     # ==========================================
     # 3. 商业路由：到期清算与模型分配
     # ==========================================
-    role = app_meta.get("role")          # 🔒 从 app_metadata 取（权威、不可伪造）
+    # 🔒 权益（role / 额度 / 到期 / 每日计数）全部存 app_metadata，用户不可改
+    role = app_meta.get("role")
     now = datetime.now(timezone.utc)
-    expiry_date_str = metadata.get("expiry_date")
+    expiry_date_str = app_meta.get("expiry_date")
 
     if role == "pro" and expiry_date_str:
         expiry_date = datetime.fromisoformat(expiry_date_str.replace("Z", "+00:00"))
@@ -81,23 +82,20 @@ async def process_evaluation(
             expiry_date = expiry_date.replace(tzinfo=timezone.utc)
         if now > expiry_date:
             print(f"⏰ 用户 {user.id} 专业版已到期，执行降级清算。")
-            role = None
-            metadata.pop("role", None)   # 清掉可能残留的旧 user_metadata.role
-            metadata["is_paid"] = False
-            metadata["expiry_date"] = None
-            metadata["pro_credits"] = 0
-            metadata["flash_left"] = 3
-            # role 降级写回 app_metadata（权威来源），额度/到期仍写 user_metadata
-            new_app = {**app_meta, "role": "free"}
-            supabase_admin.auth.admin.update_user_by_id(
-                user.id, attributes={'user_metadata': metadata, 'app_metadata': new_app})
+            role = "free"
+            app_meta["role"] = "free"
+            app_meta["expiry_date"] = None
+            app_meta["pro_credits"] = 0
+            app_meta["flash_left"] = 3
+            app_meta.pop("is_paid", None)
+            supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'app_metadata': app_meta})
 
-    flash_left = metadata.get("flash_left", 0)
-    pro_credits = metadata.get("pro_credits", 0)
+    flash_left = app_meta.get("flash_left", 3)   # 新用户缺省 3 次免费额度
+    pro_credits = app_meta.get("pro_credits", 0)
 
     today_str = date.today().isoformat()
-    last_active = metadata.get("last_active_date", "")
-    pro_daily_used = metadata.get("pro_daily_used", 0)
+    last_active = app_meta.get("last_active_date", "")
+    pro_daily_used = app_meta.get("pro_daily_used", 0)
     if last_active != today_str:
         pro_daily_used = 0
 
@@ -216,8 +214,8 @@ async def process_evaluation(
                 "report": e.detail,
                 "sync_usage": {
                     "role": app_meta.get("role"),
-                    "flash_left": metadata.get("flash_left", 0),
-                    "pro_credits": metadata.get("pro_credits", 0)
+                    "flash_left": app_meta.get("flash_left", 3),
+                    "pro_credits": app_meta.get("pro_credits", 0)
                 }
             }
         raise
@@ -229,16 +227,17 @@ async def process_evaluation(
     # 6. 后置账单处理：扣费与状态持久化
     # ==========================================
     try:
-        metadata["last_active_date"] = today_str
+        # 🔒 扣费与状态持久化全部写 app_metadata（权益权威来源）
+        app_meta["last_active_date"] = today_str
         if used_pro_daily:
-            metadata["pro_daily_used"] = pro_daily_used + 1
+            app_meta["pro_daily_used"] = pro_daily_used + 1
         if role != "pro":
             if used_pro:
-                metadata["pro_credits"] = max(0, pro_credits - 1)
+                app_meta["pro_credits"] = max(0, pro_credits - 1)
             elif used_flash:
-                metadata["flash_left"] = max(0, flash_left - 1)
+                app_meta["flash_left"] = max(0, flash_left - 1)
 
-        supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'user_metadata': metadata})
+        supabase_admin.auth.admin.update_user_by_id(user.id, attributes={'app_metadata': app_meta})
     except Exception as e:
         print(f"⚠️ 数据库额度更新失败: {e}")
 
@@ -246,7 +245,7 @@ async def process_evaluation(
         "report": report,
         "sync_usage": {
             "role": app_meta.get("role"),
-            "flash_left": metadata.get("flash_left", 0),
-            "pro_credits": metadata.get("pro_credits", 0)
+            "flash_left": app_meta.get("flash_left", 3),
+            "pro_credits": app_meta.get("pro_credits", 0)
         }
     }
