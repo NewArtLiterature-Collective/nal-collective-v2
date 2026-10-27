@@ -94,9 +94,7 @@ export default function Gallery() {
           .from('contest_submissions')
           .select('id, text_content, image_urls, ai_total_score, is_manual_recommended, manual_rank, exhibition_ready, created_at')
           .eq('status', 'success')
-          .eq('contest_id', activeContestId)
-          .order('manual_rank', { ascending: false })
-          .order('ai_total_score', { ascending: false });
+          .eq('contest_id', activeContestId);
 
         if (subErr) throw subErr;
 
@@ -104,6 +102,15 @@ export default function Gallery() {
         const exhibitedWorks = (submissions || []).filter(work =>
           work.exhibition_ready === true || work.is_manual_recommended === true
         );
+
+        // 🆕 H2：名次排序。manual_rank 语义 = 名次（1=冠军最靠前）；0/空 = 未排名，排在最后。
+        //    同档位按 AI 综合分高→低。
+        exhibitedWorks.sort((a, b) => {
+          const ra = a.manual_rank && a.manual_rank > 0 ? a.manual_rank : Infinity;
+          const rb = b.manual_rank && b.manual_rank > 0 ? b.manual_rank : Infinity;
+          if (ra !== rb) return ra - rb;                         // 名次小的在前
+          return (b.ai_total_score || 0) - (a.ai_total_score || 0); // 同档分高者在前
+        });
 
         // 🆕 私有桶：向后端换取每件入展作品的图片签名 URL（公开 URL 已失效）
         let worksWithImages = exhibitedWorks.map(w => ({ ...w, signed_urls: [] }));
