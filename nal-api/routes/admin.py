@@ -14,7 +14,7 @@ class TimeSettings(BaseModel):
 
 
 # ==========================================================
-# 鉴权：校验调用者的 Supabase JWT 且 user_metadata.role == 'admin'
+# 鉴权：校验调用者的 Supabase JWT 且 app_metadata.role == 'admin'
 #   —— 不再使用塞进浏览器的静态 ADMIN_SECRET_KEY（会随打包文件泄露）。
 #   前端需在请求头带 Authorization: Bearer <access_token>。
 # ==========================================================
