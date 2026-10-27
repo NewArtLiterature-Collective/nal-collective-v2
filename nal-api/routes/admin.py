@@ -30,7 +30,8 @@ def verify_admin(authorization: str):
     except Exception:
         raise HTTPException(status_code=401, detail="身份验证失败，请重新登录")
 
-    role = (user.user_metadata or {}).get("role")
+    # 🔒 role 存在 app_metadata（仅 service_role 可写），不是用户可改的 user_metadata
+    role = (user.app_metadata or {}).get("role")
     if role != "admin":
         raise HTTPException(status_code=403, detail="无管理员权限")
     return user
