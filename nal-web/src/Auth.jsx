@@ -38,8 +38,10 @@ export default function Auth() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // 注册完成后的"成功页"状态（显示成功提示 + 前往登录按钮，不自动进工作区）
-  const [registered, setRegistered] = useState(false);
-  const [registeredMsg, setRegisteredMsg] = useState('');
+  // 用 sessionStorage 持久化，抵御注册瞬间的会话抖动导致组件卸载/重挂。
+  const readReg = () => { try { return sessionStorage.getItem('nal_registered') || ''; } catch { return ''; } };
+  const [registered, setRegistered] = useState(() => !!readReg());
+  const [registeredMsg, setRegisteredMsg] = useState(() => (readReg() && readReg() !== 'pending') ? readReg() : '');
 
   // --- 核心逻辑 ---
   const handleAuth = async (e) => {
@@ -77,18 +79,27 @@ export default function Auth() {
         // 🔒 注册不写任何权益字段：role / flash_left / pro_credits 全归 app_metadata，
         //    仅 service_role 可写。新用户默认 free；免费额度由后端读取时缺省为 3 次；
         //    付费后由支付 webhook 授予 contestant/pro。修掉“?intent=pro 注册即免费拿 Pro”。
+        // 提前占位：抑制注册瞬间若产生会话时 App 的自动跳转（见 App.jsx LoginWrapper）
+        try { sessionStorage.setItem('nal_registered', 'pending'); } catch {}
+
         const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
+        if (error) {
+          try { sessionStorage.removeItem('nal_registered'); } catch {}
+          throw error;
+        }
 
         // 🚨 正确流程：注册完成后【不自动进工作区】，显示"注册成功"页，由用户点"前往登录"去登录。
         //    若 Supabase 关闭了邮箱确认，signUp 会直接返回会话 → 立刻登出，避免自动入场；
         //    若开启了邮箱确认，signUp 不返回会话，提示去邮箱激活后登录。
+        let regMsg;
         if (data?.session) {
           await supabase.auth.signOut();
-          setRegisteredMsg('您的账号已创建成功，请点击下方按钮前往登录。');
+          regMsg = '您的账号已创建成功，请点击下方按钮前往登录。';
         } else {
-          setRegisteredMsg('您的账号已创建成功！请先前往邮箱点击激活链接，再返回登录。');
+          regMsg = '您的账号已创建成功！请先前往邮箱点击激活链接，再返回登录。';
         }
+        try { sessionStorage.setItem('nal_registered', regMsg); } catch {}
+        setRegisteredMsg(regMsg);
         setPassword('');
         setConfirmPassword('');
         setRegistered(true);   // 切到"注册成功"页
@@ -112,6 +123,7 @@ export default function Auth() {
 
   // 前往登录：从"注册成功"页切回登录表单
   const goToLogin = () => {
+    try { sessionStorage.removeItem('nal_registered'); } catch {}
     setRegistered(false);
     setRegisteredMsg('');
     setErrorMsg('');
