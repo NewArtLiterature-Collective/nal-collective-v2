@@ -286,6 +286,19 @@ export default function AdminDashboard() {
     finally { setIsCurating(false); fetchDashboardData(selectedContestId); }
   };
 
+  // 🆕 G：把卡在“评审中(processing)”的作品退回待审（仅在没有评审批次运行时使用）
+  const handleRequeueStuck = async () => {
+    if (!window.confirm("将把所有卡在“评审中”的作品重置为“待审”。\n请确认当前没有评审批次正在运行，否则会与在跑的批次冲突。\n继续？")) return;
+    addLog("🔧 正在重置卡死的评审...");
+    try {
+      const res = await fetch(`${API_BASE}/admin/engine/requeue-stuck`, { method: 'POST', headers: await authHeaders() });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') addLog(`✅ ${data.msg}`);
+      else addLog(`❌ 重置被拒(${res.status}): ${data.detail || '无管理员权限'}`);
+    } catch (err) { addLog(`❌ 重置失败: ${err.message}`); }
+    finally { fetchDashboardData(selectedContestId); }
+  };
+
   const handleToggleManualRecommend = async (id, currentStatus) => {
     try {
       const nextStatus = !currentStatus;
@@ -547,6 +560,7 @@ export default function AdminDashboard() {
             </div>
             <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0} style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isReviewing ? "🤖 会诊中..." : "⚡ 启动离线评审"}</button>
             <button onClick={handleRunGlobalCuration} disabled={isCurating || works.length === 0} style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isCurating ? "📊 计算中..." : "📊 全局策展划线 (Top 5%)"}</button>
+            <button onClick={handleRequeueStuck} title="把卡在“评审中”的作品退回待审（仅在无批次运行时用）" style={{ padding: '12px 20px', backgroundColor: 'transparent', color: '#ebcb8b', border: '1px solid #ebcb8b', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>🔧 重置卡死评审</button>
           </div>
           <div style={{ background: '#000', padding: '15px', borderRadius: '4px', height: '120px', overflowY: 'auto', border: '1px solid #333', fontSize: '12px', lineHeight: '1.6' }}>
             {logMessages.length === 0 ? <span style={{ color: '#4c566a' }}>&gt;_ 等待中控调度...</span> : logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)}
