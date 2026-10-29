@@ -183,18 +183,21 @@ export default function Dashboard({ session }) {
     try {
       const { data: settings } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle();
       if (settings) {
-        setIsContestActive(settings.is_contest_active);
+        // 🚨 "有赛事"必须同时满足：赛事大闸开启 且 配置了当前赛事 ID。
+        //    任一缺失即视为封闭态 → 工作区所有赛事入口(动态/报名/参赛 tab)都隐藏。
+        const contestOpen = !!settings.is_contest_active && !!settings.current_contest_id;
+        setIsContestActive(contestOpen);
         setIsGalleryActive(settings.is_gallery_active || false); // 🚨 读取展厅大闸状态
         if (settings.current_contest_id) {
-          setActiveContestId(settings.current_contest_id); 
+          setActiveContestId(settings.current_contest_id);
           const { data: contestData } = await supabase.from('contests').select('*').eq('id', settings.current_contest_id).maybeSingle();
           if (contestData) {
             setContestName(contestData.name);
             setContestDescription(contestData.description);
-            setSubmissionDeadline(contestData.submission_deadline); 
+            setSubmissionDeadline(contestData.submission_deadline);
           }
         }
-        if (activeTab === 'text' && settings.is_contest_active) setActiveTab('dynamics');
+        if (activeTab === 'text' && contestOpen) setActiveTab('dynamics');
       }
     } catch (err) {
       console.error("⚠️ 读取全局配置失败:", err);
