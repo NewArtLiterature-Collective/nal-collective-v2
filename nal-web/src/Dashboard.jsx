@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { supabase } from './supabaseClient';
 import { usePayment } from './hooks/usePayment';
@@ -183,21 +183,18 @@ export default function Dashboard({ session }) {
     try {
       const { data: settings } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle();
       if (settings) {
-        // 🚨 "有赛事"必须同时满足：赛事大闸开启 且 配置了当前赛事 ID。
-        //    任一缺失即视为封闭态 → 工作区所有赛事入口(动态/报名/参赛 tab)都隐藏。
-        const contestOpen = !!settings.is_contest_active && !!settings.current_contest_id;
-        setIsContestActive(contestOpen);
+        setIsContestActive(settings.is_contest_active);
         setIsGalleryActive(settings.is_gallery_active || false); // 🚨 读取展厅大闸状态
         if (settings.current_contest_id) {
-          setActiveContestId(settings.current_contest_id);
+          setActiveContestId(settings.current_contest_id); 
           const { data: contestData } = await supabase.from('contests').select('*').eq('id', settings.current_contest_id).maybeSingle();
           if (contestData) {
             setContestName(contestData.name);
             setContestDescription(contestData.description);
-            setSubmissionDeadline(contestData.submission_deadline);
+            setSubmissionDeadline(contestData.submission_deadline); 
           }
         }
-        if (activeTab === 'text' && contestOpen) setActiveTab('dynamics');
+        if (activeTab === 'text' && settings.is_contest_active) setActiveTab('dynamics');
       }
     } catch (err) {
       console.error("⚠️ 读取全局配置失败:", err);
@@ -479,6 +476,27 @@ export default function Dashboard({ session }) {
   const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
   const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline;
 
+  // 🚨 统一的「报名通道是否开放」判定：大闸开 + 有当前赛事 + 未过截稿。
+  //    任一不满足即视为封闭，所有报名入口须置灰/隐藏，不得进入支付。
+  const registrationOpen = isContestActive && !!activeContestId && !isPastDeadline;
+
+  // 🚨 直达支付：从首页/登录页带着 ?intent=contestant 进入工作区的未获资格用户，
+  //    在报名通道开放时自动跳转 Stripe 支付；支付完成后方由 Webhook 授予参赛资格并进入工作区。
+  //    - 已是 contestant/pro（从 JWT 同步识别）不会触发，避免重复扣费；
+  //    - 通道封闭（过截稿/大闸关）不触发，用户停留在动态页看到「报名已截止」；
+  //    - 触发后清除 URL 上的 intent，支付取消返回 /dashboard 不会再次触发。
+  const intentHandledRef = useRef(false);
+  useEffect(() => {
+    if (intentHandledRef.current || isAdmin) return;
+    let intent = '';
+    try { intent = new URLSearchParams(window.location.search).get('intent') || ''; } catch {}
+    if (intent === 'contestant' && !isEligibleForContest && registrationOpen && !payLoading) {
+      intentHandledRef.current = true;
+      try { window.history.replaceState({}, '', '/dashboard'); } catch {}
+      handlePayment('contestant');
+    }
+  }, [registrationOpen, isEligibleForContest, isAdmin, payLoading]);
+
   // 🌟 核心引擎显示策略：优先展示并消耗 Pro 额度
   const engineName = isPro ? "文学专业旗舰版" : 
                      (displayUsage.pro_credits > 0 ? "高级版 (优先消耗 Pro 额度)" : 
@@ -598,8 +616,10 @@ export default function Dashboard({ session }) {
             {isContestActive && (
               (isContestant || isPro) ? (
                 <div style={{ color: '#10b981', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold' }}>✅ 已获参赛资格</div>
-              ) : (
+              ) : registrationOpen ? (
                 <button onClick={() => handlePayment('contestant')} style={styles.payBtn}>🚀 立即报名</button>
+              ) : (
+                <div style={{ color: '#94a3b8', fontSize: '12px', marginBottom: '10px', textAlign: 'center', fontWeight: 'bold', background: 'rgba(148,163,184,0.12)', padding: '8px', borderRadius: '8px' }}>🛑 本届报名已截止</div>
               )
             )}
             {(!isPro && usage.flash <= 0 && usage.pro_credits <= 0) && (
