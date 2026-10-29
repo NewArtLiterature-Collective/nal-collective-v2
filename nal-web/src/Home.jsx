@@ -46,6 +46,14 @@ export default function Home() {
     fetchSiteSettings();
   }, []);
 
+  // 🚨 统一的「报名通道是否开放」判定（与工作区同口径）：
+  //    大闸开 + 有当前赛事 + （未设截稿 或 未过截稿）。任一不满足即封闭。
+  const currentContest = contests.find(c => c.id === currentContestId);
+  const pastDeadline = currentContest?.submission_deadline
+    ? new Date() > new Date(currentContest.submission_deadline)
+    : false;
+  const registrationOpen = isContestActive && !!currentContestId && !pastDeadline;
+
   return (
     <div style={styles.container}>
       {/* 🧱 积木 1：顶部导航栏 */}
@@ -101,12 +109,18 @@ export default function Home() {
                             <p style={styles.dropdownDesc}>
                               {c.description || '暂无详细征稿章程大纲描述。'}
                             </p>
-                            <button 
-                              onClick={() => { setIsDropdownOpen(false); navigate('/login?intent=contestant'); }}
-                              style={styles.dropdownBtn}
-                            >
-                              🚀 立即报名参赛
-                            </button>
+                            {registrationOpen ? (
+                              <button
+                                onClick={() => { setIsDropdownOpen(false); navigate('/login?intent=contestant'); }}
+                                style={styles.dropdownBtn}
+                              >
+                                🚀 立即报名参赛
+                              </button>
+                            ) : (
+                              <div style={styles.dropdownBtnDisabled}>
+                                🛑 本届报名已截止
+                              </div>
+                            )}
                           </>
                         ) : (
                           /* 分支 B：非当前激活的其它存量赛事，仅仅干净显示名字，下方输出微缩休眠标识 */
@@ -206,7 +220,11 @@ export default function Home() {
                 <li>✓ 支持 150KB 文档 / 5张图片(限1.5MB)</li>
                 <li>✓ 提供约 300 字高光片段试写</li>
               </ul>
-              <button onClick={() => navigate('/login?intent=contestant')} style={styles.planBtnContest}>立即报名参赛</button>
+              {registrationOpen ? (
+                <button onClick={() => navigate('/login?intent=contestant')} style={styles.planBtnContest}>立即报名参赛</button>
+              ) : (
+                <button disabled style={styles.planBtnContestDisabled}>本届报名已截止</button>
+              )}
             </div>
           )}
 
@@ -273,6 +291,7 @@ const styles = {
   planFeatures: { listStyle: 'none', padding: 0, margin: '0 0 30px 0', lineHeight: '2.4', color: '#4b5563', fontSize: '14px' },
   planBtnFree: { width: '100%', padding: '14px', backgroundColor: '#f3f4f6', color: '#111827', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   planBtnContest: { width: '100%', padding: '14px', backgroundColor: '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  planBtnContestDisabled: { width: '100%', padding: '14px', backgroundColor: '#e5e7eb', color: '#9ca3af', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'not-allowed' },
   planBtnPro: { width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#a78bfa', border: '2px solid #a78bfa', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   
   // 🗺️ 页脚
@@ -299,5 +318,6 @@ const styles = {
   dropdownTitle: { margin: 0, textAlign: 'left', lineHeight: '1.4' },
   dropdownDivider: { width: '100%', height: '1px', backgroundColor: '#1f2937', margin: '10px 0' },
   dropdownDesc: { margin: '0 0 14px 0', color: '#d8dee9', fontSize: '12px', lineHeight: '1.6', textAlign: 'left', whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto', width: '100%' },
-  dropdownBtn: { width: '100%', padding: '10px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', textAlign: 'center', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)' }
+  dropdownBtn: { width: '100%', padding: '10px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', textAlign: 'center', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)' },
+  dropdownBtnDisabled: { width: '100%', padding: '10px', backgroundColor: 'rgba(148,163,184,0.15)', color: '#94a3b8', border: '1px solid #334155', borderRadius: '6px', fontWeight: 'bold', fontSize: '13px', textAlign: 'center', cursor: 'not-allowed' }
 };
