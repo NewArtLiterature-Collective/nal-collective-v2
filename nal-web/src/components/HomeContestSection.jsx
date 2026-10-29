@@ -14,20 +14,33 @@ export default function HomeContestSection() {
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        // 📡 直连中控台，拉取最高指令
-        const { data, error } = await supabase
+        // 📡 中控台开关 + 当前赛事指针（赛事名称/章程在 contests 表，不在 site_settings）
+        const { data: s } = await supabase
           .from('site_settings')
-          .select('is_contest_active, contest_name, contest_description')
+          .select('is_contest_active, current_contest_id')
           .eq('id', 1)
-          .single();
+          .maybeSingle();
 
-        if (!error && data) {
-          setContestInfo({
-            isActive: data.is_contest_active,
-            name: data.contest_name || 'NAL 年度精选文学赏',
-            description: data.contest_description || ''
-          });
+        let isActive = false;
+        let name = 'NAL 年度精选文学赏';
+        let description = '';
+
+        // 🚨 "有赛事" = 大闸开启 且 配置了当前赛事；再从 contests 取名称/章程/截稿
+        if (s && s.is_contest_active && s.current_contest_id) {
+          const { data: c } = await supabase
+            .from('contests')
+            .select('name, description, submission_deadline')
+            .eq('id', s.current_contest_id)
+            .maybeSingle();
+          if (c) {
+            name = c.name || name;
+            description = c.description || '';
+            // 未设截稿或未过截稿 → 开放；已过截稿 → 休眠态
+            isActive = !c.submission_deadline || new Date() <= new Date(c.submission_deadline);
+          }
         }
+
+        setContestInfo({ isActive, name, description });
       } catch (err) {
         console.error("加载首页赛事动态失败", err);
       } finally {
