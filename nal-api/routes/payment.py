@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from services.payment_service import PaymentService
 from services.user_service import UserService
+from core.config import settings
 import stripe
 import os
 
@@ -52,7 +53,7 @@ async def stripe_webhook(request: Request):
     
     try:
         event = stripe.Webhook.construct_event(
-            payload, sig_header, os.getenv("STRIPE_WEBHOOK_SECRET")
+            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET_EFFECTIVE
         )
     except Exception as e:
         return JSONResponse(status_code=400, content={"message": str(e)})
