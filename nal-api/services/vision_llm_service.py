@@ -12,10 +12,20 @@
 #   5. AI 声明强制核验：声明纯原创但查出指纹 → 立即终止，不扣额度
 #   6. 去除总分、去除入围预测、去除逐页文字、去除权重说明
 #   7. 保留单项分数（供用户直观参考）、保留审美通道路由、保留章程 v2
+#
+# v3.1（2026-11）：
+#   - 读者界定：儿童、孩子指青少年读者（10 岁以上，不含低幼）
+#   - 插画意境改为界定范围：浓度、准确、余味与暗示力；不要求情绪递进
+#   - 短板确实指不出时允许如实写，不再强求（强求会诱导模型编造短板）
+#   - 内容安全改为"只拦色情与未成年人性化，其余提示"：其余敏感内容不再拦截，
+#     按竞赛内容安全标准（全局+局部）在报告末尾给出"参赛内容风险提示"
+#   - AI 指纹去掉 swinir（AI 放大工具，不是生成器；手绘扫描稿放大不应被判为使用 AI）
+#   - 图片下载改为线程并发（最多 6 张同时解码），不阻塞事件循环；限制超大图片像素，防解压炸弹
 # ============================================================================
 
 import json
 import io
+import asyncio
 import requests
 import PIL.Image
 from PIL import ImageFile
@@ -23,7 +33,8 @@ import google.generativeai as genai
 from fastapi import HTTPException
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-PIL.Image.MAX_IMAGE_PIXELS = None
+# 不设为 None：公开上传服务需防解压炸弹。2 亿像素足够容纳高分辨率扫描稿
+PIL.Image.MAX_IMAGE_PIXELS = 200_000_000
 
 # 分辨率分层
 FLASH_MAX_DIM = 1024   # Flash 初读：降低内存峰值
@@ -34,16 +45,17 @@ AI_KEYWORDS = [
     'stable diffusion', 'midjourney', 'dall-e', 'dall·e',
     'comfyui', 'automatic1111', 'novelai', 'parameters',
     'cfg scale', 'sampler', 'steps:', 'lora', 'controlnet',
-    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl', 'swinir'
+    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl'
 ]
 
 # 内容违规类型的中文说明
+# 只有这一类拦截（422，不扣额度）；其余敏感内容在报告里提示参赛风险
 VIOLATION_LABELS = {
-    "sexual_content":     "色情性行为描绘或针对未成年人的性暗示内容",
-    "gore_violence":      "写实的血腥、gore 或肢体残缺",
-    "hate_symbol":        "仇恨符号、纳粹标志或极端主义内容",
-    "self_harm":          "自残或自杀的具象描绘",
+    "sexual_content":     "色情性行为描绘，或对未成年人、少女形象的性化呈现",
 }
+
+# 参赛风险的两档（与竞赛内容安全复核的结论对应）
+RISK_LEVELS = ("可能被拒绝", "可能交人工")
 
 
 class VisionLLMService:
@@ -101,50 +113,64 @@ class VisionLLMService:
             print(f"⚠️ 图片加载失败 ({url}): {e}")
             return None, ""
 
+    @classmethod
+    async def _load_images(cls, image_urls: list, max_dim: int) -> list:
+        """并发下载并压缩图片，保持原顺序。同时最多 6 张在内存中解码，避免绘本上百页时内存峰值过高。"""
+        sem = asyncio.Semaphore(6)
+
+        async def one(url):
+            async with sem:
+                return await asyncio.to_thread(cls._fetch_and_process_image, url, max_dim)
+
+        return await asyncio.gather(*[one(u) for u in image_urls])
+
     # =========================================================
     # 内容安全前置审查（独立一次调用，在主分析之前执行）
     # =========================================================
 
     @classmethod
-    async def _check_content_safety(cls, images: list, target_model: str) -> dict:
+    async def _check_content_safety(cls, images: list, target_model: str, image_type: str = "picturebook") -> dict:
         """
-        独立的内容安全前置审查（只做安全判断，不掺评审）。
-        返回 {"content_violation": bool, "violation_type": "xxx"}
-        核心边界：写实、直接 → 拦截；象征、风格化、情感主题 → 放行。
+        内容安全前置审查（独立一次调用，只做安全判断，不掺评审）。
+        返回 {"block": bool, "block_type": "sexual_content", "evidence": "...",
+              "risks": [{"where": "第N页", "issue": "...", "level": "可能被拒绝|可能交人工", "reason": "..."}]}
+        - 只有色情、未成年人/少女形象性化才拦截（block=True）。
+        - 其余按竞赛内容安全标准（全局+局部）判断，写进 risks，在报告末尾提示，不拦截。
         """
-        safety_instruction = """你是一个内容安全审核系统，服务于一个儿童文学（绘本/插画）评奖平台。你的唯一任务是判断图片是否包含违规内容，不做任何艺术评价。
+        unit = "幅" if image_type == "illustration" else "页"
+        safety_instruction = f"""你是儿童文学（绘本/插画）作品分析平台的内容安全审核员。作者把作品提交来求取修改意见；你的任务是通读全部画面，做两件事：一、判断是否必须拦截；二、按儿童文学奖的内容安全标准，指出这部作品若去参赛可能遇到的内容风险。不做艺术评价。
 
-⚠️ 最重要的尺度原则（先读这条）：
-这是【儿童／少年文学】评奖平台。少年冒险、科幻、历险、神话题材的插画中，危险、打斗、追逐、营救、受伤、流血、死亡等画面是这一文学类别的正常组成部分，绝不能因为画面里出现"血""武器""打斗""受伤"就拦截。真正要拦的，是【为感官刺激／猎奇而写实、具象、细节化地呈现】的画面，而不是【服务于叙事、点到为止】的情节性画面。判断前先问自己：这幅画是在"叙述一个情节"，还是在"细致地描摹血腥／性／残忍本身让人感官不适"？只有后者才拦。
+读者：10 岁以上的青少年（不含低幼）；作品也会被家长和老师读到。
 
-【需要拦截的内容——必须是"写实 + 具象 + 为渲染而渲染"三者同时成立】
-1. sexual_content（色情/性）：色情或性行为的描绘；针对未成年人的任何性暗示或性化呈现。
-2. gore_violence（血腥/暴力）：以感官刺激／猎奇为目的、写实而细致地呈现的血腥、gore、肢体残缺、断肢、内脏、尸体；或细致刻画酷刑、虐待、折磨过程并渲染痛苦与残忍的画面。
-3. hate_symbol（仇恨符号）：纳粹标志等仇恨符号、极端主义视觉符号。
-4. self_harm（自残/自杀）：自残或自杀的具象、写实描绘。
+【一、必须拦截（block）——只有这一类】
+色情或性行为的描绘；对儿童的任何性化呈现；把角色性感化（内衣式服装、突出胸部等身体部位、挑逗姿态），尤其是少女形象。
+其他任何内容都不拦截，即使很强烈，也只写进风险提示。
 
-【明确不拦截的内容（儿童／少年文学的正常范畴，务必放行）】
-- 亲情、友情、爱等情感的正常表达：拥抱、亲吻脸颊、牵手、依偎、陪伴等温情画面。
-- 无性意味的人体艺术、雕塑、低幼绘本中的裸体（如洗澡、婴儿）。
-- 死亡、离别、悲伤等主题的画面（包括画到有人死去、墓碑、遗像等）。
-- 战争、冲突、危险情节；少年历险、科幻、神话中的打斗、追逐、营救、逃亡画面。
-- 情节功能性的暴力与受伤：画面中有人被打倒、流血、受伤、包扎、淤青、擦伤、被捆绑的勒痕、刀剑/枪等武器——只要不是以猎奇为目的地细致描摹血腥本身。
-- 神怪、妖魔、黑暗或恐怖的氛围营造（只要没有具象猎奇的 gore 细节）。
+【二、参赛风险提示（risks）】
+先看全局：敏感元素在全书（全组）里起什么作用——警示、批判、象征、类型惯例，还是渲染、美化、诱导；作品立场是什么，结局把读者引向哪里；这类画面占多大篇幅，是一闪而过，还是成为全书的主要观感。
+再看局部：逐处看呈现方式，先对照下面的例子判断。全局立场正当，不能抵消局部越线。
+· 可能被拒绝（对得上越线的例子）：
+  - 具体的毒品名称、吸食或获取方式出现在画面或文字里（儿童读物会让原本不知道的孩子知道这些名称，禁毒的意图抵消不了这一点）；
+  - 对儿童施暴、拐卖、关押、持械追逐等直接而紧张的呈现（惊吓通常超过警示）；
+  - 大面积的血迹、伤口特写；直接描绘自伤的行为、工具或过程；
+  - 美化或诱导危险行为；煽动仇恨；
+  - 多处强烈的呈现累积起来成为全书基调，即使每一处单看都还不到越线。
+· 可能交人工（没有清楚越线，但呈现强烈或有争议）：例如立场正当，而象征性的画面（表现内心痛苦的伤痕、血滴）可能让一部分读者联想到自伤或血腥；或对照例子仍无法判断的情况。
+· 不算风险，不要写：死亡、霸凌、危险、坏人受惩罚这些题材本身；民间故事、童话、动物故事里点到为止的惯常情节（如妖怪洞里的骷髅、受伤动物腿上的一小块血迹）；作品先呈现、再推翻的批判对象；政治、宗教等符号本身。
+没有风险就返回空列表。大多数作品都没有风险，不要为了填写而找问题。
 
-【判定方法】
-- 先定位到底是画面中哪一处让你想拦，再判断它是"服务于叙事、点到为止的情节画面"还是"反复、细致、以刺激为目的的猎奇渲染"。若是前者 → 放行。
-- 只要犹豫、或介于两者之间 → 一律【不拦截】。宁可放行，也绝不误伤正常的儿童／少年文学创作。本平台绝大多数作品都应判为不违规；拦截是针对真正越界的极少数，不是针对"画到了危险和受伤"的常规冒险题材。
+【写法】简体中文。每处落到具体位置，写作"第N{unit}"，按附图顺序，第 1 张为第 1 {unit}。只写画面和文字里看得到的事实。reason 要说清对得上哪条标准、为什么，并给一句怎么改能避开（例如改为暗示、缩小篇幅、去掉具体名称）。
 
-【输出格式】严格 JSON，不含任何 Markdown：
-发现违规 → {"content_violation": true, "violation_type": "sexual_content" 或 "gore_violence" 或 "hate_symbol" 或 "self_harm", "evidence": "指出画面中最越界的那一处，20字以内"}
-未发现违规 → {"content_violation": false}"""
+【输出格式】严格 JSON，不含 Markdown：
+{{"block": true 或 false, "block_type": "sexual_content"（仅 block 为 true 时填）, "evidence": "block 为 true 时指出最越界的一处，20 字以内",
+  "risks": [{{"where": "第N{unit}", "issue": "风险是什么，10 字以内", "level": "可能被拒绝 或 可能交人工", "reason": "对得上哪条标准、为什么、怎么改能避开，60 字以内"}}]}}"""
 
         try:
             model = genai.GenerativeModel(
                 model_name=target_model,
                 system_instruction=safety_instruction
             )
-            contents = ["请审查以下所有图片是否包含违规内容："] + images
+            contents = [f"以下为本作品全部 {len(images)} {unit}画面，请按要求审查："] + images
 
             res = await model.generate_content_async(
                 contents,
@@ -160,13 +186,32 @@ class VisionLLMService:
                 if isinstance(result, list):
                     result = result[0] if result else {}
                 if not isinstance(result, dict):
-                    return {"content_violation": False}
-                return result
-            return {"content_violation": False}
+                    return {"block": False, "risks": []}
+                risks = result.get("risks") or []
+                if not isinstance(risks, list):
+                    risks = []
+                risks = [r for r in risks if isinstance(r, dict) and r.get("level") in RISK_LEVELS]
+                return {"block": bool(result.get("block")),
+                        "block_type": result.get("block_type") or "sexual_content",
+                        "evidence": result.get("evidence", ""),
+                        "risks": risks}
+            return {"block": False, "risks": []}
 
         except Exception as e:
-            print(f"⚠️ 内容安全审查异常（默认放行）: {e}")
-            return {"content_violation": False}
+            print(f"⚠️ 内容安全审查异常（默认放行，不出风险提示）: {e}")
+            return {"block": False, "risks": []}
+
+    @staticmethod
+    def _render_risks(risks: list) -> str:
+        """参赛内容风险提示（无风险时返回空串）。"""
+        if not risks:
+            return ""
+        order = {lv: i for i, lv in enumerate(RISK_LEVELS)}
+        lines = ["", "#### ⚠️ 参赛内容风险提示",
+                 "以下几处若参加儿童文学奖评审，可能在内容安全环节被拒绝或交人工裁定。本次分析不受影响，供修改时参考。", ""]
+        for r in sorted(risks, key=lambda x: order.get(x.get("level"), 9)):
+            lines.append(f"- **{r.get('where', '')}｜{r.get('issue', '')}｜{r.get('level', '')}**：{r.get('reason', '')}")
+        return "\n".join(lines)
 
     # =========================================================
     # Prompt 构建
@@ -179,6 +224,7 @@ class VisionLLMService:
         core_philosophy = """
 【章程 v2：儿童文学主权条款（评审总前提）】
 本赛事是儿童文学奖项。绘本与插画在此接受儿童文学的检验，而非纯美术的检验。
+- 读者：儿童、孩子在这里都指青少年读者（10 岁以上，不含低幼）。
 - 情感的真挚浓度与儿童可通达性，决定作品的天花板；技法完成度决定地板。
 - 反平庸条款：套路化的甜腻不应高于笨拙的真挚。
 - 材质盾牌：材质本身不构成加减分理由，加减分只来自材质与情感传达的咬合程度。
@@ -245,7 +291,8 @@ class VisionLLMService:
         else:  # illustration
             dimensions = """
 【核心评分维度】
-1. 意境与叙事张力 score_mood（满分 4.0）：画面的情感浓度与"一幅画暗示未展开故事"的叙事张力，须儿童可通达。系列含整组情绪递进。
+1. 意境 score_mood（满分 4.0）：作品选定的情绪被画面做到什么程度——浓度（是否饱满）、准确（画面是否恰好传达它）、余味（看完是否留得住），以及"一幅画暗示未展开故事"的暗示力；须青少年观者可通达。
+   - 本项的范围：情绪是否复杂、系列有没有递进或转折，不在本项评判范围之内。单一而饱满的情绪和复杂的情绪一样可以得高分；温暖、轻柔、明朗、幽默同样有高下，高下看浓度、准确与余味。原因是：插画多为单幅或组图，一幅或一组画把一种状态做足，本身就是完整的作品。
 2. 视觉语法与技法完成度 score_craft（满分 3.5）：造型、构图、色彩与风格统一度。按审美通道法度评判。含传统元素时计入"文化活化张力"。
 3. 独创性与风格辨识度 score_originality（满分 2.5）：个人视觉语法的独特性与先锋性，而非似曾相识的流行插画风。
    - 【修辞偏差防御】创作说明仅供背景参考，说明文采不影响视觉评分。
@@ -253,18 +300,18 @@ class VisionLLMService:
 
             analysis_fields = """
 "visual_reading": "【画面读解】150字以内，用平实的话讲清这（组）画在描绘或暗示什么：情境、情绪，以及它作为插画暗示了怎样一个未完全展开的故事。只讲从画面读出的内容，不套理论。",
-"series_coherence": "【系列统一性】系列填：风格是否贯通、多幅之间有无构成视觉序列或情绪递进，指出具体的贯通点或断裂处在哪几幅。单幅填：单幅无系列。","""
+"series_coherence": "【系列统一性】系列填：风格是否贯通、各幅是否构成一个整体（视觉序列，或以统一的情绪构成一个完整状态，都成立；不要求情绪递进），指出具体的贯通点或断裂处在哪几幅。单幅填：单幅无系列。","""
 
             score_fields = """
-"score_mood": 浮点数 (0.0-4.0，意境与叙事张力),
+"score_mood": 浮点数 (0.0-4.0，意境：浓度、准确、余味与暗示力),
 "score_craft": 浮点数 (0.0-3.5，视觉语法与技法完成度),
 "score_originality": 浮点数 (0.0-2.5，独创性与风格辨识度),"""
 
         calibration = """
 【打分校准纪律】
 - 分数带：三项之和 9.0+ 为顶尖决选级稀缺水准；7.5-8.9 具备竞争力；6.0-7.4 合格但平庸；6.0 以下存在明显缺陷。
-- 三个维度必须独立评定，精确到 0.1，且应出现分化。
-- 必须如实指出短板，落实到具体视觉元素，禁止填"无"。"""
+- 三个维度独立评定，精确到 0.1；各项按实际水平给分，不必刻意拉开。
+- 如实指出短板，落实到具体视觉元素。满分代表这一项的理想状态，作品很少达到；如果确实指不出哪一处还差，就如实写"已达上乘，未见可指认的差距"，分数照样落在高段。只在确实指不出时才这样写。"""
 
         cot_steps = """
 【强制执行步骤：先看，后判，最后打分】
@@ -304,7 +351,7 @@ class VisionLLMService:
     "has_traditional_elements": "YES 或 NO",
     {analysis_fields}
     "irreplaceable_value": "30-60字：这部作品最打动人、最难被替代的一处，指明是画面上的哪个具体之处。答不出则以'可替代'开头说明原因。",
-    "main_weakness": "30-60字：最主要的一处短板，指明在画面的哪个位置、是什么问题。禁止填'无'。",
+    "main_weakness": "30-60字：最主要的一处短板，指明在画面的哪个位置、是什么问题。确实指不出时，如实写'已达上乘，未见可指认的差距'。",
     "critique": "综合点评与可执行的修改建议。每个判断都咬住画面具体之处，按该作品所属审美通道的法度来谈，说清好在哪、弱在哪、具体怎么改。",
     "ai_assessment": "基于声明情况与指纹证据，客观说明是否存在 AI 痕迹或机器感，依据要具体到画面的哪一处（约100字）。",
     {score_fields}
@@ -340,7 +387,7 @@ class VisionLLMService:
 - 系列统一性：{flash_result.get('series_coherence', '未提供')}
 - 初读分数：意境/张力 {flash_result.get('score_mood', 'N/A')}/4.0 | 技法 {flash_result.get('score_craft', 'N/A')}/3.5 | 独创性 {flash_result.get('score_originality', 'N/A')}/2.5"""
             score_fields = """
-    "score_mood_depth": 浮点数 (0.0-4.0，画面感染力：画面的情绪浓度和它暗示的故事张力),
+    "score_mood_depth": 浮点数 (0.0-4.0，画面感染力：选定情绪的浓度、准确与余味，以及它暗示的故事张力；情绪是否复杂、系列有无递进不在本项范围),
     "score_visual_tension": 浮点数 (0.0-3.5，画面语言：高清下细看笔触、材质、构图的表现力),
     "score_originality_depth": 浮点数 (0.0-2.5，独创性：个人风格的辨识度与不可替代性),"""
 
@@ -354,6 +401,10 @@ class VisionLLMService:
 三、术语为判断服务：用某个专业概念时，必须是它此刻最能说清问题，且用完立刻用一句话解释它在这幅画里具体指什么。不为显得专业而堆砌术语。
 
 【语气】客观、中肯、就事论事。专业体现在判断准确、依据扎实，不在词汇艰深。
+
+【读者】儿童、孩子在这里都指青少年读者（10 岁以上，不含低幼）。
+
+【满分与高分之间】满分代表理想状态，作品很少达到。某一项若已到高段，又确实指不出哪一处还差，就如实写"已达上乘，未见可指认的差距"，不必另找理由。
 
 【你的任务】
 1. 以高清图为主要依据，对 Flash 初读结论做确认、深化或修正。若初读有明显看错之处，直接指出错在哪、实际是什么。
@@ -371,7 +422,7 @@ class VisionLLMService:
     # =========================================================
 
     @classmethod
-    def _render_flash_report(cls, result: dict, image_type: str, image_count: int) -> str:
+    def _render_flash_report(cls, result: dict, image_type: str, image_count: int, risks: list = None) -> str:
         """将 Flash JSON 结果渲染为 Markdown 报告。"""
 
         if image_type == "picturebook":
@@ -428,10 +479,10 @@ class VisionLLMService:
 {result.get('flash_verdict', 'N/A')}
 
 #### 🤖 AI 辅助声明与浓度审查
-{result.get('ai_assessment', '系统未检测到明显 AI 痕迹。')}"""
+{result.get('ai_assessment', '系统未检测到明显 AI 痕迹。')}""" + cls._render_risks(risks)
 
     @classmethod
-    def _render_pro_report(cls, flash_result: dict, pro_result: dict, image_type: str, image_count: int) -> str:
+    def _render_pro_report(cls, flash_result: dict, pro_result: dict, image_type: str, image_count: int, risks: list = None) -> str:
         """将 Flash + Pro 双层结果渲染为完整 Markdown 报告。"""
 
         if image_type == "picturebook":
@@ -501,7 +552,7 @@ class VisionLLMService:
 {pro_result.get('final_review', 'N/A')}
 
 #### 🤖 AI 辅助声明与浓度审查
-{flash_result.get('ai_assessment', '系统未检测到明显 AI 痕迹。')}"""
+{flash_result.get('ai_assessment', '系统未检测到明显 AI 痕迹。')}""" + cls._render_risks(risks)
 
     # =========================================================
     # 主入口
@@ -527,11 +578,12 @@ class VisionLLMService:
         """
 
         # ---- 1. 加载所有图片（Flash 分辨率） ----
+        # requests 是同步调用，放到线程里执行，避免阻塞 FastAPI 事件循环
         images_flash = []
         found_ai_fingerprints = set()
 
-        for url in image_urls:
-            img, fingerprint = cls._fetch_and_process_image(url, max_dim=FLASH_MAX_DIM)
+        loaded = await cls._load_images(image_urls, FLASH_MAX_DIM)
+        for img, fingerprint in loaded:
             if img:
                 if fingerprint:
                     found_ai_fingerprints.add(fingerprint)
@@ -559,9 +611,11 @@ class VisionLLMService:
         # ---- 3. 内容安全前置审查（独立调用，评审前拦截，命中即 422 不扣费） ----
         # 复用已加载的 images_flash（1024px），不重新下载、不占额外内存。
         # 独立成一次专职判断，避免让评审模型"既评画又当裁判"导致漏拦。
-        safety_result = await cls._check_content_safety(images_flash, flash_model)
-        if isinstance(safety_result, dict) and safety_result.get("content_violation"):
-            violation_type = safety_result.get("violation_type", "未知违规类型")
+        # 只拦色情与未成年人性化；其余敏感内容写入 risks，在报告末尾提示参赛风险
+        safety_result = await cls._check_content_safety(images_flash, flash_model, image_type)
+        risks = safety_result.get("risks", []) if isinstance(safety_result, dict) else []
+        if isinstance(safety_result, dict) and safety_result.get("block"):
+            violation_type = safety_result.get("block_type", "sexual_content")
             violation_label = VIOLATION_LABELS.get(violation_type, violation_type)
             raise HTTPException(
                 status_code=422,
@@ -624,19 +678,16 @@ class VisionLLMService:
 
         # ---- 6. 仅 Flash：直接渲染报告 ----
         if not use_pro:
-            return cls._render_flash_report(flash_result, image_type, image_count)
+            return cls._render_flash_report(flash_result, image_type, image_count, risks)
 
         # ---- 7. Pro 终审：重新加载高清图片 ----
-        images_pro = []
-        for url in image_urls:
-            img, _ = cls._fetch_and_process_image(url, max_dim=PRO_MAX_DIM)
-            if img:
-                images_pro.append(img)
+        loaded_pro = await cls._load_images(image_urls, PRO_MAX_DIM)
+        images_pro = [img for img, _ in loaded_pro if img]
 
         if not images_pro:
             # Pro 图片加载失败，降级返回 Flash 报告
             print("⚠️ Pro 高清图片加载失败，降级返回 Flash 报告。")
-            return cls._render_flash_report(flash_result, image_type, image_count)
+            return cls._render_flash_report(flash_result, image_type, image_count, risks)
 
         # ---- 8. Pro 调用 ----
         pro_instruction = cls._get_pro_instruction(image_type, flash_result)
@@ -663,14 +714,16 @@ class VisionLLMService:
             pro_result = json.loads(pro_res.text)
             if isinstance(pro_result, list):
                 pro_result = pro_result[0] if pro_result else {}
+            if not isinstance(pro_result, dict):
+                raise ValueError(f"Pro 返回了非预期类型: {type(pro_result).__name__}")
 
         except json.JSONDecodeError:
             # Pro 解析失败，降级返回 Flash 报告
             print("⚠️ Pro 模型未返回标准 JSON，降级返回 Flash 报告。")
-            return cls._render_flash_report(flash_result, image_type, image_count)
+            return cls._render_flash_report(flash_result, image_type, image_count, risks)
         except Exception as e:
             print(f"⚠️ Pro 终审失败（{e}），降级返回 Flash 报告。")
-            return cls._render_flash_report(flash_result, image_type, image_count)
+            return cls._render_flash_report(flash_result, image_type, image_count, risks)
 
         # ---- 9. 渲染 Pro 完整报告 ----
-        return cls._render_pro_report(flash_result, pro_result, image_type, image_count)
+        return cls._render_pro_report(flash_result, pro_result, image_type, image_count, risks)
