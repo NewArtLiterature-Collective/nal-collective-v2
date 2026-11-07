@@ -26,7 +26,8 @@ app.add_middleware(
 app.include_router(admin.router)
 
 # --- 2. 初始化 Stripe ---
-stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe.api_key = settings.STRIPE_SECRET_KEY_EFFECTIVE
+print(f"💳 Stripe 模式: {'LIVE（真实收款）' if settings.STRIPE_USE_LIVE else 'TEST（沙盒）'}")
 
 # --- 3. 注册路由 (核心修改点：统一在这里加前缀) ---
 app.include_router(evaluation_router, prefix="/api/v1/evaluate", tags=["Evaluation"])
