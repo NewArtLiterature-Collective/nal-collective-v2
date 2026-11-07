@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient'; 
+import { supabase } from './supabaseClient';
+import { API_BASE } from './config';
 
 export default function AdminDashboard() {
-  const API_BASE = 'https://nal-api-backend.onrender.com';
 
   // 🆕 取当前登录态的 access_token，作为管理员身份传给后端（后端校验 JWT 里 role=admin）
   const authHeaders = async () => {
