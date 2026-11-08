@@ -21,10 +21,23 @@
 #     按竞赛内容安全标准（全局+局部）在报告末尾给出"参赛内容风险提示"
 #   - AI 指纹去掉 swinir（AI 放大工具，不是生成器；手绘扫描稿放大不应被判为使用 AI）
 #   - 图片下载改为线程并发（最多 6 张同时解码），不阻塞事件循环；限制超大图片像素，防解压炸弹
+#
+# v3.2（2026-11）内存保护（修复绘本评审时实例 OOM 重启）：
+#   - 下载限大小：流式下载，单张超过 15MB 立即中止，不把整个响应读进内存
+#   - 解码前查像素：只读文件头即检查宽×高，JPEG 超过 5000 万、PNG 超过 2500 万像素直接拒绝，绝不进入解码
+#   - 格式白名单：服务端只接受 JPEG / PNG
+#   - JPEG 缩尺解码（draft），峰值内存降一个量级
+#   - 用完即释放：原图与原始字节处理完立即关闭；Pro 终审前先释放 Flash 分辨率图片
+#   - 送模型的图片改为压缩 JPEG 字节（{"mime_type","data"}），不再常驻解码位图：
+#     50 页 × 1536px 由约 265MB 降到约 15MB
+#   - 全站并发闸：解码数（默认 1）与评审数（默认 2）可用环境变量 VISION_DECODE_CONCURRENCY /
+#     VISION_EVAL_CONCURRENCY 调整；排队超时提示繁忙（不扣费）
+#   - 被拒图片明确告知用户是第几页、什么原因（422，不扣费），不再静默跳过做残缺评审
 # ============================================================================
 
 import json
 import io
+import os
 import asyncio
 import requests
 import PIL.Image
@@ -33,8 +46,25 @@ import google.generativeai as genai
 from fastapi import HTTPException
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-# 不设为 None：公开上传服务需防解压炸弹。2 亿像素足够容纳高分辨率扫描稿
-PIL.Image.MAX_IMAGE_PIXELS = 200_000_000
+
+# ---- 内存保护（v3.2）----
+MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024        # 单张图片下载上限 15MB
+MAX_IMAGE_PIXELS_ACCEPT = 50_000_000         # JPEG 像素上限 5000 万（约 7000×7000），解码前检查
+MAX_PNG_PIXELS = 25_000_000                  # PNG 像素上限 2500 万（约 5000×5000）：PNG 无法缩尺解码，
+                                             # 单张解码约 4.5 字节/像素（2500 万 ≈ 110MB），须更严
+ALLOWED_FORMATS = {"JPEG", "MPO", "PNG"}     # MPO 是部分手机拍摄的 JPEG 变体
+# 第二道保护：PIL 自带的解压炸弹检查（超过该值 2 倍直接报错）。不设为 None。
+PIL.Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS_ACCEPT
+
+# 全站并发闸（模块级，跨请求共享；uvicorn 单进程内有效）
+# 默认值按 512MB 实例设定；升级内存后可在 Render 环境变量里调大，无需改代码
+_DECODE_SEM = asyncio.Semaphore(int(os.getenv("VISION_DECODE_CONCURRENCY", "1")))   # 同一时刻在解码的图片数
+_EVAL_SEM = asyncio.Semaphore(int(os.getenv("VISION_EVAL_CONCURRENCY", "2")))       # 同一时刻在跑的视觉评审数
+EVAL_QUEUE_TIMEOUT = 120                     # 排队超过 120 秒仍未轮到 → 提示繁忙，不扣费
+
+
+class ImageRejected(Exception):
+    """图片不符合上传规范（过大 / 格式不支持），消息直接展示给用户。"""
 
 # 分辨率分层
 FLASH_MAX_DIM = 1024   # Flash 初读：降低内存峰值
@@ -65,12 +95,56 @@ class VisionLLMService:
     # =========================================================
 
     @staticmethod
-    def _fetch_and_process_image(url: str, max_dim: int = FLASH_MAX_DIM) -> tuple:
-        """从 URL 下载图片，提取 AI 元数据指纹，再降采样压缩。"""
-        try:
-            response = requests.get(url, timeout=15)
+    def _download_limited(url: str) -> bytes:
+        """流式下载，超过 MAX_DOWNLOAD_BYTES 立即中止，不把超大响应整个读进内存。"""
+        limit_mb = MAX_DOWNLOAD_BYTES // (1024 * 1024)
+        with requests.get(url, timeout=15, stream=True) as response:
             response.raise_for_status()
-            img = PIL.Image.open(io.BytesIO(response.content))
+            declared = response.headers.get("Content-Length", "")
+            if declared.isdigit() and int(declared) > MAX_DOWNLOAD_BYTES:
+                raise ImageRejected(f"文件过大（{int(declared) / 1048576:.1f}MB），单张上限 {limit_mb}MB")
+            buf = io.BytesIO()
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
+                buf.write(chunk)
+                if buf.tell() > MAX_DOWNLOAD_BYTES:
+                    raise ImageRejected(f"文件过大，单张上限 {limit_mb}MB")
+            return buf.getvalue()
+
+    @staticmethod
+    def _fetch_and_process_image(url: str, max_dim: int = FLASH_MAX_DIM) -> tuple:
+        """从 URL 下载图片，提取 AI 元数据指纹，再降采样压缩。
+        返回 (img, ai_fingerprint, error)：
+          - 成功：img 为 {"mime_type": "image/jpeg", "data": 压缩字节}（直接交给 Gemini，不常驻解码位图），error 为 None
+          - 失败：img 为 None，error 为给用户看的原因"""
+        too_big_msg = (f"图片尺寸过大，请压缩到 {MAX_IMAGE_PIXELS_ACCEPT // 1_000_000} 百万像素以内"
+                       f"（例如 7000×7000 以内）后重新上传")
+        raw = None
+        img = None
+        try:
+            raw = VisionLLMService._download_limited(url)
+            img = PIL.Image.open(io.BytesIO(raw))   # 只读文件头，此时尚未解码像素
+
+            # ① 格式白名单
+            if img.format not in ALLOWED_FORMATS:
+                raise ImageRejected(f"格式不支持（{img.format or '未知'}），仅接受 JPG / PNG")
+
+            # ② 解码前查像素：超大图在这里就拒绝，绝不进入解码（OOM / 解压炸弹的根源）
+            w, h = img.size
+            if img.format == "PNG" and w * h > MAX_PNG_PIXELS:
+                raise ImageRejected(
+                    f"PNG 图片尺寸过大（当前 {w}×{h}），请压缩到 {MAX_PNG_PIXELS // 1_000_000} 百万像素以内"
+                    f"（例如 5000×5000 以内），或另存为 JPG 后重新上传"
+                )
+            if w * h > MAX_IMAGE_PIXELS_ACCEPT:
+                raise ImageRejected(f"{too_big_msg}（当前 {w}×{h}）")
+
+            # ③ JPEG 缩尺解码：直接以接近目标尺寸的比例解码，峰值内存降一个量级（PNG 不支持，自动忽略）
+            try:
+                img.draft("RGB", (max_dim, max_dim))
+            except Exception:
+                pass
 
             ai_fingerprint = ""
             meta_text = ""
@@ -104,22 +178,36 @@ class VisionLLMService:
             if max(img.size) > max_dim:
                 img.thumbnail((max_dim, max_dim), PIL.Image.Resampling.LANCZOS)
 
-            buf = io.BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=85)
-            buf.seek(0)
-            return PIL.Image.open(buf), ai_fingerprint
+            out = io.BytesIO()
+            img.convert("RGB").save(out, format="JPEG", quality=85)
+            # 只保留压缩字节（每张约 0.1–0.3MB），解码位图随原图一起释放
+            return {"mime_type": "image/jpeg", "data": out.getvalue()}, ai_fingerprint, None
 
+        except ImageRejected as e:
+            print(f"⚠️ 图片被拒 ({url}): {e}")
+            return None, "", str(e)
+        except PIL.Image.DecompressionBombError:
+            print(f"⚠️ 图片被拒（解压炸弹保护）({url})")
+            return None, "", too_big_msg
         except Exception as e:
             print(f"⚠️ 图片加载失败 ({url}): {e}")
-            return None, ""
+            return None, "", "无法读取（文件可能损坏，或链接暂时不可访问），请重新上传"
+        finally:
+            # ④ 用完即释放：关闭原图、丢弃原始字节
+            if img is not None:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+            raw = None
 
     @classmethod
     async def _load_images(cls, image_urls: list, max_dim: int) -> list:
-        """并发下载并压缩图片，保持原顺序。同时最多 6 张在内存中解码，避免绘本上百页时内存峰值过高。"""
-        sem = asyncio.Semaphore(6)
+        """下载并压缩图片，保持原顺序。返回 [(img, fingerprint, error), ...]。
+        解码走全站共享的 _DECODE_SEM，多人同时评审也不会把内存叠爆。"""
 
         async def one(url):
-            async with sem:
+            async with _DECODE_SEM:
                 return await asyncio.to_thread(cls._fetch_and_process_image, url, max_dim)
 
         return await asyncio.gather(*[one(u) for u in image_urls])
@@ -570,8 +658,36 @@ class VisionLLMService:
         use_pro: bool = False,
         page_format: str = "single"   # 'single' 单页 / 'spread' 跨页合图（绘本专属）
     ) -> str:
+        """主入口（带全站并发闸）：同一时刻最多 2 个视觉评审在跑，其余排队；排队超时提示繁忙，不扣费。"""
+        try:
+            await asyncio.wait_for(_EVAL_SEM.acquire(), timeout=EVAL_QUEUE_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail="当前评审人数较多，系统繁忙，请稍后再试（本次未扣额度）。"
+            )
+        try:
+            return await cls._evaluate_visual_work_impl(
+                flash_model, pro_model, image_type, image_urls,
+                work_text, has_declared_ai, use_pro, page_format
+            )
+        finally:
+            _EVAL_SEM.release()
+
+    @classmethod
+    async def _evaluate_visual_work_impl(
+        cls,
+        flash_model: str,
+        pro_model: str,
+        image_type: str,
+        image_urls: list,
+        work_text: str = "",
+        has_declared_ai: bool = False,
+        use_pro: bool = False,
+        page_format: str = "single"
+    ) -> str:
         """
-        主入口。
+        评审实现。
         - use_pro=False：Flash 一次调用
         - use_pro=True：Flash 快速读图 → Pro 高清深度判词（两次调用）
         内容安全审查和 AI 声明核验均在模型调用前执行，违规时不扣额度。
@@ -583,11 +699,27 @@ class VisionLLMService:
         found_ai_fingerprints = set()
 
         loaded = await cls._load_images(image_urls, FLASH_MAX_DIM)
-        for img, fingerprint in loaded:
+        unit = "幅" if image_type == "illustration" else "页"
+        rejected = []
+        for idx, (img, fingerprint, err) in enumerate(loaded, start=1):
             if img:
                 if fingerprint:
                     found_ai_fingerprints.add(fingerprint)
                 images_flash.append(img)
+            else:
+                rejected.append(f"· 第 {idx} {unit}：{err}")
+
+        if rejected:
+            # 有图片未通过：不做残缺评审（缺页的绘本分析会失真），直接告知原因，不扣额度
+            images_flash.clear()
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "⚠️ 部分图片未通过上传检查，本次分析未执行，额度不予扣除。\n\n"
+                    + "\n".join(rejected)
+                    + "\n\n请按提示处理后重新提交。"
+                )
+            )
 
         if not images_flash:
             raise ValueError("未能加载任何有效图片，请检查图片链接是否可访问。")
@@ -680,13 +812,17 @@ class VisionLLMService:
         if not use_pro:
             return cls._render_flash_report(flash_result, image_type, image_count, risks)
 
-        # ---- 7. Pro 终审：重新加载高清图片 ----
-        loaded_pro = await cls._load_images(image_urls, PRO_MAX_DIM)
-        images_pro = [img for img, _ in loaded_pro if img]
+        # ---- 7. Pro 终审：先释放 Flash 分辨率图片，再加载高清图（避免两套图片同时常驻内存） ----
+        images_flash.clear()
+        flash_contents.clear()
 
-        if not images_pro:
-            # Pro 图片加载失败，降级返回 Flash 报告
-            print("⚠️ Pro 高清图片加载失败，降级返回 Flash 报告。")
+        loaded_pro = await cls._load_images(image_urls, PRO_MAX_DIM)
+        images_pro = [img for img, _, _ in loaded_pro if img]
+
+        if len(images_pro) < image_count:
+            # 高清图片未能全部加载（残缺的高清集会误导终审），降级返回 Flash 报告
+            print(f"⚠️ Pro 高清图片仅加载 {len(images_pro)}/{image_count}，降级返回 Flash 报告。")
+            images_pro.clear()
             return cls._render_flash_report(flash_result, image_type, image_count, risks)
 
         # ---- 8. Pro 调用 ----
