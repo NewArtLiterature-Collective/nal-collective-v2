@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import logo from './assets/nal_logo.png';
+import { API_BASE } from './config';
 
-// 🆕 后端地址（与 AdminDashboard / useEvaluation 一致）。私有桶下，展厅图片经此签名获取。
-const API_BASE = 'https://nal-api-backend.onrender.com';
+// 🆕 后端地址来自构建期环境变量 VITE_API_BASE_URL（见 config.js），v2 / www 各指各的后端。
+//    私有桶下，展厅图片经此签名获取。
 
 export default function Gallery() {
   const navigate = useNavigate();
