@@ -23,6 +23,10 @@
 #   - 风险判断跑两次再合并：两次一致才采用；不一致降为"可能交人工"；两次都判性化才拦截
 #   - 风险改法须在保留作品意图的前提下给出，不建议删除核心意象
 #   - 引用画面文字必须原样照录，看不清就不引（安全审查、Flash、Pro 三处）
+#   - 迁移到新版 SDK google-genai 与 Gemini 3.8 Flash（2.5 系列 2026-12-01 停用）：
+#     对外接口不变；路由传入的旧模型名自动映射 gemini-2.5-flash → gemini-3.8-flash@low、
+#     gemini-2.5-pro → gemini-3.8-flash@medium；写了思考档位的不再传 temperature。
+#     依赖 pip install -U google-genai，读取环境变量 GEMINI_API_KEY（或 GOOGLE_API_KEY）
 #   - 图片下载改为线程并发（最多 6 张同时解码），不阻塞事件循环；限制超大图片像素，防解压炸弹
 # ============================================================================
 
@@ -32,12 +36,54 @@ import asyncio
 import requests
 import PIL.Image
 from PIL import ImageFile
-import google.generativeai as genai
+import os
+from google import genai
+from google.genai import types
 from fastapi import HTTPException
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 # 不设为 None：公开上传服务需防解压炸弹。2 亿像素足够容纳高分辨率扫描稿
 PIL.Image.MAX_IMAGE_PIXELS = 200_000_000
+
+# ---- 模型调用（新版 SDK）----
+LEGACY_MODEL_MAP = {
+    "gemini-2.5-pro": "gemini-3.8-flash@medium",
+    "gemini-2.5-flash": "gemini-3.8-flash@low",
+}
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        _client = genai.Client(api_key=key) if key else genai.Client()
+    return _client
+
+
+def resolve_model(spec: str):
+    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
+    name, _, level = spec.partition("@")
+    return name.strip(), (level.strip().lower() or None)
+
+
+async def generate(spec: str, contents, system_instruction: str = None, json_mode: bool = False, **cfg):
+    """统一的异步调用（contents 可直接放 PIL 图片）：写了思考档位的设 thinking_level、去掉采样参数。"""
+    name, level = resolve_model(spec)
+    kw = dict(cfg)
+    if system_instruction:
+        kw["system_instruction"] = system_instruction
+    if json_mode:
+        kw["response_mime_type"] = "application/json"
+    if level:
+        for k in _SAMPLING_KEYS:
+            kw.pop(k, None)
+        kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    return await _get_client().aio.models.generate_content(
+        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
+
 
 # 分辨率分层
 FLASH_MAX_DIM = 1024   # Flash 初读：降低内存峰值
@@ -169,20 +215,12 @@ class VisionLLMService:
   "risks": [{{"where": "第N{unit}", "issue": "风险是什么，10 字以内", "level": "可能被拒绝 或 可能交人工", "reason": "对得上哪条标准、为什么、保留意图前提下怎么改能避开，80 字以内"}}]}}"""
 
         try:
-            model = genai.GenerativeModel(
-                model_name=target_model,
-                system_instruction=safety_instruction
-            )
             contents = [f"以下为本作品全部 {len(images)} {unit}画面，请按要求审查："] + images
 
             # 温度 0.2（与竞赛复核一致）：两次审查须是两次独立判断，温度为 0 时两次几乎相同，合并就失去意义
-            res = await model.generate_content_async(
-                contents,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json"
-                )
-            )
+            # 2.5 系列用温度 0.2；3.x 不接受温度，两次审查本身就是独立采样
+            res = await generate(target_model, contents, system_instruction=safety_instruction,
+                                 json_mode=True, temperature=0.2)
 
             if res.candidates and res.candidates[0].content.parts:
                 result = json.loads(res.text)
@@ -691,17 +729,8 @@ class VisionLLMService:
 
         # ---- 5. Flash 调用 ----
         try:
-            flash_model_obj = genai.GenerativeModel(
-                model_name=flash_model,
-                system_instruction=flash_instruction
-            )
-            flash_res = await flash_model_obj.generate_content_async(
-                flash_contents,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json"
-                )
-            )
+            flash_res = await generate(flash_model, flash_contents, system_instruction=flash_instruction,
+                                       json_mode=True, temperature=0.2)
 
             if not (flash_res.candidates and flash_res.candidates[0].content.parts):
                 raise ValueError("Flash 模型未生成有效内容。")
@@ -741,17 +770,8 @@ class VisionLLMService:
         ] + images_pro
 
         try:
-            pro_model_obj = genai.GenerativeModel(
-                model_name=pro_model,
-                system_instruction=pro_instruction
-            )
-            pro_res = await pro_model_obj.generate_content_async(
-                pro_contents,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                    response_mime_type="application/json"
-                )
-            )
+            pro_res = await generate(pro_model, pro_contents, system_instruction=pro_instruction,
+                                     json_mode=True, temperature=0.3)
 
             if not (pro_res.candidates and pro_res.candidates[0].content.parts):
                 raise ValueError("Pro 模型未生成有效内容。")
