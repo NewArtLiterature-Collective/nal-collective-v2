@@ -1,6 +1,7 @@
 # services/contest_literary_service.py
 import os
 import json
+import asyncio
 from core.config import settings
 from google import genai
 from google.genai import types
@@ -55,45 +56,56 @@ AI_KEYWORDS = [
     # swinir 已移除：它是超分辨率放大工具，真人作品放大后也会带这个标记，不能作为 AI 生成的证据
 ]
 
+# 只有这一类拦截（不予入围、不进入评审）；其余敏感内容写成“内容风险提示”，照常评审、交人工复核
+# 与 v2 在线视觉评审（vision_llm_service）同一口径
 VIOLATION_LABELS = {
-    "sexual_content": "性暗示或性描写内容",
-    "gore_violence": "写实猎奇的血腥暴力或肢体残缺",
-    "hate_symbol": "仇恨言论或极端主义内容",
-    "self_harm": "自残或自杀的具象描绘",
+    "sexual_content": "色情性行为描写，或对未成年人、少女形象的性化呈现",
 }
+
+# 内容风险的两档（与竞赛内容安全复核的结论对应）
+RISK_LEVELS = ("可能被拒绝", "可能交人工")
 
 SCORE_DIMS = ["文学底色", "叙事创新", "时代感", "感官对位"]
 
-# ===== 统一内容安全口径（与在线文字/视觉、离线 lit/pb/illus 同一套：情节功能性 vs 猎奇渲染）=====
-_TEXT_SAFETY_SYS = """你是一个内容安全审核系统，服务于一个儿童文学评奖平台。你的唯一任务是判断文本片段是否包含违规内容，不做任何文学评价。
+# ===== 统一内容安全口径（全局+局部；只拦性内容，其余写入风险提示）=====
+_SAFETY_COMMON = """读者：10 岁以上的青少年（不含低幼）；作品也会被家长和老师读到。
 
-⚠️核心原则：这是儿童／少年文学平台。少年冒险、科幻、历险题材中，打斗、追逐、营救、受伤、流血、死亡等情节是正常组成部分，绝不能因为出现“血/武器/打斗/受伤”就拦截。真正要拦的，是【为感官刺激／猎奇而写实、具象、细节化地渲染】的内容，而非【推动剧情、点到为止】的情节性内容。判断前先问：这段文字是在“讲一件事”，还是在“细细描摹血腥／性／残忍本身让人感官不适”？只有后者才拦。
+【一、必须拦截（block）——只有这一类】
+{block_rule}
+其他任何内容都不拦截，即使很强烈，也只写进风险提示。
 
-【需要拦截——必须“写实+具象+为渲染而渲染”三者同时成立】
-1. sexual_content：色情或性行为的具体过程描写；针对未成年人的任何性暗示或性化描写。（成人间点到为止的亲密、拥抱、亲吻不拦。）
-2. gore_violence：以感官刺激为目的、细节化地描摹血腥、肢体残缺、内脏、尸体；或细致刻画并渲染酷刑、虐待、折磨过程。
-3. hate_symbol：仇恨言论、极端主义或种族歧视煽动。
-4. self_harm：自残或自杀的具体方法、步骤、过程的详细描写。
+【二、内容风险提示（risks）】
+先看全局：敏感元素在作品里起什么作用——警示、批判、象征、类型惯例，还是渲染、美化、诱导；作品立场是什么，结局把读者引向哪里；这类内容占多大篇幅，是一闪而过，还是成为全篇的主要观感。
+再看局部：逐处看呈现方式，先对照下面的例子判断。全局立场正当，不能抵消局部越线。
+· 可能被拒绝（对得上越线的例子）：
+  - 具体的毒品名称、吸食或获取方式出现在作品里（儿童读物会让原本不知道的孩子知道这些名称，禁毒的意图抵消不了这一点）；
+  - 对儿童施暴、拐卖、关押、持械追逐等直接而紧张的呈现（惊吓通常超过警示）；
+  - 大段的血腥、伤口细节；直接描写自伤的行为、工具或过程；
+  - 美化或诱导危险行为；煽动仇恨；
+  - 多处强烈的呈现累积起来成为全篇基调，即使每一处单看都还不到越线。
+· 可能交人工（没有清楚越线，但呈现强烈或有争议）：例如立场正当，而象征性的写法（表现内心痛苦的伤痕、血滴）可能让一部分读者联想到自伤或血腥；或对照例子仍无法判断的情况。
+· 不算风险，不要写：死亡、霸凌、危险、坏人受惩罚这些题材本身；少年冒险、科幻、历险里推动情节、点到为止的打斗、受伤、流血；民间故事、童话、动物故事里的惯常情节（如妖怪洞里的骷髅、受伤动物腿上的一小块血迹）；作品先呈现、再推翻的批判对象；政治、宗教等符号本身。
+没有风险就返回空列表。大多数作品都没有风险，不要为了填写而找问题。
 
-【放行（儿童／少年文学正常范畴）】情节功能性的暴力与受伤（打斗被打倒、流血、晕倒、受伤、骨折、营救擦伤、捆绑勒痕、淤青、血痂、疤痕，一笔带过服务剧情的“血流如注/瘫倒在地”）；死亡离别（含直接写到有人死去）；战争冲突、少年历险的打斗追逐逃亡；神怪恐怖氛围——只要不是以猎奇为目的细写血腥本身。
+【写法】简体中文。{where_rule}只写作品里看得到的事实，不得转述成作品里没有的话。reason 要说清对得上哪条标准、为什么。
 
-只要犹豫或介于两者之间 → 一律不拦。本平台绝大多数稿件都应判为不违规。
-只输出纯 JSON：命中→{"content_violation": true, "violation_type": "...", "evidence": "20字内原文"}；未命中→{"content_violation": false}"""
+【输出格式】严格 JSON，不含 Markdown：
+{{"block": true 或 false, "block_type": "sexual_content"（仅 block 为 true 时填）, "evidence": "block 为 true 时指出最越界的一处，20 字以内",
+  "risks": [{{"where": "{where_fmt}", "issue": "风险是什么，10 字以内", "level": "可能被拒绝 或 可能交人工", "reason": "对得上哪条标准、为什么，80 字以内"}}]}}"""
 
-_IMG_SAFETY_SYS = """你是一个内容安全审核系统，服务于一个儿童文学（绘本/插画）评奖平台。你的唯一任务是判断图片是否包含违规内容，不做任何艺术评价。
+_TEXT_SAFETY_SYS = ("你是儿童文学评奖平台的内容安全审核员。你的任务是通读文本，做两件事：一、判断是否必须拦截；"
+                    "二、按儿童文学奖的内容安全标准，指出可能需要拒绝或交人工裁定的内容风险。不做文学评价。\n\n"
+                    + _SAFETY_COMMON.format(
+                        block_rule="色情或性行为的具体描写；对儿童的任何性暗示或性化描写。（点到为止的亲密、拥抱、亲吻不拦。）",
+                        where_rule="每处落到具体位置：where 填原文照录的一小句（15 字以内，必须逐字照抄原文）。",
+                        where_fmt="原文照录，15 字以内"))
 
-⚠️核心原则：这是儿童／少年文学平台。少年冒险、科幻、历险、神话题材的插画中，危险、打斗、营救、受伤、流血、死亡等画面是正常组成部分，绝不能因为画面里出现“血/武器/打斗/受伤”就拦截。真正要拦的，是【为感官刺激／猎奇而写实、具象、细节化地呈现】的画面，而非【服务于叙事、点到为止】的情节性画面。
-
-【需要拦截——必须“写实+具象+为渲染而渲染”三者同时成立】
-1. sexual_content：色情或性行为的描绘；针对未成年人的任何性暗示或性化呈现。
-2. gore_violence：以猎奇为目的、写实而细致地呈现的血腥、肢体残缺、内脏、尸体；细致刻画并渲染酷刑/虐待/折磨的画面。
-3. hate_symbol：纳粹标志等仇恨符号、极端主义视觉符号。
-4. self_harm：自残或自杀的具象、写实描绘。
-
-【放行】拥抱、亲吻脸颊、牵手等温情；无性意味的人体/雕塑/低幼裸体（洗澡、婴儿）；死亡离别的画面；战争冲突、少年历险的打斗追逐营救；情节功能性的受伤、流血、包扎、淤青、捆绑勒痕、刀剑/枪等武器；神怪恐怖氛围——只要不是以猎奇为目的细写血腥本身。
-
-只要犹豫或介于两者之间 → 一律不拦。本平台绝大多数作品都应判为不违规。
-只输出纯 JSON：命中→{"content_violation": true, "violation_type": "...", "evidence": "20字内描述最越界处"}；未命中→{"content_violation": false}"""
+_IMG_SAFETY_SYS = ("你是儿童文学评奖平台的内容安全审核员。你的任务是通读全部插画，做两件事：一、判断是否必须拦截；"
+                   "二、按儿童文学奖的内容安全标准，指出可能需要拒绝或交人工裁定的内容风险。不做艺术评价。\n\n"
+                   + _SAFETY_COMMON.format(
+                       block_rule="色情或性行为的描绘；对儿童的任何性化呈现；把角色性感化（内衣式服装、突出胸部等身体部位、挑逗姿态），尤其是少女形象。",
+                       where_rule="每处落到具体位置，写作“第N幅”，按附图顺序，第 1 张为第 1 幅。引用画面上的文字必须原样照录，看不清就不引。",
+                       where_fmt="第N幅"))
 
 _AIGC_SYS = """你是 AIGC 鉴定员，服务于儿童文学评奖平台，只做 AI 生成痕迹鉴定，不评价艺术质量。
 综合判断本作品（文本+插画）是否为 AI 生成或深度 AI 代写/生成：
@@ -182,48 +194,124 @@ class ContestLiteraryService:
             pass
         return ""
 
-    # ---------- 独立前置：内容安全（文本分块 + 图像）----------
+    # ---------- 独立前置：内容安全（文本分块 + 图像；各跑两次再合并）----------
+    @classmethod
+    def _parse_safety(cls, resp) -> dict:
+        data = cls._load_json(resp)
+        risks = data.get("risks") or []
+        if not isinstance(risks, list):
+            risks = []
+        risks = [r for r in risks if isinstance(r, dict) and r.get("level") in RISK_LEVELS]
+        return {"block": cls._affirm(data.get("block")),
+                "block_type": data.get("block_type") or "sexual_content",
+                "evidence": (data.get("evidence") or "").strip(),
+                "risks": risks}
+
+    @staticmethod
+    def _same_place(a: str, b: str, is_text: bool) -> bool:
+        """两次审查的位置是否同一处：插画比“第N幅”；文本比照录原文是否有 4 字以上重合。"""
+        a, b = "".join(str(a).split()), "".join(str(b).split())
+        if not a or not b:
+            return False
+        if not is_text:
+            return a == b
+        if a in b or b in a:
+            return True
+        from difflib import SequenceMatcher
+        m = SequenceMatcher(None, a, b).find_longest_match(0, len(a), 0, len(b))
+        return m.size >= 4
+
+    @classmethod
+    def _merge_safety(cls, runs: list, is_text: bool) -> dict:
+        """两次审查合并（与在线视觉评审同一规则）：两次都判拦截才拦截；风险按位置对齐，
+        两次同档才采用该档，不一致（档位不同或只出现一次）降为“可能交人工”。只拦截一次的，转为一条交人工提示。"""
+        runs = [r for r in runs if isinstance(r, dict)]
+        if not runs:
+            return {"block": False, "risks": []}
+        if len(runs) == 1:
+            return runs[0]
+        a, b = runs[0], runs[1]
+        if a.get("block") and b.get("block"):
+            return {"block": True, "block_type": a.get("block_type", "sexual_content"),
+                    "evidence": a.get("evidence", ""), "risks": []}
+        merged, used = [], set()
+        b_risks = b.get("risks", [])
+        for r in a.get("risks", []):
+            j = next((j for j, o in enumerate(b_risks)
+                      if j not in used and cls._same_place(r.get("where"), o.get("where"), is_text)), None)
+            if j is not None:
+                used.add(j)
+            same = j is not None and b_risks[j].get("level") == r.get("level")
+            merged.append({**r, "level": r.get("level") if same else "可能交人工"})
+        for j, r in enumerate(b_risks):
+            if j not in used:
+                merged.append({**r, "level": "可能交人工"})
+        one = a if a.get("block") else (b if b.get("block") else None)
+        if one:
+            merged.insert(0, {"where": "", "issue": "疑似性内容", "level": "可能交人工",
+                              "reason": (one.get("evidence") or "") + "（两次审查结论不一致，须人工复核）"})
+        return {"block": False, "risks": merged}
+
+    @classmethod
+    async def _safety_once(cls, contents, system_instruction) -> dict:
+        # 温度 0.2：两次审查须是两次独立判断（只对不带思考档位的模型生效；3.8 本身就是独立采样）
+        resp = await _generate(SCREEN_MODEL, contents, system_instruction, temperature=0.2)
+        return cls._parse_safety(resp)
+
+    @classmethod
+    async def _safety_twice(cls, contents, system_instruction, is_text: bool, label: str) -> dict:
+        runs = await asyncio.gather(cls._safety_once(contents, system_instruction),
+                                    cls._safety_once(contents, system_instruction),
+                                    return_exceptions=True)
+        ok = []
+        for r in runs:
+            if isinstance(r, Exception):
+                # 单次异常默认放行（不因一次抖动误伤真人作品）；两次都异常即本段不出结论
+                print(f"⚠️ {label}内容安全审查一次异常，降级放行: {r}")
+            else:
+                ok.append(r)
+        return cls._merge_safety(ok, is_text)
+
     @classmethod
     async def _scan_text_safety(cls, text: str) -> dict:
         chunks = cls._chunk_text(text)
         if not chunks:
-            return {"content_violation": False}
-        for idx, chunk in enumerate(chunks):
-            try:
-                resp = await _generate(
-                    SCREEN_MODEL,
-                    [f"【待审查文本片段 {idx + 1}/{len(chunks)}】：\n{chunk}"],
-                    _TEXT_SAFETY_SYS, temperature=0.0,
-                )
-                data = cls._load_json(resp)
-                if data.get("content_violation"):
-                    data["where"] = "text"
-                    return data
-            except Exception as e:
-                # 单块抖动默认放行该块，其余块继续（不因一次异常误伤真人作品）
-                print(f"⚠️ 文本内容安全第 {idx + 1} 块降级放行: {e}")
-                continue
-        return {"content_violation": False}
+            return {"block": False, "risks": []}
+        n = len(chunks)
+        results = await asyncio.gather(*[
+            cls._safety_twice([f"【待审查文本{'片段 ' + str(i + 1) + '/' + str(n) if n > 1 else ''}】：\n{c}"],
+                              _TEXT_SAFETY_SYS, True, f"文本第 {i + 1} 块")
+            for i, c in enumerate(chunks)])
+        risks = []
+        for i, r in enumerate(results):
+            if r.get("block"):
+                return {**r, "where": "text"}
+            for x in r.get("risks", []):
+                w = str(x.get("where") or "").strip()
+                risks.append({**x, "where": f"文本「{w}」" if w else "文本"})
+        return {"block": False, "risks": risks}
 
     @classmethod
     async def _scan_image_safety(cls, pil_images: list) -> dict:
         if not pil_images:
-            return {"content_violation": False}
-        try:
-            resp = await _generate(
-                SCREEN_MODEL,
-                ["请审查以下所有图片是否包含违规内容："] + pil_images,
-                _IMG_SAFETY_SYS, temperature=0.0,
-            )
-            data = cls._load_json(resp)
-            if data.get("content_violation"):
-                data["where"] = "image"
-                return data
-            return {"content_violation": False}
-        except Exception as e:
-            # 图像扫描异常本身是风险信号，但大赛口径下保守交由评审横幅标注、不强拦；默认放行记录
-            print(f"⚠️ 图像内容安全扫描降级放行: {e}")
-            return {"content_violation": False, "scan_error": True}
+            return {"block": False, "risks": []}
+        contents = [f"以下为本作品全部 {len(pil_images)} 幅插画，请按要求审查："] + pil_images
+        r = await cls._safety_twice(contents, _IMG_SAFETY_SYS, False, "插画")
+        if r.get("block"):
+            return {**r, "where": "image"}
+        return {"block": False, "risks": [{**x, "where": f"插画{x.get('where') or ''}"} for x in r.get("risks", [])]}
+
+    @staticmethod
+    def render_risks(risks: list) -> str:
+        """内容风险提示（无风险时返回空串）；供评语顶部统一加一次。"""
+        if not risks:
+            return ""
+        order = {lv: i for i, lv in enumerate(RISK_LEVELS)}
+        lines = ["⚠️【内容风险提示 · 须人工复核】以下几处在内容安全环节可能被拒绝或须交人工裁定；评分照常给出。"]
+        for r in sorted(risks, key=lambda x: order.get(x.get("level"), 9)):
+            where = f"{r.get('where')}｜" if r.get("where") else ""
+            lines.append(f"- {where}{r.get('issue', '')}｜{r.get('level', '')}：{r.get('reason', '')}")
+        return "\n".join(lines) + "\n\n"
 
     # ---------- 独立前置：AIGC 鉴定（元数据硬证据 + 文本/画面判断）----------
     @classmethod
@@ -256,18 +344,28 @@ class ContestLiteraryService:
     # ---------- 可被调用方单独调用的"一次性筛查"（推荐在 persona 循环前跑一次）----------
     @classmethod
     async def screen_work(cls, text: str, pil_images: list, has_declared_ai: bool = False) -> dict:
-        """内容安全 + AIGC 独立前置筛查。返回供调用方决定是否入围/是否标注。"""
-        t_safe = await cls._scan_text_safety(text)
-        i_safe = await cls._scan_image_safety(pil_images)
-        hit = t_safe if t_safe.get("content_violation") else (i_safe if i_safe.get("content_violation") else None)
+        """内容安全 + AIGC 独立前置筛查。返回供调用方决定是否入围/是否标注。
+        · 只有性内容（两次审查都判定）才 content_blocked；
+        · 其余内容风险放在 risks 里，照常评审，由调用方在评语顶部标注、交人工复核。"""
+        t_safe, i_safe, aigc = await asyncio.gather(
+            cls._scan_text_safety(text),
+            cls._scan_image_safety(pil_images),
+            cls._scan_aigc(text, pil_images),
+        )
+        hit = t_safe if t_safe.get("block") else (i_safe if i_safe.get("block") else None)
+        # 保持旧字段格式，contest_agent._build_block_message 无需改动
+        content_safety = ({"content_violation": True, "violation_type": hit.get("block_type", "sexual_content"),
+                           "evidence": hit.get("evidence", ""), "where": hit.get("where")}
+                          if hit else {"content_violation": False})
+        risks = [] if hit else (t_safe.get("risks", []) + i_safe.get("risks", []))
 
-        aigc = await cls._scan_aigc(text, pil_images)
         # 未申明却检测到 AI → 打标（大赛口径：不拦，照评但显著标注）
         ai_flag = bool(aigc.get("suspected")) and not has_declared_ai
 
         return {
             "content_blocked": bool(hit),
-            "content_safety": hit or {"content_violation": False},
+            "content_safety": content_safety,
+            "risks": risks,
             "aigc": aigc,
             "ai_declared": bool(has_declared_ai),
             "ai_flag": ai_flag,
@@ -299,14 +397,17 @@ class ContestLiteraryService:
     @staticmethod
     async def evaluate_contest_work(text: str, pil_images: list, persona: str = "panoramic",
                                     has_declared_ai: bool = False, screen: dict = None,
-                                    mark_ai: bool = True):
+                                    mark_ai: bool = True, mark_risks: bool = None):
         """
         多模态会诊（文本+插画）。内容安全与 AIGC 已改为独立前置：
         · 内容违规 → 不予入围、不评审（返回 content_blocked，供批处理记录/直接返回用户）。
         · 未申明却检测到 AI → 不拦，照常评审，结果显著标注（大赛口径）。
         调用方可在 persona 循环前调用 screen_work() 一次，并把结果作为 screen= 传入以复用，避免重复扫描。
         mark_ai=False 时本次不在单条评语顶部加 AIGC 横幅（由调用方在合并评语处统一加一次）。
+        mark_risks 控制是否在单条评语顶部加内容风险提示，缺省跟随 mark_ai。
         """
+        if mark_risks is None:
+            mark_risks = mark_ai
         cls = ContestLiteraryService
         # 1) 独立前置筛查（未传入则自行跑一遍，保证单独调用也安全）
         if screen is None:
@@ -372,6 +473,11 @@ class ContestLiteraryService:
                       + (f"\n鉴定依据：{evid}\n\n" if evid else "\n\n"))
             review = banner + review
 
+        # 5) 内容风险（非性内容）→ 不拦、照评，评语顶部提示，交人工复核
+        risks = screen.get("risks") or []
+        if risks and mark_risks:
+            review = cls.render_risks(risks) + review
+
         return {
             "status": "reviewed",
             "content_blocked": False,
@@ -381,4 +487,5 @@ class ContestLiteraryService:
             "ai_flag": ai_flag,
             "aigc": aigc,
             "ai_declared": bool(has_declared_ai),
+            "risks": risks,
         }
