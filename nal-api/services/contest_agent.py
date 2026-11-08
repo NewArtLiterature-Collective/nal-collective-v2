@@ -152,6 +152,11 @@ async def contest_pipeline(submission_id: str):
                       + (f"\n鉴定依据：{evid}" if evid else "") + "\n\n")
             final_review = banner + final_review
 
+        # ⚠️ 内容风险（非性内容）→ 不拦、照评，在评语最顶部统一提示一次，交人工复核
+        risk_note = ContestLiteraryService.render_risks(screen.get("risks") or [])
+        if risk_note:
+            final_review = risk_note + final_review
+
         update_payload = {
             "status": "success",
             "ai_scores": combined_scores,
