@@ -1,4 +1,5 @@
 # services/contest_literary_service.py
+import os
 import json
 from core.config import settings
 from google import genai
@@ -6,9 +7,41 @@ from google.genai import types
 
 client = genai.Client()
 
-# 预检用快模型（确定性）；评审仍用 Pro
-SCREEN_MODEL = "gemini-2.5-flash"
-REVIEW_MODEL = "gemini-2.5-pro"
+# ===== 模型（2026-11 迁移到 Gemini 3.8 Flash）=====
+# gemini-2.5-flash / 2.5-pro 于 2026-12-01 停用。写法 "模型名@思考档位"：
+#   带档位 → 设 thinking_level，并去掉 temperature/top_p/top_k（3.8 不接受采样参数）
+#   不带档位（如 gemini-3.1-pro-preview）→ 照旧传采样参数
+# 可用环境变量覆盖，便于试跑对照。
+SCREEN_MODEL = os.getenv("NAL_CONTEST_SCREEN_MODEL", "gemini-3.8-flash@low")     # 预检：内容安全、AIGC 鉴定
+REVIEW_MODEL = os.getenv("NAL_CONTEST_REVIEW_MODEL", "gemini-3.8-flash@medium")  # 评审
+
+# 旧模型名兜底：若别处仍传旧名，自动换成新模型
+LEGACY_MODEL_MAP = {
+    "gemini-2.5-flash": "gemini-3.8-flash@low",
+    "gemini-2.5-pro": "gemini-3.8-flash@medium",
+}
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+
+
+def resolve_model(spec: str):
+    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
+    name, _, level = spec.partition("@")
+    return name.strip(), (level.strip().lower() or None)
+
+
+async def _generate(spec: str, contents, system_instruction: str = None, **cfg):
+    """统一的异步 JSON 调用：带思考档位的设 thinking_level、去掉采样参数；不带的照旧。"""
+    name, level = resolve_model(spec)
+    kw = dict(cfg)
+    kw["system_instruction"] = system_instruction
+    kw["response_mime_type"] = "application/json"
+    if level:
+        for k in _SAMPLING_KEYS:
+            kw.pop(k, None)
+        kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    return await client.aio.models.generate_content(
+        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
 
 # 内容安全分块参数：违规是局部的，必须全文覆盖
 SAFETY_CHUNK_SIZE = 12000
@@ -18,7 +51,8 @@ AI_KEYWORDS = [
     'stable diffusion', 'midjourney', 'dall-e', 'dall·e',
     'comfyui', 'automatic1111', 'novelai', 'parameters',
     'cfg scale', 'sampler', 'steps:', 'lora', 'controlnet',
-    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl', 'swinir'
+    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl'
+    # swinir 已移除：它是超分辨率放大工具，真人作品放大后也会带这个标记，不能作为 AI 生成的证据
 ]
 
 VIOLATION_LABELS = {
@@ -156,13 +190,10 @@ class ContestLiteraryService:
             return {"content_violation": False}
         for idx, chunk in enumerate(chunks):
             try:
-                resp = await client.aio.models.generate_content(
-                    model=SCREEN_MODEL,
-                    contents=[f"【待审查文本片段 {idx + 1}/{len(chunks)}】：\n{chunk}"],
-                    config=types.GenerateContentConfig(
-                        system_instruction=_TEXT_SAFETY_SYS,
-                        temperature=0.0, response_mime_type="application/json",
-                    ),
+                resp = await _generate(
+                    SCREEN_MODEL,
+                    [f"【待审查文本片段 {idx + 1}/{len(chunks)}】：\n{chunk}"],
+                    _TEXT_SAFETY_SYS, temperature=0.0,
                 )
                 data = cls._load_json(resp)
                 if data.get("content_violation"):
@@ -179,13 +210,10 @@ class ContestLiteraryService:
         if not pil_images:
             return {"content_violation": False}
         try:
-            resp = await client.aio.models.generate_content(
-                model=SCREEN_MODEL,
-                contents=["请审查以下所有图片是否包含违规内容："] + pil_images,
-                config=types.GenerateContentConfig(
-                    system_instruction=_IMG_SAFETY_SYS,
-                    temperature=0.0, response_mime_type="application/json",
-                ),
+            resp = await _generate(
+                SCREEN_MODEL,
+                ["请审查以下所有图片是否包含违规内容："] + pil_images,
+                _IMG_SAFETY_SYS, temperature=0.0,
             )
             data = cls._load_json(resp)
             if data.get("content_violation"):
@@ -211,13 +239,7 @@ class ContestLiteraryService:
         suspected, conf, evid = False, "low", ""
         try:
             contents = [f"【待鉴定文本】：\n{(text or '')[:40000]}"] + (pil_images or [])
-            resp = await client.aio.models.generate_content(
-                model=SCREEN_MODEL, contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=_AIGC_SYS,
-                    temperature=0.0, response_mime_type="application/json",
-                ),
-            )
+            resp = await _generate(SCREEN_MODEL, contents, _AIGC_SYS, temperature=0.0)
             data = cls._load_json(resp)
             suspected = cls._affirm(data.get("ai_suspected"))
             conf = cls._norm_conf(data.get("confidence"))
@@ -321,16 +343,11 @@ class ContestLiteraryService:
         system_instruction += ("\n\n请务必只返回标准 JSON："
                                '{"scores": {"文学底色": 0, "叙事创新": 0, "时代感": 0, "感官对位": 0}, "review": "..."}')
 
-        config = types.GenerateContentConfig(
-            temperature=0.3, top_p=0.95, top_k=40,
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-        )
-
         try:
             contents = [text] + (pil_images or [])
-            response = await client.aio.models.generate_content(
-                model=REVIEW_MODEL, contents=contents, config=config
+            response = await _generate(
+                REVIEW_MODEL, contents, system_instruction,
+                temperature=0.3, top_p=0.95, top_k=40,   # 仅对不带思考档位的模型生效
             )
             result_json = cls._load_json(response)
         except json.JSONDecodeError as je:
