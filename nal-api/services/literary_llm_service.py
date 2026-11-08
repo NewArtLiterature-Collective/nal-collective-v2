@@ -1,11 +1,66 @@
 # nal-api/services/literary_llm_service.py
+# ============================================================================
+# v2（2026-11）：迁移到新版 SDK google-genai 与 Gemini 3.8 Flash
+#   - Gemini 2.5 系列 2026-12-01 停用；旧 SDK google.generativeai 已停止维护，且无法设置思考档位
+#   - 对外接口（各方法名、参数、返回值、422/500 行为）不变，路由无需修改
+#   - 模型写法"模型名@思考档位"；路由传入的旧模型名自动映射：
+#       gemini-2.5-pro → gemini-3.8-flash@medium，gemini-2.5-flash → gemini-3.8-flash@low
+#   - 写了思考档位的调用不再传 temperature / top_p（3.x 不接受采样参数）
+#   - 依赖：pip install -U google-genai；读取环境变量 GEMINI_API_KEY（或 GOOGLE_API_KEY）
+# ============================================================================
+import os
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from fastapi import HTTPException
 
+# 旧模型名 → 新模型（路由或数据库里仍写旧名时自动换掉，12-01 之后照常可用）
+LEGACY_MODEL_MAP = {
+    "gemini-2.5-pro": "gemini-3.8-flash@medium",
+    "gemini-2.5-flash": "gemini-3.8-flash@low",
+}
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        _client = genai.Client(api_key=key) if key else genai.Client()
+    return _client
+
+
+def resolve_model(spec: str):
+    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
+    name, _, level = spec.partition("@")
+    return name.strip(), (level.strip().lower() or None)
+
+
+async def generate(spec: str, contents, system_instruction: str = None, json_mode: bool = False, **cfg):
+    """统一的异步调用：写了思考档位的设 thinking_level、去掉采样参数；没写的照旧传采样参数。"""
+    name, level = resolve_model(spec)
+    kw = dict(cfg)
+    if system_instruction:
+        kw["system_instruction"] = system_instruction
+    if json_mode:
+        kw["response_mime_type"] = "application/json"
+    if level:
+        for k in _SAMPLING_KEYS:
+            kw.pop(k, None)
+        kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    return await _get_client().aio.models.generate_content(
+        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
+
+
+def _has_text(res) -> bool:
+    return bool(res and res.candidates and res.candidates[0].content and res.candidates[0].content.parts)
+
+
 class LiteraryLLMService:
-    # 预读特征提取专用模型 (强制使用 2.5-flash，保证极速响应且不浪费 Pro 额度)
-    MODEL_ADAPTIVE = "gemini-2.5-flash"
+    # 预读、AI 代写检测、内容安全分块扫描专用模型（原 gemini-2.5-flash）
+    MODEL_ADAPTIVE = os.getenv("NAL_TEXT_FLASH_MODEL", "gemini-3.8-flash@low")
 
     @classmethod
     async def generate_creative_guide(cls, user_prompt: str, mentor_desc: str, focus_dimensions: str, snippet_rule: str, target_model: str) -> str:
@@ -33,14 +88,14 @@ class LiteraryLLMService:
         5. 【高光片段试写】：严格按照上方的【试写片段刚性约束】执行。如果要求写长片段，要求极强的画面感和文学性，绝不准敷衍！如果要求拦截，请直接说明“本次服务仅提供大纲”。
         """
 
-        model = genai.GenerativeModel(model_name=target_model, system_instruction=creative_sys_inst)
-        
         try:
-            res = await model.generate_content_async(
-                user_prompt, 
-                generation_config=genai.types.GenerationConfig(temperature=0.7, max_output_tokens=8192, top_p=0.95)
+            # 思考用的 token 也计入输出上限：写了思考档位的，把上限放宽到 16384，避免长片段被截断
+            _, level = resolve_model(target_model)
+            res = await generate(
+                target_model, user_prompt, system_instruction=creative_sys_inst,
+                temperature=0.7, top_p=0.95, max_output_tokens=16384 if level else 8192,
             )
-            if res.candidates and res.candidates[0].content.parts:
+            if _has_text(res):
                 return res.text
             else:
                 reason = res.candidates[0].finish_reason if res.candidates else "未知"
@@ -59,10 +114,9 @@ class LiteraryLLMService:
         必须仅输出纯 JSON 格式：{"fantasy": 0.5, "reality": 0.5, "character": 0.5}"""
 
         try:
-            feature_model = genai.GenerativeModel(cls.MODEL_ADAPTIVE) 
-            f_res = await feature_model.generate_content_async(
-                f"{sense_prompt}\n内容：{current_text[:2000]}", 
-                generation_config=genai.types.GenerationConfig(response_mime_type="application/json", temperature=0.1)
+            f_res = await generate(
+                cls.MODEL_ADAPTIVE, f"{sense_prompt}\n内容：{current_text[:2000]}",
+                json_mode=True, temperature=0.1,
             )
             features = json.loads(f_res.text)
         except Exception as e:
@@ -179,12 +233,10 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
 {"ai_ghostwritten": true, "confidence": "high", "evidence": "40-90字，点名你命中了上面哪几类信号（如 A、C），并各举一处原文为证"}"""
 
         try:
-            model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
-            res = await model.generate_content_async(
+            res = await generate(
+                cls.MODEL_ADAPTIVE,
                 f"{detect_prompt}\n\n【待检测文本（长文为头/中/尾节选）】：\n{excerpt}",
-                generation_config=genai.types.GenerationConfig(
-                    response_mime_type="application/json", temperature=0.1
-                )
+                json_mode=True, temperature=0.1,
             )
             data = json.loads(res.text)
             if isinstance(data, list):
@@ -257,14 +309,12 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         if not chunks:
             return {"content_violation": False}
 
-        model = genai.GenerativeModel(cls.MODEL_ADAPTIVE)
         for idx, chunk in enumerate(chunks):
             try:
-                res = await model.generate_content_async(
+                res = await generate(
+                    cls.MODEL_ADAPTIVE,
                     f"{safety_prompt}\n\n【待审查文本片段 {idx + 1}/{len(chunks)}】：\n{chunk}",
-                    generation_config=genai.types.GenerationConfig(
-                        response_mime_type="application/json", temperature=0.0
-                    )
+                    json_mode=True, temperature=0.0,
                 )
                 data = json.loads(res.text)
                 if isinstance(data, list):
@@ -399,19 +449,11 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         combined_instruction = adaptive_inst + "\n\n" + eval_sys_inst
         
         try:
-            eval_model = genai.GenerativeModel(
-                model_name=target_model, 
-                system_instruction=combined_instruction
-            )
-            
             prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！\n请严格按指令进行全方位学术与 AI 侦测评审。"
             
-            res = await eval_model.generate_content_async(
-                prompt, 
-                generation_config=genai.types.GenerationConfig(temperature=0.2)
-            )
-            
-            if res.candidates and res.candidates[0].content.parts:
+            res = await generate(target_model, prompt, system_instruction=combined_instruction, temperature=0.2)
+
+            if _has_text(res):
                 result_text = res.text.strip()
                 # 内容安全与 AI 代写均已在评审前独立拦截，此处直接返回评审正文
                 return result_text
