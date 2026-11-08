@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { API_BASE } from '../config';
 
 export function usePayment() {
   const [payLoading, setPayLoading] = useState(false);
@@ -9,12 +10,11 @@ export function usePayment() {
     setPayLoading(true);
     setLoadingPlan(planType);
     try {
-      const apiUrl = import.meta.env.VITE_API_BASE_URL;
       const { data: { session: authSession } } = await supabase.auth.getSession();
-            
+
       if (!authSession?.user) return alert("请先登录");
 
-      const response = await fetch(`${apiUrl}/api/v1/payment/create-session`, {
+      const response = await fetch(`${API_BASE}/api/v1/payment/create-session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

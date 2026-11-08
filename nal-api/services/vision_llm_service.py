@@ -20,6 +20,13 @@
 #   - 内容安全改为"只拦色情与未成年人性化，其余提示"：其余敏感内容不再拦截，
 #     按竞赛内容安全标准（全局+局部）在报告末尾给出"参赛内容风险提示"
 #   - AI 指纹去掉 swinir（AI 放大工具，不是生成器；手绘扫描稿放大不应被判为使用 AI）
+#   - 风险判断跑两次再合并：两次一致才采用；不一致降为"可能交人工"；两次都判性化才拦截
+#   - 风险改法须在保留作品意图的前提下给出，不建议删除核心意象
+#   - 引用画面文字必须原样照录，看不清就不引（安全审查、Flash、Pro 三处）
+#   - 迁移到新版 SDK google-genai 与 Gemini 3.8 Flash（2.5 系列 2026-12-01 停用）：
+#     对外接口不变；路由传入的旧模型名自动映射 gemini-2.5-flash → gemini-3.8-flash@low、
+#     gemini-2.5-pro → gemini-3.8-flash@medium；写了思考档位的不再传 temperature。
+#     依赖 pip install -U google-genai，读取环境变量 GEMINI_API_KEY（或 GOOGLE_API_KEY）
 #   - 图片下载改为线程并发（最多 6 张同时解码），不阻塞事件循环；限制超大图片像素，防解压炸弹
 # ============================================================================
 
@@ -29,12 +36,54 @@ import asyncio
 import requests
 import PIL.Image
 from PIL import ImageFile
-import google.generativeai as genai
+import os
+from google import genai
+from google.genai import types
 from fastapi import HTTPException
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 # 不设为 None：公开上传服务需防解压炸弹。2 亿像素足够容纳高分辨率扫描稿
 PIL.Image.MAX_IMAGE_PIXELS = 200_000_000
+
+# ---- 模型调用（新版 SDK）----
+LEGACY_MODEL_MAP = {
+    "gemini-2.5-pro": "gemini-3.8-flash@medium",
+    "gemini-2.5-flash": "gemini-3.8-flash@low",
+}
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        _client = genai.Client(api_key=key) if key else genai.Client()
+    return _client
+
+
+def resolve_model(spec: str):
+    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
+    name, _, level = spec.partition("@")
+    return name.strip(), (level.strip().lower() or None)
+
+
+async def generate(spec: str, contents, system_instruction: str = None, json_mode: bool = False, **cfg):
+    """统一的异步调用（contents 可直接放 PIL 图片）：写了思考档位的设 thinking_level、去掉采样参数。"""
+    name, level = resolve_model(spec)
+    kw = dict(cfg)
+    if system_instruction:
+        kw["system_instruction"] = system_instruction
+    if json_mode:
+        kw["response_mime_type"] = "application/json"
+    if level:
+        for k in _SAMPLING_KEYS:
+            kw.pop(k, None)
+        kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    return await _get_client().aio.models.generate_content(
+        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
+
 
 # 分辨率分层
 FLASH_MAX_DIM = 1024   # Flash 初读：降低内存峰值
@@ -159,26 +208,19 @@ class VisionLLMService:
 · 不算风险，不要写：死亡、霸凌、危险、坏人受惩罚这些题材本身；民间故事、童话、动物故事里点到为止的惯常情节（如妖怪洞里的骷髅、受伤动物腿上的一小块血迹）；作品先呈现、再推翻的批判对象；政治、宗教等符号本身。
 没有风险就返回空列表。大多数作品都没有风险，不要为了填写而找问题。
 
-【写法】简体中文。每处落到具体位置，写作"第N{unit}"，按附图顺序，第 1 张为第 1 {unit}。只写画面和文字里看得到的事实。reason 要说清对得上哪条标准、为什么，并给一句怎么改能避开（例如改为暗示、缩小篇幅、去掉具体名称）。
+【写法】简体中文。每处落到具体位置，写作"第N{unit}"，按附图顺序，第 1 张为第 1 {unit}。只写画面和文字里看得到的事实；引用画面上的文字必须原样照录，看不清就不引，不得转述成画面上没有的话。reason 要说清对得上哪条标准、为什么，并给一句怎么改能避开。改法须在保留作品意图的前提下给出（例如改为暗示、减少数量或篇幅、去掉具体名称），不建议删除作品的核心意象——作者为表达主题而设的意象，改法应是调整呈现方式，而不是拿掉它。
 
 【输出格式】严格 JSON，不含 Markdown：
 {{"block": true 或 false, "block_type": "sexual_content"（仅 block 为 true 时填）, "evidence": "block 为 true 时指出最越界的一处，20 字以内",
-  "risks": [{{"where": "第N{unit}", "issue": "风险是什么，10 字以内", "level": "可能被拒绝 或 可能交人工", "reason": "对得上哪条标准、为什么、怎么改能避开，60 字以内"}}]}}"""
+  "risks": [{{"where": "第N{unit}", "issue": "风险是什么，10 字以内", "level": "可能被拒绝 或 可能交人工", "reason": "对得上哪条标准、为什么、保留意图前提下怎么改能避开，80 字以内"}}]}}"""
 
         try:
-            model = genai.GenerativeModel(
-                model_name=target_model,
-                system_instruction=safety_instruction
-            )
             contents = [f"以下为本作品全部 {len(images)} {unit}画面，请按要求审查："] + images
 
-            res = await model.generate_content_async(
-                contents,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.0,
-                    response_mime_type="application/json"
-                )
-            )
+            # 温度 0.2（与竞赛复核一致）：两次审查须是两次独立判断，温度为 0 时两次几乎相同，合并就失去意义
+            # 2.5 系列用温度 0.2；3.x 不接受温度，两次审查本身就是独立采样
+            res = await generate(target_model, contents, system_instruction=safety_instruction,
+                                 json_mode=True, temperature=0.2)
 
             if res.candidates and res.candidates[0].content.parts:
                 result = json.loads(res.text)
@@ -202,6 +244,39 @@ class VisionLLMService:
             return {"block": False, "risks": []}
 
     @staticmethod
+    def _merge_safety(runs: list) -> dict:
+        """两次审查合并：两次都判拦截才拦截；风险按位置对齐，两次同档才采用该档，
+        不一致（档位不同或只出现一次）降为"可能交人工"。只拦截一次的，转为一条交人工提示。"""
+        runs = [r for r in runs if isinstance(r, dict)]
+        if not runs:
+            return {"block": False, "risks": []}
+        if len(runs) == 1:
+            return runs[0]
+        a, b = runs[0], runs[1]
+        if a.get("block") and b.get("block"):
+            return {"block": True, "block_type": a.get("block_type", "sexual_content"),
+                    "evidence": a.get("evidence", ""), "risks": []}
+
+        def key(r):
+            return "".join(str(r.get("where", "")).split())
+
+        merged, seen = [], set()
+        b_by = {key(r): r for r in b.get("risks", [])}
+        for r in a.get("risks", []):
+            k = key(r); seen.add(k)
+            other = b_by.get(k)
+            lv = r.get("level") if other and other.get("level") == r.get("level") else "可能交人工"
+            merged.append({**r, "level": lv})
+        for k, r in b_by.items():
+            if k not in seen:
+                merged.append({**r, "level": "可能交人工"})
+        one = a if a.get("block") else (b if b.get("block") else None)
+        if one:
+            merged.insert(0, {"where": "", "issue": "疑似性化呈现", "level": "可能交人工",
+                              "reason": (one.get("evidence") or "") + "（两次审查结论不一致，建议自查人物造型与姿态）"})
+        return {"block": False, "risks": merged}
+
+    @staticmethod
     def _render_risks(risks: list) -> str:
         """参赛内容风险提示（无风险时返回空串）。"""
         if not risks:
@@ -210,7 +285,8 @@ class VisionLLMService:
         lines = ["", "#### ⚠️ 参赛内容风险提示",
                  "以下几处若参加儿童文学奖评审，可能在内容安全环节被拒绝或交人工裁定。本次分析不受影响，供修改时参考。", ""]
         for r in sorted(risks, key=lambda x: order.get(x.get("level"), 9)):
-            lines.append(f"- **{r.get('where', '')}｜{r.get('issue', '')}｜{r.get('level', '')}**：{r.get('reason', '')}")
+            where = f"{r.get('where')}｜" if r.get("where") else ""
+            lines.append(f"- **{where}{r.get('issue', '')}｜{r.get('level', '')}**：{r.get('reason', '')}")
         return "\n".join(lines)
 
     # =========================================================
@@ -328,6 +404,7 @@ class VisionLLMService:
 一、落到具体处：每一句判断都要咬住画面里的具体对象——哪一页、画面的哪个位置、哪个视觉元素（某个色块、某条线、某处留白、某个角色的神态）。放到任何作品上都成立的话，不要写。
 二、讲清为什么：不要停在"意境深远""构图精妙"这类结论上。要说清因为画面上的什么（具体现象），所以得出什么判断。遇到形容词，后面必须跟上"体现在哪里"。
 三、术语为判断服务：气韵、留白、互文、骨法用笔、张力这类概念，只在它此刻最能一针见血时才用，且用完立刻用一句话说清它在这幅画里具体指什么。为显得专业而堆砌术语，是不专业的表现，明确禁止。
+四、引用画面上的文字必须原样照录，看不清就不引，不得转述成画面上没有的话。
 
 【定位与语气】
 你是一位资深的儿童文学编辑与插画评审，判词写给创作者本人看，他要靠它判断画好在哪、弱在哪、怎么改。专业体现在判断准确、依据扎实，不在词汇艰深。语气客观中肯、就事论事，好就是好、不好就是不好，不夸大也不打压。"""
@@ -399,6 +476,7 @@ class VisionLLMService:
 一、落到具体处：每一句判断都咬住画面里的具体对象——哪一页、画面哪个位置、哪个视觉元素。放到任何作品上都成立的话，不要写。
 二、讲清为什么：说清因为画面上的什么（具体现象），所以得出什么判断。不要停在"意境深远""笔触精到"这类结论上。
 三、术语为判断服务：用某个专业概念时，必须是它此刻最能说清问题，且用完立刻用一句话解释它在这幅画里具体指什么。不为显得专业而堆砌术语。
+四、引用画面上的文字必须原样照录，看不清就不引，不得转述成画面上没有的话。
 
 【语气】客观、中肯、就事论事。专业体现在判断准确、依据扎实，不在词汇艰深。
 
@@ -612,7 +690,12 @@ class VisionLLMService:
         # 复用已加载的 images_flash（1024px），不重新下载、不占额外内存。
         # 独立成一次专职判断，避免让评审模型"既评画又当裁判"导致漏拦。
         # 只拦色情与未成年人性化；其余敏感内容写入 risks，在报告末尾提示参赛风险
-        safety_result = await cls._check_content_safety(images_flash, flash_model, image_type)
+        # 跑两次再合并（与竞赛内容安全复核一致）：两次一致才采用，不一致降为"可能交人工"
+        safety_runs = await asyncio.gather(
+            cls._check_content_safety(images_flash, flash_model, image_type),
+            cls._check_content_safety(images_flash, flash_model, image_type),
+        )
+        safety_result = cls._merge_safety(list(safety_runs))
         risks = safety_result.get("risks", []) if isinstance(safety_result, dict) else []
         if isinstance(safety_result, dict) and safety_result.get("block"):
             violation_type = safety_result.get("block_type", "sexual_content")
@@ -646,17 +729,8 @@ class VisionLLMService:
 
         # ---- 5. Flash 调用 ----
         try:
-            flash_model_obj = genai.GenerativeModel(
-                model_name=flash_model,
-                system_instruction=flash_instruction
-            )
-            flash_res = await flash_model_obj.generate_content_async(
-                flash_contents,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json"
-                )
-            )
+            flash_res = await generate(flash_model, flash_contents, system_instruction=flash_instruction,
+                                       json_mode=True, temperature=0.2)
 
             if not (flash_res.candidates and flash_res.candidates[0].content.parts):
                 raise ValueError("Flash 模型未生成有效内容。")
@@ -696,17 +770,8 @@ class VisionLLMService:
         ] + images_pro
 
         try:
-            pro_model_obj = genai.GenerativeModel(
-                model_name=pro_model,
-                system_instruction=pro_instruction
-            )
-            pro_res = await pro_model_obj.generate_content_async(
-                pro_contents,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                    response_mime_type="application/json"
-                )
-            )
+            pro_res = await generate(pro_model, pro_contents, system_instruction=pro_instruction,
+                                     json_mode=True, temperature=0.3)
 
             if not (pro_res.candidates and pro_res.candidates[0].content.parts):
                 raise ValueError("Pro 模型未生成有效内容。")

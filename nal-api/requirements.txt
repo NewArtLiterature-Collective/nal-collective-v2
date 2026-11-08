@@ -4,8 +4,9 @@ gunicorn
 pydantic
 pydantic-settings
 supabase
-google-generativeai
-google-genai
+# 新版 SDK：思考档位（thinking_level）需要较新版本；3.0.0 已验证
+google-genai>=3.0.0
+requests
 python-dotenv
 python-docx
 stripe

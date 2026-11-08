@@ -80,7 +80,8 @@ export default function Dashboard({ session }) {
 
   const [usage, setUsage] = useState({
     flash: appMeta.flash_left !== undefined ? appMeta.flash_left : 3,
-    pro_credits: appMeta.pro_credits || 0
+    pro_credits: appMeta.pro_credits || 0,
+    pro_eval_count: appMeta.pro_eval_count || 0   // 📊 Pro 本期已用评审次数
   });
 
   // 身份确权判定，拦截管理员误入普通用户控制台
@@ -103,6 +104,13 @@ export default function Dashboard({ session }) {
   const userRole = isProExpired ? 'free' : (processedRole || (isCurrentContestant ? 'contestant' : 'free'));
   const isPro = userRole === 'pro';
   const isContestant = userRole === 'contestant';
+
+  // 📊 Pro 退款窗口：开通 3 天内且未使用任何评审服务可全额退款（与退款政策一致）
+  const proActivatedAt = appMeta.pro_activated_at ? new Date(appMeta.pro_activated_at) : null;
+  const proRefundDeadlineDate = proActivatedAt ? new Date(proActivatedAt.getTime() + 3 * 24 * 3600 * 1000) : null;
+  const proRefundDeadline = (isPro && proRefundDeadlineDate && new Date() < proRefundDeadlineDate)
+    ? proRefundDeadlineDate.toLocaleString('zh-CN', { hour12: false })
+    : null;
 
   // --- 判断用户是否已经报名并同意当前赛季规则 ---
   const hasAgreedToCurrentContest = rawUserMetadata.agreed_contests?.includes(activeContestId);
@@ -167,7 +175,8 @@ export default function Dashboard({ session }) {
       setRawUserMetadata(meta);
       setUsage({
         flash: aMeta.flash_left !== undefined ? aMeta.flash_left : 3,
-        pro_credits: aMeta.pro_credits || 0
+        pro_credits: aMeta.pro_credits || 0,
+        pro_eval_count: aMeta.pro_eval_count || 0
       });
       // 初始化报名表单数据
       setRegForm(prev => ({
@@ -628,6 +637,17 @@ export default function Dashboard({ session }) {
             {!isPro && (
               <button onClick={() => handlePayment('pro')} style={styles.proBtn}>✨ 升级专业会员</button>
             )}
+            {isPro && (
+              <div style={{ fontSize: '12px', color: '#c4b5fd', textAlign: 'center', lineHeight: 1.7, marginTop: '6px' }}>
+                {appMeta.expiry_date && <>Pro 有效期至 {String(appMeta.expiry_date).slice(0, 10)}<br /></>}
+                本期已使用 {usage.pro_eval_count} 次
+                {proRefundDeadline && usage.pro_eval_count === 0 && (
+                  <div style={{ color: '#9ca3af', marginTop: '4px' }}>
+                    开通 3 天内未使用任何评审服务可申请全额退款（截至 {proRefundDeadline}）
+                  </div>
+                )}
+              </div>
+            )}
           </div>
                     
           <div style={styles.userSection}>
@@ -653,10 +673,16 @@ export default function Dashboard({ session }) {
                <span style={styles.statusValue}>{engineName}</span>
              </div>
              {isPro ? (
-               <div style={styles.statusItem}>
-                 <span style={styles.statusLabel}>Pro 额度</span>
-                 <span style={styles.statusValue}>无限</span>
-               </div>
+               <>
+                 <div style={styles.statusItem}>
+                   <span style={styles.statusLabel}>Pro 额度</span>
+                   <span style={styles.statusValue}>无限</span>
+                 </div>
+                 <div style={styles.statusItem}>
+                   <span style={styles.statusLabel}>本期已使用</span>
+                   <span style={styles.statusValue}>{usage.pro_eval_count} 次</span>
+                 </div>
+               </>
              ) : (isContestant || hasAddon) ? (
                <>
                  <div style={styles.statusItem}>

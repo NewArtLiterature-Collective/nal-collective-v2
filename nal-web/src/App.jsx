@@ -6,6 +6,7 @@ import Home from './Home'
 import Auth from './Auth'
 import Dashboard from './Dashboard'
 import Gallery from './Gallery'
+import { PricingPage, TermsPage, RefundPage, PrivacyPage, ContestRulesPage, ContactPage } from './LegalPages'
 
 // 🚨 导入后台专用的组件
 // 注意：如果你将这两个文件放在了 components 或 pages 文件夹下，请对应修改这里的路径（例如 './components/AdminGuard'）
@@ -93,6 +94,14 @@ function App() {
           } 
         />
         
+        {/* 📜 合规页面（公开访问，支付宝 / 微信支付 / Stripe 审核需要） */}
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/refund" element={<RefundPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/contest-rules" element={<ContestRulesPage />} />
+        <Route path="/contact" element={<ContactPage />} />
+
         {/* 兜底：访问不存在的路径一律退回首页 */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

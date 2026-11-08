@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from services.payment_service import PaymentService
 from services.user_service import UserService
+from core.config import settings
 import stripe
 import os
 
@@ -52,7 +53,7 @@ async def stripe_webhook(request: Request):
     
     try:
         event = stripe.Webhook.construct_event(
-            payload, sig_header, os.getenv("STRIPE_WEBHOOK_SECRET")
+            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET_EFFECTIVE
         )
     except Exception as e:
         return JSONResponse(status_code=400, content={"message": str(e)})
@@ -112,11 +113,45 @@ async def stripe_webhook(request: Request):
                     # =======================================================
                     # 其他商品 (addon / pro)：继续走原有升级流水线
                     # =======================================================
-                    UserService.upgrade_user_to_pro(user_id, plan)
+                    UserService.upgrade_user_to_pro(
+                        user_id, plan, payment_intent=session_dict.get('payment_intent'))
         
         except Exception as err:
             import traceback
             traceback.print_exc()
             return JSONResponse(status_code=500, content={"message": "Internal Error"})
             
+    elif event['type'] == 'charge.refunded':
+        # =======================================================
+        # ↩️ 退款：Pro 订单全额退款 → 自动撤销会员权益
+        #    ⚠️ 需在 Stripe Dashboard 的 webhook 端点里勾选 charge.refunded 事件
+        # =======================================================
+        try:
+            charge = event['data']['object'].to_dict()
+            pi = charge.get('payment_intent')
+
+            if not charge.get('refunded'):
+                print(f"↩️ 部分退款，不调整权益: charge={charge.get('id')}")
+                return {"status": "partial_refund_ignored"}
+
+            md = charge.get('metadata') or {}
+            if not md.get('plan') and pi:
+                # 旧订单的付款上没有标记：回查对应的 Checkout Session
+                sessions = stripe.checkout.Session.list(payment_intent=pi, limit=1)
+                if sessions.data:
+                    md = sessions.data[0].to_dict().get('metadata') or {}
+
+            user_id, plan = md.get('user_id'), md.get('plan')
+            print(f"↩️ 全额退款: user={user_id}, plan={plan}, payment_intent={pi}")
+
+            if user_id and plan == 'pro':
+                result = UserService.revoke_pro_for_refund(user_id, pi)
+                print(f"↩️ Pro 退款处理结果: {result}")
+            else:
+                print("↩️ 非 Pro 订单退款（如重复扣款），不自动撤销权益，请人工确认。")
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return JSONResponse(status_code=500, content={"message": "Internal Error"})
+
     return {"status": "success"}

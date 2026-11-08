@@ -1,7 +1,7 @@
 import stripe
 from core.config import settings
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe.api_key = settings.STRIPE_SECRET_KEY_EFFECTIVE
 
 class PaymentService:
     @staticmethod
@@ -47,6 +47,14 @@ class PaymentService:
                     "user_id": user_id,
                     "email": user_email,
                     "plan": plan  # 确保套餐标记传给 Webhook
+                },
+                # 同一份标记也写到付款（PaymentIntent / Charge）上，退款 webhook 才能知道是谁的哪种订单
+                payment_intent_data={
+                    "metadata": {
+                        "user_id": user_id,
+                        "email": user_email,
+                        "plan": plan
+                    }
                 }
             )
             return session.url

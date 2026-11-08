@@ -12,10 +12,11 @@ from services.vision_llm_service import VisionLLMService
 
 router = APIRouter()
 
-# 模型名称常量
-FLASH_MODEL = "gemini-2.5-flash"
-PRO_MODEL_DAILY = "gemini-3.1-pro-preview"   # Pro 用户每日配额内使用
-PRO_MODEL_CREDIT = "gemini-2.5-pro"          # pro_credits 加油包使用
+# 模型名称常量（2026-11 迁移：2.5 系列 12-01 停用）
+# 写法 "模型名@思考档位"，由 literary/vision 服务的 resolve_model() 解析
+FLASH_MODEL = "gemini-3.8-flash@low"           # 免费额度 / 初读
+PRO_MODEL_DAILY = "gemini-3.1-pro-preview"     # Pro 用户每日配额内使用（不带档位，照旧传 temperature）
+PRO_MODEL_CREDIT = "gemini-3.8-flash@medium"   # pro_credits 加油包使用（原 gemini-2.5-pro）
 
 
 @router.post("/process")
@@ -215,7 +216,8 @@ async def process_evaluation(
                 "sync_usage": {
                     "role": app_meta.get("role"),
                     "flash_left": app_meta.get("flash_left", 3),
-                    "pro_credits": app_meta.get("pro_credits", 0)
+                    "pro_credits": app_meta.get("pro_credits", 0),
+                    "pro_eval_count": app_meta.get("pro_eval_count", 0)
                 }
             }
         raise
@@ -231,6 +233,9 @@ async def process_evaluation(
         app_meta["last_active_date"] = today_str
         if used_pro_daily:
             app_meta["pro_daily_used"] = pro_daily_used + 1
+        if role == "pro":
+            # 📊 Pro 使用计数（退款资格核验与前端显示；只有成功的评审才计数，422 被拦下的不计）
+            app_meta["pro_eval_count"] = int(app_meta.get("pro_eval_count") or 0) + 1
         if role != "pro":
             if used_pro:
                 app_meta["pro_credits"] = max(0, pro_credits - 1)
@@ -246,6 +251,7 @@ async def process_evaluation(
         "sync_usage": {
             "role": app_meta.get("role"),
             "flash_left": app_meta.get("flash_left", 3),
-            "pro_credits": app_meta.get("pro_credits", 0)
+            "pro_credits": app_meta.get("pro_credits", 0),
+            "pro_eval_count": app_meta.get("pro_eval_count", 0)
         }
     }

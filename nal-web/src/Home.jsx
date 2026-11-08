@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { LegalFooterLinks } from './LegalPages';
 import logo from './assets/nal_logo.png'; 
 import { supabase } from './supabaseClient'; 
 
@@ -243,12 +244,18 @@ export default function Home() {
           </div>
 
         </div>
+        {/* 📜 价格、交付与退款说明（支付审核要求公开展示） */}
+        <p style={{ marginTop: '40px', fontSize: '13px', color: '#6b7280', textAlign: 'center', maxWidth: '760px', lineHeight: 1.8 }}>
+          价格以人民币（CNY）计，一次性付款、不自动续费。全部为线上数字服务，付款成功后权益自动开通。参赛报名费与资源加油包不退款；Pro 会员开通 3 天内且未使用任何评审服务可全额退款。
+          详见 <Link to="/pricing" style={{ color: '#4f46e5' }}>服务与价格</Link>、<Link to="/refund" style={{ color: '#4f46e5' }}>退款政策</Link>。
+        </p>
       </section>
 
       {/* 🧱 积木 5：页脚 */}
       <footer style={styles.footer}>
         <p>© 2026 NewArtLiterature Collective. All rights reserved.</p>
         <p style={{fontSize: '12px', marginTop: '8px', color: '#6b7280'}}>数字时代的文学审美与插画艺术先锋</p>
+        <LegalFooterLinks dark />
       </footer>
     </div>
   );

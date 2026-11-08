@@ -17,7 +17,8 @@ class UserService:
     # ==========================================================
     # 🔒 权益权威来源 = app_metadata（仅 service_role 可写，用户改不了）：
     #    role / flash_left / pro_credits / expiry_date / paid_contest_id /
-    #    booster_contest_id / pro_daily_used / last_active_date。
+    #    booster_contest_id / pro_daily_used / last_active_date /
+    #    pro_eval_count（Pro 本期已用评审次数）/ pro_activated_at / pro_payment_intents / pro_refunded_at。
     #    user_metadata 只放用户自有资料（real_name/phone/gender/agreed_contests），本服务不碰。
     # ==========================================================
     @staticmethod
@@ -86,8 +87,9 @@ class UserService:
         cls._save_entitlements(user_id, merged)
 
     @staticmethod
-    def upgrade_user_to_pro(user_id: str, plan: str = "contestant"):
-        """支付回调后的发货车间（权益全部读写 app_metadata）"""
+    def upgrade_user_to_pro(user_id: str, plan: str = "contestant", payment_intent: str = None):
+        """支付回调后的发货车间（权益全部读写 app_metadata）。
+        payment_intent：Stripe 付款 ID，Pro 订单用于退款时识别是哪一笔付款。"""
         try:
             user_res = UserService.get_user_by_id(user_id)
             if not user_res:
@@ -121,6 +123,27 @@ class UserService:
 
             # ✨ 逻辑 3：年费专业版 (pro)
             elif plan == "pro":
+                # 开通前是否已是有效 Pro（重复扣款 / 提前续费时为 True）
+                now_utc = datetime.now(timezone.utc)
+                was_active = False
+                if app.get("role") == "pro" and app.get("expiry_date"):
+                    try:
+                        was_active = datetime.fromisoformat(
+                            str(app["expiry_date"]).replace("Z", "+00:00")) > now_utc
+                    except Exception:
+                        was_active = False
+
+                # 📊 使用计数与退款追踪：新开通从 0 计数；仍在有效期内的追加付款只登记付款 ID。
+                #    付款 ID 去重：Stripe webhook 可能重复投递同一事件。
+                intents = list(app.get("pro_payment_intents") or []) if was_active else []
+                if payment_intent and payment_intent not in intents:
+                    intents.append(payment_intent)
+                app["pro_payment_intents"] = intents
+                if not was_active:
+                    app["pro_eval_count"] = 0
+                    app["pro_activated_at"] = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+                app.pop("pro_refunded_at", None)
+
                 app["role"] = "pro"
                 app.pop("is_paid", None)
                 app.pop("has_bought_booster", None)
@@ -136,6 +159,45 @@ class UserService:
         except Exception as e:
             print(f"❌ 发货车间数据库写入失败: {e}")
             raise e
+
+    @staticmethod
+    def revoke_pro_for_refund(user_id: str, payment_intent: str = None) -> str:
+        """Pro 订单全额退款后撤销会员权益（由 Stripe charge.refunded webhook 调用）。
+        - 退的是当前会员期的付款，且名下没有其它未退款的 Pro 付款 → 撤销
+        - 重复扣款只退其中一笔（名下仍有其它有效付款）→ 保留 Pro
+        - 退的是不属于当前会员期的旧付款 → 不动
+        返回处理结果，供日志记录。"""
+        user_res = UserService.get_user_by_id(user_id)
+        if not user_res or not hasattr(user_res, "user"):
+            return "user_not_found"
+        app = user_res.user.app_metadata or {}
+        intents = list(app.get("pro_payment_intents") or [])
+
+        if payment_intent and payment_intent in intents:
+            intents.remove(payment_intent)
+            app["pro_payment_intents"] = intents
+            if intents:
+                UserService._save_entitlements(user_id, app)
+                return "kept_other_payment"
+        elif intents:
+            return "not_current_membership"
+        # 走到这里：退的就是当前会员期的付款，或旧数据没有登记付款 ID
+
+        if app.get("role") != "pro":
+            UserService._save_entitlements(user_id, app)
+            return "not_pro"
+
+        # 若此前单独付过参赛报名，恢复参赛选手身份；否则降为免费用户
+        app["role"] = "contestant" if app.get("paid_contest_id") else "free"
+        app["expiry_date"] = None
+        app["flash_left"] = 0
+        app["pro_credits"] = 0
+        app["pro_daily_used"] = 0
+        app["pro_payment_intents"] = []
+        app["pro_refunded_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        UserService._save_entitlements(user_id, app)
+        print(f"↩️ 用户 {user_id} Pro 已因退款撤销，身份恢复为 {app['role']}")
+        return "revoked"
 
     @staticmethod
     def apply_free_contestant(user_id: str):

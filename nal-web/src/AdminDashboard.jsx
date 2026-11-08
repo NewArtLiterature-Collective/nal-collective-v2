@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient'; 
+import { supabase } from './supabaseClient';
+import { API_BASE } from './config';
 
 export default function AdminDashboard() {
-  const API_BASE = 'https://nal-api-backend.onrender.com';
 
   // 🆕 取当前登录态的 access_token，作为管理员身份传给后端（后端校验 JWT 里 role=admin）
   const authHeaders = async () => {
@@ -124,10 +124,9 @@ export default function AdminDashboard() {
           syncTimeState(selectedContestId, contestList);
         }
       } else {
-        const fallbackList = [{ id: '2026_contest', name: '2026 第一届“童心”文学大赏' }];
-        setContests(fallbackList);
-        setSelectedContestId('2026_contest');
-        fetchDashboardData('2026_contest');
+        // 📭 没有任何赛事：不再显示写死的占位赛事，保持空状态，提示管理员去筹备新赛季
+        setContests([]);
+        setSelectedContestId('');
       }
     } catch (err) {
       console.error('拉取赛季元数据失败:', err);
@@ -204,14 +203,15 @@ export default function AdminDashboard() {
     if (!targetContest) return;
     try {
       addLog(`🎯 正在执行全局赛季权力交割...`);
-      const { data, error } = await supabase.from('site_settings').update({ 
-        current_contest_id: selectedContestId, is_contest_active: true
-      }).eq('id', 1).select();
+      const { data, error } = await supabase.from('site_settings').upsert({ id: 1, current_contest_id: selectedContestId, is_contest_active: true }).select();
       if (error) throw error;
       if (data && data.length > 0) {
         setActiveContestId(selectedContestId); setIsContestActive(true);
         addLog(`🎉 全网前台已同步聚焦于主赛场：【${targetContest.name}】`);
         alert(`已成功推举【${targetContest.name}】为主赛事！`);
+      } else {
+        addLog(`❌ 交割未生效：未影响任何行。请检查 site_settings 是否存在 id=1，以及当前管理员 JWT 是否带 role=admin（改过角色需重新登录）。`);
+        alert('推举未生效：数据库未更新任何记录，请检查 site_settings 与管理员权限。');
       }
     } catch (err) { addLog(`❌ 交割失败: ${err.message}`); }
   };
@@ -465,7 +465,9 @@ export default function AdminDashboard() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h3 style={{ margin: 0, color: '#ebcb8b' }}>📅 当前调度赛季视角:</h3>
               <select value={selectedContestId} onChange={handleContestSelectionChange} style={{ padding: '8px 12px', background: '#222', color: '#fff', border: '1px solid #444', fontFamily: 'monospace', cursor: 'pointer', fontSize: '14px', borderRadius: '4px' }}>
-                {contests.map(c => <option key={c.id} value={c.id}>{c.name} {c.id === activeContestId ? " 🟢 [激活]" : ""}</option>)}
+                {contests.length === 0
+                  ? <option value="">暂无赛事 —— 请先「筹备新赛季」</option>
+                  : contests.map(c => <option key={c.id} value={c.id}>{c.name} {c.id === activeContestId ? " 🟢 [激活]" : ""}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>

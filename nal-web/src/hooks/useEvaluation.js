@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { API_BASE } from '../config';
 
 export function useEvaluation(userRole, usage) {
   const [loading, setLoading] = useState(false);
@@ -89,7 +90,7 @@ export function useEvaluation(userRole, usage) {
         formData.append('file', selectedDocx);
       }
 
-      const response = await fetch(`https://nal-api-backend.onrender.com/api/v1/evaluate/process`, {
+      const response = await fetch(`${API_BASE}/api/v1/evaluate/process`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${currentSession.access_token}`
