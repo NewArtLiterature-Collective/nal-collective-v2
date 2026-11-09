@@ -11,7 +11,8 @@ try:
 except ImportError:          # 直接在 services 目录下运行时
     import content_review as cr
 
-client = genai.Client()
+# google-genai 3.x 默认走 v1 接口，预览版模型只在 v1beta 上有 → 固定 v1beta
+client = genai.Client(http_options=types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta")))
 
 # ===== 2026-11-09 修订（主编确认）=====
 # · 文字：内容安全改为"整本内容研判"（services/content_review.py，与离线引擎 lit_engine cr1 同一套），
