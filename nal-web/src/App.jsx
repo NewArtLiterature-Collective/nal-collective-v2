@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { supabase } from './supabaseClient'
+import { supabase, IS_RECOVERY_LINK } from './supabaseClient'
 
 import Home from './Home'
 import Auth from './Auth'
 import Dashboard from './Dashboard'
 import Gallery from './Gallery'
+import ResetPassword from './ResetPassword'
 import { PricingPage, TermsPage, RefundPage, PrivacyPage, ContestRulesPage, ContactPage } from './LegalPages'
 
 // 🚨 导入后台专用的组件
@@ -35,6 +36,16 @@ function LoginWrapper({ session }) {
   return <Auth />;
 }
 
+// 🔑 重置密码链接兜底：若 Supabase 因白名单不符把链接退回到首页等其他地址，
+//    这里仍把用户送到"设置新密码"页，而不是带着临时会话直接进工作台。
+function RecoveryRedirect() {
+  const location = useLocation();
+  if (IS_RECOVERY_LINK && location.pathname !== '/reset-password') {
+    return <Navigate to="/reset-password" replace />;
+  }
+  return null;
+}
+
 function App() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -60,6 +71,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <RecoveryRedirect />
       <Routes>
         {/* 1. 公共主页 */}
         <Route path="/" element={<Home />} />
@@ -94,6 +106,9 @@ function App() {
           } 
         />
         
+        {/* 🔑 设置新密码（忘记密码邮件的回跳页，公开访问） */}
+        <Route path="/reset-password" element={<ResetPassword />} />
+
         {/* 📜 合规页面（公开访问，支付宝 / 微信支付 / Stripe 审核需要） */}
         <Route path="/pricing" element={<PricingPage />} />
         <Route path="/terms" element={<TermsPage />} />

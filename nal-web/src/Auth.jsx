@@ -105,7 +105,8 @@ export default function Auth() {
         setRegistered(true);   // 切到"注册成功"页
       } else if (authMode === 'reset') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/login`,
+          // 邮件链接回到"设置新密码"页（该地址须在 Supabase → Authentication → URL Configuration → Redirect URLs 白名单内）
+          redirectTo: `${window.location.origin}/reset-password`,
         });
         if (error) throw error;
         setSuccessMsg('📧 重置邮件已发送！请检查您的收件箱。');

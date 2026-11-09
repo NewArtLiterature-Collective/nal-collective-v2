@@ -197,8 +197,11 @@ export default function AdminDashboard() {
     } catch (err) { alert("创生新赛季失败: " + err.message); }
   };
 
+  // 当前下拉框选中的是否为一个真实存在的赛事（无赛事时为 false，推举与大闸按钮不可点击）
+  const hasSelectedContest = contests.some(c => c.id === selectedContestId);
+
   const handleSwitchGlobalActiveContest = async () => {
-    if (!selectedContestId) return;
+    if (!hasSelectedContest) return alert('暂无赛事，请先「筹备新赛季」。');
     const targetContest = contests.find(c => c.id === selectedContestId);
     if (!targetContest) return;
     try {
@@ -471,8 +474,13 @@ export default function AdminDashboard() {
               </select>
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
-              {selectedContestId !== activeContestId && (
-                <button onClick={handleSwitchGlobalActiveContest} style={{ padding: '8px 16px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>🚀 推举为全局主赛场</button>
+              {(!hasSelectedContest || selectedContestId !== activeContestId) && (
+                <button
+                  onClick={handleSwitchGlobalActiveContest}
+                  disabled={!hasSelectedContest}
+                  title={hasSelectedContest ? '' : '暂无赛事，请先「筹备新赛季」'}
+                  style={{ padding: '8px 16px', backgroundColor: hasSelectedContest ? '#d08770' : '#444', color: hasSelectedContest ? '#fff' : '#888', border: 'none', cursor: hasSelectedContest ? 'pointer' : 'not-allowed', fontWeight: 'bold', borderRadius: '4px' }}
+                >🚀 推举为全局主赛场</button>
               )}
               <button onClick={() => setShowCreateForm(!showCreateForm)} style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
                 {showCreateForm ? "收起" : "➕ 筹备新赛季"}
@@ -496,7 +504,7 @@ export default function AdminDashboard() {
 
           <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: '#888', fontSize: '13px' }}>当前主赛场准入状态：<strong style={{ color: isContestActive ? '#a3be8c' : '#bf616a' }}>{isContestActive ? "🟢 大闸开启中" : "🔴 全网休眠中"}</strong></span>
-            {selectedContestId === activeContestId && (
+            {hasSelectedContest && selectedContestId === activeContestId && (
               <button onClick={handleToggleContestActive} style={{ padding: '5px 15px', backgroundColor: isContestActive ? '#bf616a' : '#a3be8c', color: isContestActive ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px', borderRadius: '4px' }}>
                 {isContestActive ? "封印当前投稿大闸" : "激活当前投稿大闸"}
               </button>
