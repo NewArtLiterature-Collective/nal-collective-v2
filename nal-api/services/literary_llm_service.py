@@ -7,12 +7,26 @@
 #       gemini-2.5-pro → gemini-3.8-flash@medium，gemini-2.5-flash → gemini-3.8-flash@low
 #   - 写了思考档位的调用不再传 temperature / top_p（3.x 不接受采样参数）
 #   - 依赖：pip install -U google-genai；读取环境变量 GEMINI_API_KEY（或 GOOGLE_API_KEY）
+# v3（2026-11-09，主编确认）：
+#   - 内容安全改为"整本内容研判"（services/content_review.py，与离线引擎 lit_engine cr1 同一套）：
+#     整本通读、整体判断；拦截依据的原句须能在正文定位；非干净作品跑两次，拦与不拦一致才采信。
+#     线上即时服务：两次不一致补跑第三次按多数定（不转人工）；整本被平台拦截的不予评审；
+#     接口异常不再放行，改为请用户稍后重试。违规作品不给评审、不给建议。
+#   - 取消凭"文风"判定的 AI 代写 422：风格印象不构成证据（疑罪从无）。报告末尾的 AI 使用参考
+#     只写可指认的具体破绽，措辞中性，不下"与声明不符"的结论。
+#   - 评审请求本身被平台拦截时，返回明确的 422 提示，而不是笼统的 500。
+#   - 删去用户提示中"照着范例格式"的残留句（系统指令明确不提供范例，前后矛盾）。
 # ============================================================================
 import os
 import json
 from google import genai
 from google.genai import types
 from fastapi import HTTPException
+
+try:
+    from services import content_review as cr
+except ImportError:          # 直接在 services 目录下运行时
+    import content_review as cr
 
 # 旧模型名 → 新模型（路由或数据库里仍写旧名时自动换掉，12-01 之后照常可用）
 LEGACY_MODEL_MAP = {
@@ -27,7 +41,9 @@ def _get_client():
     global _client
     if _client is None:
         key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        _client = genai.Client(api_key=key) if key else genai.Client()
+        # google-genai 3.x 默认走 v1 接口，预览版模型（如 gemini-3.1-pro-preview）只在 v1beta 上有 → 固定 v1beta
+        http = types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta"))
+        _client = genai.Client(api_key=key, http_options=http) if key else genai.Client(http_options=http)
     return _client
 
 
@@ -197,6 +213,7 @@ class LiteraryLLMService:
             "true", "yes", "y", "1", "是", "存在", "疑似", "确认"
         )
 
+    # ⏸ 2026-11-09 起不再调用：凭文风判定 AI 代写不构成证据（疑罪从无）。保留代码仅供对照。
     @classmethod
     async def _check_ai_authenticity(cls, raw_text: str) -> dict:
         """
@@ -248,7 +265,7 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
             print(f"⚠️ AI 代写前置检测降级（默认放行）: {e}")
             return {"ai_ghostwritten": False, "confidence": "low", "evidence": ""}
 
-    # 内容安全分块参数：违规是局部的，必须全文覆盖，不能只读节选
+    # 旧版切块审查参数（2026-11-09 起改为整本内容研判，见 services/content_review.py；保留仅供对照）
     SAFETY_CHUNK_SIZE = 12000
     SAFETY_CHUNK_OVERLAP = 600
 
@@ -272,60 +289,29 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
     @classmethod
     async def _check_content_safety(cls, raw_text: str) -> dict:
         """
-        独立的内容安全前置审查（只做安全判断，不掺评审）。
-        🚨 全文分块扫描，任一块命中即违规——内容违规是局部的，必须全文覆盖，绝不能只读节选。
-        返回 {"content_violation": bool, "violation_type": "xxx"}
-        核心边界：写实、直接的描写 → 拦截；象征、情感主题、文学化处理 → 放行。
-        与视觉赛道的内容安全同一套标准。
+        整本内容研判（独立前置，只做内容判断，不掺评审）。实现见 services/content_review.py。
+        返回 content_review 的结果：decision ∈ pass / flag / hold / platform / disagree / error。
         """
-        safety_prompt = """你是一个内容安全审核系统，服务于一个儿童文学评奖平台。你的唯一任务是判断文本片段是否包含违规内容，不做任何文学评价。
+        async def gen(contents, system_instruction, **cfg):
+            return await generate(cls.MODEL_ADAPTIVE, contents, system_instruction=system_instruction,
+                                  json_mode=True, **cfg)
+        try:
+            return await cr.review_text(raw_text, gen, tiebreak=True)
+        except Exception as e:
+            print(f"⚠️ 整本内容研判异常: {e}")
+            return {"decision": "error", "diag": str(e)[:200]}
 
-⚠️ 最重要的尺度原则（先读这条）：
-这是【儿童／少年文学】评奖平台。少年冒险、科幻、历险题材中，打斗、追逐、营救、危险、受伤、流血、晕倒、死亡等情节是这一文学类别的正常组成部分，绝不能因为出现"血""打""伤""死"等字眼就拦截。真正要拦的，是【为感官刺激／猎奇而反复、具象、细节化地渲染】的内容，而不是【推动剧情、点到为止】的情节性内容。判断前先问自己：这段文字是在"讲一件事"，还是在"细细地描摹血腥／性／残忍本身让人感官不适"？只有后者才拦。
-
-【需要拦截的内容——必须是"写实 + 具象 + 为渲染而渲染"三者同时成立】
-1. sexual_content（色情/性）：色情或性行为的具体过程描写；针对未成年人的任何性暗示或性化描写。（成人之间点到为止的亲密、爱意、拥抱、亲吻不拦。）
-2. gore_violence（血腥/暴力）：以感官刺激为目的、细节化地描摹血腥、肢体残缺、内脏、尸体腐败的 gore；或细致刻画酷刑、虐待、折磨过程并从中渲染痛苦与残忍。
-3. hate_symbol（仇恨/极端）：仇恨言论、极端主义煽动、种族歧视煽动。
-4. self_harm（自残/自杀）：自残或自杀的具体方法、步骤、过程的详细描写（点到为止地提及人物的悲伤、绝望不拦）。
-
-【明确不拦截的内容（儿童／少年文学的正常范畴，务必放行）】
-- 亲情、友情、爱等情感的正常表达；成人间的拥抱、亲吻等温情画面。
-- 死亡、离别、悲伤等主题的书写（包括直接写到有人死去）。
-- 战争、冲突、危险情节；少年历险、科幻中的打斗、追逐、营救、逃亡。
-- 情节功能性的暴力与受伤：打斗中有人被打倒、流血、晕倒、受伤、骨折；营救时的擦伤、挣脱束缚、被捆绑的勒痕、淤青、血痂、疤痕等——只要不是长篇、细节化地渲染血腥本身。
-- 作为情节交代出现的武器、打斗结果（如"血流如注""瘫倒在地""嘴唇裂开渗出血珠"这类一笔带过、服务于剧情的描写）。
-- 神怪、妖魔、黑暗或恐怖的氛围营造（只要没有具象猎奇的 gore 细节）。
-
-【判定方法】
-- 先定位到底是哪一句让你想拦，再判断它是"点到为止的情节交代"还是"反复、细致、以刺激为目的的渲染"。若是前者 → 放行。
-- 只要犹豫、或介于两者之间 → 一律【不拦截】。宁可放行，也绝不误伤正常的儿童／少年文学创作。本平台绝大多数稿件都应判为不违规；拦截是针对真正越界的极少数，不是针对"写到了危险和受伤"的常规冒险故事。
-
-只输出纯 JSON，不含任何额外文字：
-发现违规 → {"content_violation": true, "violation_type": "sexual_content" 或 "gore_violence" 或 "hate_symbol" 或 "self_harm", "evidence": "引用那一处最越界的原文片段，20字以内"}
-未发现违规 → {"content_violation": false}"""
-
-        chunks = cls._chunk_text(raw_text, cls.SAFETY_CHUNK_SIZE, cls.SAFETY_CHUNK_OVERLAP)
-        if not chunks:
-            return {"content_violation": False}
-
-        for idx, chunk in enumerate(chunks):
-            try:
-                res = await generate(
-                    cls.MODEL_ADAPTIVE,
-                    f"{safety_prompt}\n\n【待审查文本片段 {idx + 1}/{len(chunks)}】：\n{chunk}",
-                    json_mode=True, temperature=0.0,
-                )
-                data = json.loads(res.text)
-                if isinstance(data, list):
-                    data = data[0] if data else {}
-                if isinstance(data, dict) and data.get("content_violation"):
-                    return data   # 任一块命中即短路返回违规
-            except Exception as e:
-                # 单块异常默认放行该块（不因一次抖动误拦真人作品），其余块继续扫
-                print(f"⚠️ 内容安全前置审查第 {idx + 1} 块降级（默认放行该块）: {e}")
-                continue
-        return {"content_violation": False}
+    @staticmethod
+    def _content_notice(review: dict) -> str:
+        """判为"标注"（零星越线、不阻断）时附在报告末尾的提示；其余情况返回空串。"""
+        final = (review or {}).get("final") or {}
+        if review.get("decision") != "flag" or not final.get("flag"):
+            return ""
+        lines = ["\n\n### ⚠️ 内容提示",
+                 "以下几处在内容研判中被认为对 10 岁以上的青少年读者不太合适，不影响本次评审，供修改时参考："]
+        for i in final["flag"][:6]:
+            lines.append(f"- {cr.issue_line(i)}")
+        return "\n".join(lines)
 
     @classmethod
     async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str, has_declared_ai: bool = False, is_contest: bool = False) -> str:
@@ -337,47 +323,38 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         # 对所有文字都查，不分声明。命中违规 → 评审前直接 422，不扣费。
         # 独立成一次专职判断，避免让评审模型"既评审又当裁判"导致漏拦。
         # ==========================================
-        safety_result = await cls._check_content_safety(raw_text)
-        if isinstance(safety_result, dict) and safety_result.get("content_violation"):
-            violation_type = safety_result.get("violation_type", "未知违规类型")
-            violation_labels = {
-                "sexual_content": "性暗示或性描写内容",
-                "gore_violence": "写实的血腥暴力或肢体残缺",
-                "hate_symbol": "仇恨言论或极端主义内容",
-                "self_harm": "自残或自杀的具象描绘",
-            }
-            violation_label = violation_labels.get(violation_type, violation_type)
+        review = await cls._check_content_safety(raw_text)
+        decision = (review or {}).get("decision")
+        if decision == "hold":
+            label = cr.hold_label(review.get("final"))
             raise HTTPException(
                 status_code=422,
                 detail=(
                     f"⚠️ 提交审核中止\n\n"
-                    f"系统在您提交的文本中检测到不适合本平台的内容（{violation_label}）。\n\n"
+                    f"系统通读全文后认为，本作品含有不适合青少年读者的内容（{label}）。\n\n"
                     f"本次分析已终止，本次额度不予扣除。"
                     f"如您认为这是误判，请联系人工审核团队。"
                 )
             )
-
-        # ==========================================
-        # 🆕 AI 代写前置闸（独立调用，代码强制执行）
-        # 仅在作者声明"未使用 AI"时执行；高置信命中 → 直接 422 终止，
-        # 在进入评审前就拦下，不扣费。门槛由 confidence=="high" 把守（方案 A）。
-        # ==========================================
-        if not has_declared_ai:
-            auth = await cls._check_ai_authenticity(raw_text)
-            if cls._is_affirmative(auth.get("ai_ghostwritten")) and cls._norm_confidence(auth.get("confidence")) == "high":
-                evidence = (auth.get("evidence") or "").strip()
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "⚠️ 提交审核中止\n\n"
-                        "系统在您提交的文本中检测到明显且贯穿全文的 AI 代写痕迹，"
-                        "与您所做的【纯人类原创，未使用 AI 工具】声明不符。\n"
-                        + (f"\n判定依据：{evidence}\n" if evidence else "")
-                        + "\n本次分析已终止，本次额度不予扣除。"
-                        "如您确实使用了 AI 工具辅助，请重新提交并如实选择【使用了 AI 工具进行辅助】；"
-                        "如您认为这是误判，请联系人工审核团队。"
-                    )
+        if decision == "platform":
+            print(f"⚠️ 整本内容研判被平台拦截：{review.get('diag', '')}")
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "⚠️ 提交审核中止\n\n"
+                    "本作品未能通过平台的内容审核，无法进行评审。\n\n"
+                    "本次分析已终止，本次额度不予扣除。如您认为这是误判，请联系人工审核团队。"
                 )
+            )
+        if decision in ("error", "disagree"):
+            print(f"⚠️ 整本内容研判失败：{review.get('diag', '')}")
+            raise HTTPException(
+                status_code=503,
+                detail="内容研判服务暂时不可用，请稍后重试。本次额度不予扣除。"
+            )
+        content_notice = cls._content_notice(review)
+
+        # AI 代写：不再前置拦截（2026-11-09）。文风印象不构成证据；AI 使用情况只在报告末尾作中性参考。
         # 列出维度清单供模型逐项评定（不提供范例句，避免模型照抄空洞句式）
         dims_list = "、".join(base_weights.keys())
         dims_lines = ""
@@ -390,14 +367,15 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
             ai_detection_policy = f"""
         【大赛 AI 使用核查】
         作者的 AI 辅助声明状态为：{ '【已声明使用】' if has_declared_ai else '【未声明使用】' }。
-        1. 判断文本是否存在明显的 AI 生成特征，依据要具体：如句式反复排比却无实质推进、论述悬浮于概念而不落到具体情节、情感转折缺少铺垫而靠套语完成。指出你依据的是哪一处。
-        2. 若判定存在大面积 AI 生成痕迹、且声明为【未声明使用】，这与声明不符。请在报告末尾注明这一不符，并说明判断依据，建议交人工复核。
-        3. 若作者已声明使用，AI 辅助本身不扣分；评判的是成品的文学完成度。若通篇缺少作者自己的观察、语感与判断，如实指出是哪些段落让你得出这个结论。"""
+        在报告末尾新增 `### 🤖 AI 使用参考` 一节，供人工参考，不构成认定。
+        1. "读起来像 AI""文风工整""模型腔"这类风格印象不是证据，不要据此下结论，也不要写"与声明不符"。
+        2. 只写可以指认的具体破绽，并引原文为证：如残留的提示语或模型自称、前后自相矛盾的事实、明显是生成工具留下的格式痕迹。没有就写"未见可指认的 AI 使用痕迹"。
+        3. 若作者已声明使用，AI 辅助本身不扣分；评判的是成品的文学完成度。"""
         else:
             ai_detection_policy = """
         【AI 使用参考评估】
         在报告末尾新增 `### 🤖 AI 使用参考评估` 一节。
-        判断文本是否带有明显的大模型写作惯性（如空泛的概括句、缺少个人经验支撑的抒情、结构过于工整而无呼吸），依据要具体到段落，而不是笼统给个印象。如果读起来是作者本人的笔迹，也如实说明，不必为凑内容而硬挑毛病。"""
+        这一节供作者参考，不构成认定。只写可以指认、能引原文为证的具体现象（如残留的提示语或模型自称、前后自相矛盾的事实、空泛概括句成片出现的段落），不凭"像不像 AI"的整体印象下结论。没有就如实写"未见可指认的 AI 使用痕迹"，不必为凑内容而硬挑毛病。"""
 
         eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
 
@@ -442,23 +420,28 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
 
         ### 📊 综合学术评分：[总分]/100
 
-        （常规评审请在末尾补充 `### 🤖 AI 使用参考评估`）
+        （报告末尾按上文要求补充 AI 使用参考一节）
         """
 
         adaptive_inst = await cls._get_adaptive_instruction(raw_text, base_weights, user_note)
         combined_instruction = adaptive_inst + "\n\n" + eval_sys_inst
         
         try:
-            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格照着 System Instruction 中的范例格式，给我真实的打分数字！\n请严格按指令进行全方位学术与 AI 侦测评审。"
+            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格按 System Instruction 中的输出结构完成评审，给出真实的打分数字。"
             
             res = await generate(target_model, prompt, system_instruction=combined_instruction, temperature=0.2)
 
             if _has_text(res):
                 result_text = res.text.strip()
-                # 内容安全与 AI 代写均已在评审前独立拦截，此处直接返回评审正文
-                return result_text
-            else:
-                raise ValueError("模型未返回有效文本，可能触发了安全拦截。")
+                # 内容研判已在评审前完成；判为"标注"的，在报告末尾附内容提示
+                return result_text + content_notice
+            if cr.platform_blocked(res):
+                print(f"⚠️ 评审请求被平台拦截：{cr.diag(res)}")
+                raise HTTPException(
+                    status_code=422,
+                    detail=("⚠️ 提交审核中止\n\n本作品未能通过平台的内容审核，无法进行评审。"
+                            "\n\n本次额度不予扣除。如您认为这是误判，请联系人工审核团队。"))
+            raise ValueError("模型未返回有效文本。")
 
         except HTTPException:
             # 前置核查的 422（内容违规 / AI 声明不符）必须原样向上抛，不能被转成 500

@@ -48,6 +48,11 @@ def _build_block_message(content_safety: dict) -> str:
     label = VIOLATION_LABELS.get(vt, vt or "内容安全")
     where = "插画" if content_safety.get("where") == "image" else "文本"
     evid = (content_safety.get("evidence") or "").strip()
+    if vt == "platform_block":
+        # 整本文字或插画被平台拦截：模型拒绝读取，无法评审（2026-11-09）
+        return (f"⛔ 内容安全未通过：您提交的{where}未能通过平台的内容审核，无法进行评审。\n"
+                f"依据大赛内容安全规定，本作品已停止评审、不予入围。\n"
+                f"如您认为这是误判，请联系人工审核团队。")
     msg = (f"⛔ 内容安全未通过：系统在您提交的{where}中检测到不适合本平台的内容（{label}）。\n"
            f"依据大赛内容安全规定，本作品已停止评审、不予入围。")
     if evid:
@@ -112,6 +117,13 @@ async def contest_pipeline(submission_id: str):
             print(f"🚫 作品 {submission_id[:8]} 命中内容安全红线，已停止评审、不予入围。")
             return
 
+        # ⏳ 内容审查未能完成（接口异常）→ 不评审、不放行，退回 pending，下一批自动重试
+        if screen.get("screen_error"):
+            detail = screen.get("screen_error_detail") or "内容审查暂时无法完成"
+            await update_status(submission_id, "pending", f"内容审查未完成，等待重试：{detail}")
+            print(f"⏳ 作品 {submission_id[:8]} 内容审查未完成，已退回待审，下一批重试。")
+            return
+
         # --- Agent B: Evaluator (三专家会诊)；复用 screen，避免重复扫描；横幅由下方统一加一次 ---
         print(f"🧠 正在调用 AI 专家组进行多维度并发会诊: {submission_id[:8]}")
 
@@ -125,6 +137,14 @@ async def contest_pipeline(submission_id: str):
         ]
         results = await asyncio.gather(*tasks)
         p_res, c_res, l_res = results[0], results[1], results[2]
+
+        # ⏳ 任一专家评审失败（接口异常/JSON 受损）→ 不以 0 分入库，退回 pending，下一批重试
+        failed = [r for r in results if r.get("status") != "reviewed"]
+        if failed:
+            await update_status(submission_id, "pending",
+                                f"评审未完成，等待重试：{(failed[0].get('review') or '')[:200]}")
+            print(f"⏳ 作品 {submission_id[:8]} 有 {len(failed)} 位专家评审失败，已退回待审，下一批重试。")
+            return
 
         # 核心数学计算：汇总均分与离散度
         all_score_points = []
@@ -143,14 +163,20 @@ async def contest_pipeline(submission_id: str):
             f"【学术溯源】：{l_res['review']}"
         )
 
-        # 🤖 未申明却检测到 AI → 大赛口径：不拦、照评，但在评语顶部统一标注一次
+        # 🤖 未申明且有元数据硬证据 → 大赛口径：不拦、照评，在评语顶部统一标注一次
+        #   （2026-11-09：只认元数据；文风/画面印象不构成证据）
+        aigc = screen.get("aigc") or {}
         if screen.get("ai_flag"):
-            aigc = screen.get("aigc") or {}
             evid = (aigc.get("evidence") or "").strip()
-            banner = ("🤖【AIGC 嫌疑 · 作者未申明】本作品检测到明显的 AI 生成/代写痕迹，"
-                      "但作者声明为纯人类原创。评分照常给出，须人工复核其 AI 使用情况。"
-                      + (f"\n鉴定依据：{evid}" if evid else "") + "\n\n")
+            banner = ("🤖【AI 生成证据 · 作者未申明】" + (evid or "图片元数据含 AI 生成工具特征")
+                      + "；作者声明为纯人类原创。评分照常给出，须人工复核其 AI 使用情况。\n\n")
             final_review = banner + final_review
+        else:
+            # 模型找到的可指认破绽：只作人工参考，附在评语末尾，措辞中性
+            ref = aigc.get("reference") or {}
+            if (not has_declared_ai and ref.get("suspected") and ref.get("evidence")
+                    and ref.get("confidence") in ("high", "medium")):
+                final_review += f"\n\n🔎 AI 使用参考（仅供人工参考，不构成认定）：{ref['evidence']}"
 
         # ⚠️ 内容风险（非性内容）→ 不拦、照评，在评语最顶部统一提示一次，交人工复核
         risk_note = ContestLiteraryService.render_risks(screen.get("risks") or [])
