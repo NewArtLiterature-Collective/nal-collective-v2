@@ -145,7 +145,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
         if (files.length > 0) {
           const old = works.find(w => w.id === form.id);
           const paths = await uploadPages(form.id, files);
-          row.pages = paths; row.cover_index = 0;
+          row.pages = paths; row.cover_index = 0; row.watermarked = true;
           const stale = (old?.pages || []).filter(p => !paths.includes(p));
           if (stale.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(stale);
         }
@@ -155,7 +155,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
       } else {
         const id = crypto.randomUUID();
         const paths = await uploadPages(id, files);
-        const { error } = await supabase.from('showcase_works').insert({ id, ...row, pages: paths, cover_index: 0 });
+        const { error } = await supabase.from('showcase_works').insert({ id, ...row, pages: paths, cover_index: 0, watermarked: true });
         if (error) {
           await supabase.storage.from(SHOWCASE_BUCKET).remove(paths);
           throw error;
@@ -186,6 +186,49 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
       paths.push(path);
     }
     return paths;
+  };
+
+  // ---- 为已上传、尚未加水印的作品补加水印 ----
+  // 从桶里取回现有图片 → 烧入水印 → 以新文件名上传 → 更新页面列表 → 删除无水印的旧图。
+  // 任何一张失败：删掉本次新传的图，保留原状，不会出现一半有水印一半没有。
+  const retrofitWork = async (w) => {
+    const old = w.pages || [];
+    const fresh = [];
+    try {
+      for (let i = 0; i < old.length; i++) {
+        setBusy(`《${cleanTitle(w.title)}》补加水印 ${i + 1} / ${old.length} …`);
+        const resp = await fetch(`${showcaseUrl(old[i])}?t=${Date.now()}`, { cache: 'no-store' });
+        if (!resp.ok) throw new Error(`第 ${i + 1} 张读取失败（${resp.status}）`);
+        const blob = await compressImage(await resp.blob());          // 尺寸已合规，只加水印并重新编码
+        const path = `${w.id}/${String(i + 1).padStart(3, '0')}_wm_${Date.now()}.jpg`;
+        const { error } = await supabase.storage.from(SHOWCASE_BUCKET).upload(path, blob, { contentType: 'image/jpeg' });
+        if (error) throw new Error(`第 ${i + 1} 张上传失败：${error.message}`);
+        fresh.push(path);
+      }
+      const { error } = await supabase.from('showcase_works').update({ pages: fresh, watermarked: true }).eq('id', w.id);
+      if (error) throw error;
+      if (old.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(old);
+      addLog(`🖋 《${cleanTitle(w.title)}》已补加水印（${fresh.length} 张），无水印旧图已删除`);
+      return true;
+    } catch (err) {
+      if (fresh.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(fresh);
+      addLog(`❌ 《${cleanTitle(w.title)}》补加水印失败，已保留原图: ${err.message}`);
+      alert(`《${cleanTitle(w.title)}》补加水印失败：${err.message}`);
+      return false;
+    }
+  };
+  const retrofitOne = async (w) => {
+    if (!window.confirm(`为《${cleanTitle(w.title)}》的 ${(w.pages || []).length} 张图补加水印？\n请先确认这件作品的缩略图上还没有水印，避免重复加。`)) return;
+    await retrofitWork(w); setBusy(''); load();
+  };
+  const retrofitAll = async () => {
+    const todo = works.filter(w => !w.watermarked);
+    if (!todo.length) return;
+    if (!window.confirm(`为 ${todo.length} 件尚未加水印的作品补加水印？\n过程中请不要关闭页面。`)) return;
+    let ok = 0;
+    for (const w of todo) { if (await retrofitWork(w)) ok++; }
+    setBusy(''); load();
+    alert(`补加水印完成：成功 ${ok} 件，失败 ${todo.length - ok} 件。`);
   };
 
   const togglePublish = async (w) => {
@@ -225,12 +268,19 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
           <button onClick={toggleHall} style={{ padding: '8px 16px', backgroundColor: hallOpen ? '#bf616a' : '#a3be8c', color: hallOpen ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
             {hallOpen ? '🔒 锁定本厅' : '📢 开放本厅'}
           </button>
+          {works.some(w => !w.watermarked) && (
+            <button onClick={retrofitAll} disabled={!!busy} style={{ padding: '8px 16px', backgroundColor: '#ebcb8b', color: '#000', border: 'none', cursor: busy ? 'wait' : 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
+              🖋 一键补加水印（{works.filter(w => !w.watermarked).length} 件）
+            </button>
+          )}
           <a href="/gallery?hall=showcase" title="在当前页面打开（登录状态只在本标签页有效）" style={{ color: '#ebcb8b', fontSize: '13px' }}>👁️ 预览展厅</a>
           <button onClick={() => (showForm ? setShowForm(false) : startNew())} style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
             {showForm ? '收起' : '➕ 录入佳作'}
           </button>
         </div>
       </div>
+
+      {busy && !showForm && <div style={{ color: '#ebcb8b', fontSize: '13px', marginBottom: '12px' }}>⏳ {busy}</div>}
 
       {showForm && (
         <form onSubmit={save} style={{ borderTop: '1px dashed #333', paddingTop: '18px', marginBottom: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
@@ -330,9 +380,13 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
                     </div>
                   </td>
                   <td style={{ padding: '8px' }}>{w.sort_order}</td>
-                  <td style={{ padding: '8px', color: w.is_published ? '#a3be8c' : '#bf616a' }}>{w.is_published ? '已发布' : '未发布'}</td>
+                  <td style={{ padding: '8px', color: w.is_published ? '#a3be8c' : '#bf616a' }}>
+                    {w.is_published ? '已发布' : '未发布'}
+                    {!w.watermarked && <div style={{ color: '#ebcb8b', fontSize: '11px', marginTop: '4px' }}>⚠️ 未加水印</div>}
+                  </td>
                   <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
                     <button onClick={() => togglePublish(w)} style={actBtn}>{w.is_published ? '撤下' : '发布'}</button>
+                    {!w.watermarked && <button onClick={() => retrofitOne(w)} disabled={!!busy} style={{ ...actBtn, color: '#ebcb8b', borderColor: '#ebcb8b' }}>补加水印</button>}
                     <button onClick={() => startEdit(w)} style={actBtn}>编辑</button>
                     <button onClick={() => remove(w)} style={{ ...actBtn, color: '#bf616a', borderColor: '#bf616a' }}>删除</button>
                   </td>
