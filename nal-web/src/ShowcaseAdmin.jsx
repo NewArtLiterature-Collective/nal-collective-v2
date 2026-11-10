@@ -35,6 +35,22 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [hallOpen, setHallOpen] = useState(true);     // site_settings.is_showcase_active
+
+  const loadSetting = async () => {
+    const { data, error } = await supabase.from('site_settings').select('is_showcase_active').eq('id', 1).maybeSingle();
+    if (error) { addLog(`⚠️ 读取本厅开关失败（请确认已运行 showcase_lock.sql）: ${error.message}`); return; }
+    setHallOpen(data?.is_showcase_active !== false);
+  };
+  const toggleHall = async () => {
+    const next = !hallOpen;
+    if (!next && !window.confirm('锁定后，访客将看不到本厅任何展品（管理员仍可预览）。确定锁定？')) return;
+    const { data, error } = await supabase.from('site_settings').update({ is_showcase_active: next }).eq('id', 1).select();
+    if (error) return alert('操作失败：' + error.message);
+    if (!data || data.length === 0) return alert('操作未生效：请检查管理员权限。');
+    setHallOpen(data[0].is_showcase_active !== false);
+    addLog(`🎛️ 陈伯吹新儿童文学绘本插画大赛厅已${next ? '开放' : '锁定'}`);
+  };
 
   const load = async () => {
     const { data, error } = await supabase.from('showcase_works').select('*')
@@ -42,7 +58,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
     if (error) { addLog(`❌ 陈伯吹新儿童文学绘本插画大赛厅读取失败: ${error.message}`); return; }
     setWorks(data || []);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadSetting(); }, []);
 
   const pickFiles = (e) => {
     const picked = Array.from(e.target.files || []).filter(f => /^image\/(jpeg|png)$/.test(f.type)).sort(naturalCompare);
@@ -151,11 +167,20 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <h3 style={{ margin: '0 0 6px', color: '#a3be8c' }}>📚 陈伯吹新儿童文学绘本插画大赛厅布展（共 {works.length} 件，已发布 {works.filter(w => w.is_published).length} 件）</h3>
-          <p style={{ margin: 0, color: '#64748b', fontSize: '12px' }}>录入历届绘本、插画的 AI 评审佳作。本厅常年开放，不受新艺文社竞赛厅开关影响，发布即可见；撤下后前台不再显示。</p>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '12px' }}>录入历届绘本、插画的 AI 评审佳作。本厅常年开放，不受新艺文社竞赛厅开关影响；布展或整改时可单独锁定本厅。作品发布后即可见，撤下后前台不再显示。</p>
         </div>
-        <button onClick={() => (showForm ? setShowForm(false) : startNew())} style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
-          {showForm ? '收起' : '➕ 录入佳作'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <span style={{ color: '#888', fontSize: '13px' }}>
+            本厅状态：<strong style={{ color: hallOpen ? '#a3be8c' : '#bf616a' }}>{hallOpen ? '🟢 开放中' : '🔴 已锁定'}</strong>
+          </span>
+          <button onClick={toggleHall} style={{ padding: '8px 16px', backgroundColor: hallOpen ? '#bf616a' : '#a3be8c', color: hallOpen ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
+            {hallOpen ? '🔒 锁定本厅' : '📢 开放本厅'}
+          </button>
+          <a href="/gallery?hall=showcase" title="在当前页面打开（登录状态只在本标签页有效）" style={{ color: '#ebcb8b', fontSize: '13px' }}>👁️ 预览展厅</a>
+          <button onClick={() => (showForm ? setShowForm(false) : startNew())} style={{ padding: '8px 16px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>
+            {showForm ? '收起' : '➕ 录入佳作'}
+          </button>
+        </div>
       </div>
 
       {showForm && (
