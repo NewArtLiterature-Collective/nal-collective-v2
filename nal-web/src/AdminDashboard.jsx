@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+
+// 署名行：文图同一作者 → "文·图 / 某某"；不同 → "文 / 某某　图 / 某某"
+function bylineOf(w) {
+  const a = (w?.author_name || '').trim();
+  const i = (w?.illustrator_name || '').trim();
+  if (!a) return '';
+  return i && i !== a ? `文 / ${a}　图 / ${i}` : `文·图 / ${a}`;
+}
 import { API_BASE } from './config';
 
 export default function AdminDashboard() {
@@ -159,7 +167,7 @@ export default function AdminDashboard() {
       // 🚨 剔除与策展无关的 AI 声明字段，保持纯净
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
-        .select('id, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls')
+        .select('id, title, author_name, illustrator_name, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls')
         .eq('status', 'success')
         .eq('contest_id', contestId) 
         .order('manual_rank', { ascending: false })
@@ -376,6 +384,8 @@ export default function AdminDashboard() {
                           <span style={styles.galleryWorkId}>UUID: {work.id.substring(0, 8)}</span>
                           <span style={styles.galleryScoreBadge}>评级: {work.ai_total_score?.toFixed(1)}</span>
                         </div>
+                        {work.title && <div style={{ color: '#eceff4', fontWeight: 'bold', fontSize: '15px', margin: '8px 0 2px' }}>《{work.title}》</div>}
+                        {bylineOf(work) && <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>{bylineOf(work)}</div>}
                         <p style={styles.galleryCardText}>
                           {work.text_content?.substring(0, 100)}
                           {work.text_content?.length > 100 ? '...' : ''}
@@ -398,7 +408,8 @@ export default function AdminDashboard() {
           <div style={styles.previewModal} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '15px', marginBottom: '20px' }}>
               <h2 style={{ margin: 0, color: '#ebcb8b', fontSize: '20px' }}>
-                📖 策展室单卷审阅 <span style={{ color: '#888', fontSize: '14px' }}>[{previewWork.id.substring(0,8)}]</span>
+                📖 {previewWork.title ? `《${previewWork.title}》` : '策展室单卷审阅'} <span style={{ color: '#888', fontSize: '14px' }}>[{previewWork.id.substring(0,8)}]</span>
+                {bylineOf(previewWork) && <div style={{ color: '#d8dee9', fontSize: '14px', fontWeight: 'normal', marginTop: '6px' }}>{bylineOf(previewWork)}</div>}
               </h2>
               <button onClick={() => setPreviewWork(null)} style={styles.closeBtn}>×</button>
             </div>
@@ -622,6 +633,7 @@ export default function AdminDashboard() {
               <thead>
                 <tr style={{ borderBottom: '2px solid #333', color: '#888' }}>
                   <th style={{ padding: '10px' }}>作品 UUID</th>
+                  <th style={{ padding: '10px' }}>标题 / 署名</th>
                   <th style={{ padding: '10px' }}>字数</th>
                   <th style={{ padding: '10px' }}>AI 综合均分</th>
                   <th style={{ padding: '10px' }}>专家分歧度 (方差)</th>
@@ -634,6 +646,10 @@ export default function AdminDashboard() {
                 {works.map((work) => (
                   <tr key={work.id} style={{ borderBottom: '1px solid #222' }}>
                     <td style={{ padding: '10px', color: '#a3be8c' }}>{work.id.substring(0, 12)}...</td>
+                    <td style={{ padding: '10px' }}>
+                      <div style={{ color: '#eceff4' }}>{work.title ? `《${work.title}》` : <span style={{ color: '#4c566a' }}>[无标题]</span>}</div>
+                      <div style={{ color: '#888', fontSize: '12px' }}>{bylineOf(work)}</div>
+                    </td>
                     <td style={{ padding: '10px' }}>{work.word_count} 字</td>
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
                     <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
