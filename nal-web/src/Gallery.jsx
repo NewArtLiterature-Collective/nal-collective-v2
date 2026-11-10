@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import logo from './assets/nal_logo.png';
 
@@ -11,12 +11,17 @@ function bylineOf(w) {
   return i && i !== a ? `文 / ${a}　图 / ${i}` : `文·图 / ${a}`;
 }
 import { API_BASE } from './config';
+import ShowcaseHall from './Showcase';   // 📚 陈伯吹新儿童文学绘本插画大赛厅（常年开放：历届绘本、插画 AI 评审佳作）
 
 // 🆕 后端地址来自构建期环境变量 VITE_API_BASE_URL（见 config.js），v2 / www 各指各的后端。
 //    私有桶下，展厅图片经此签名获取。
 
 export default function Gallery() {
   const navigate = useNavigate();
+  // 展厅分厅：新艺文社竞赛厅（默认）/ 陈伯吹新儿童文学绘本插画大赛厅（?hall=showcase，可直接分享链接；常年开放，不受竞赛展厅开关影响）
+  const [searchParams, setSearchParams] = useSearchParams();
+  const hall = searchParams.get('hall') === 'showcase' ? 'showcase' : 'contest';
+  const switchHall = (h) => setSearchParams(h === 'showcase' ? { hall: 'showcase' } : {}, { replace: true });
   
   // 核心状态矩阵
   const [works, setWorks] = useState([]);
@@ -208,11 +213,18 @@ export default function Gallery() {
       {/* 展厅主视觉区 */}
       <header style={styles.hero}>
         <h1 style={styles.heroTitle}>🏛️ 典藏文学展厅</h1>
-        <p style={styles.heroSubtitle}>{galleryState.contestName}</p>
+        <p style={styles.heroSubtitle}>{hall === 'showcase' ? '历届绘本 · 插画 AI 评审佳作 · 常年开放' : galleryState.contestName}</p>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '28px', flexWrap: 'wrap' }}>
+          {[['contest', '🏆 新艺文社竞赛厅'], ['showcase', '📚 陈伯吹新儿童文学绘本插画大赛厅']].map(([k, label]) => (
+            <button key={k} onClick={() => switchHall(k)} style={hall === k ? styles.hallTabOn : styles.hallTab}>{label}</button>
+          ))}
+        </div>
       </header>
 
       <main style={styles.main}>
-        {isLoading ? (
+        {hall === 'showcase' ? (
+          <ShowcaseHall />
+        ) : isLoading ? (
           <div style={styles.statusBox}>
             <span style={{ animation: 'pulse 1.5s infinite', color: '#88c0d0' }}>
               📡 正在提取典藏作品序列...
@@ -321,6 +333,8 @@ const styles = {
   hero: { padding: '80px 20px 40px', textAlign: 'center', borderBottom: '1px solid #111' },
   heroTitle: { fontSize: '42px', fontWeight: '900', color: '#ebcb8b', margin: '0 0 15px 0', letterSpacing: '2px' },
   heroSubtitle: { fontSize: '16px', color: '#888', letterSpacing: '1px' },
+  hallTab: { padding: '10px 24px', background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: '8px', cursor: 'pointer', fontSize: '15px', fontWeight: 'bold' },
+  hallTabOn: { padding: '10px 24px', background: '#1f2937', color: '#ebcb8b', border: '1px solid #ebcb8b', borderRadius: '8px', cursor: 'pointer', fontSize: '15px', fontWeight: 'bold' },
 
   main: { maxWidth: '1200px', margin: '0 auto', padding: '40px 20px' },
   statusBox: { textAlign: 'center', padding: '80px 20px', backgroundColor: '#111', borderRadius: '12px', border: '1px dashed #333', maxWidth: '600px', margin: '0 auto' },
