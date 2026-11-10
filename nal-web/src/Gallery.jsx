@@ -2,6 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import logo from './assets/nal_logo.png';
+
+// 署名行：文图同一作者 → "文·图 / 某某"；不同 → "文 / 某某　图 / 某某"
+function bylineOf(w) {
+  const a = (w?.author_name || '').trim();
+  const i = (w?.illustrator_name || '').trim();
+  if (!a) return '';
+  return i && i !== a ? `文 / ${a}　图 / ${i}` : `文·图 / ${a}`;
+}
 import { API_BASE } from './config';
 
 // 🆕 后端地址来自构建期环境变量 VITE_API_BASE_URL（见 config.js），v2 / www 各指各的后端。
@@ -93,7 +101,7 @@ export default function Gallery() {
         // 提取该赛季所有 status 为 success 的作品
         const { data: submissions, error: subErr } = await supabase
           .from('contest_submissions')
-          .select('id, text_content, image_urls, ai_total_score, is_manual_recommended, manual_rank, exhibition_ready, created_at')
+          .select('id, title, author_name, illustrator_name, text_content, image_urls, ai_total_score, is_manual_recommended, manual_rank, exhibition_ready, created_at')
           .eq('status', 'success')
           .eq('contest_id', activeContestId);
 
@@ -152,7 +160,8 @@ export default function Gallery() {
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>
-                📖 完整赏析档案 <span style={styles.modalId}>[{selectedWork.id.substring(0, 8)}]</span>
+                📖 {selectedWork.title ? `《${selectedWork.title}》` : '完整赏析档案'} <span style={styles.modalId}>[{selectedWork.id.substring(0, 8)}]</span>
+                {bylineOf(selectedWork) && <div style={{ fontSize: '14px', fontWeight: 'normal', color: '#9ca3af', marginTop: '6px' }}>{bylineOf(selectedWork)}</div>}
               </h2>
               <button onClick={() => setSelectedWork(null)} style={styles.closeBtn}>×</button>
             </div>
@@ -250,6 +259,10 @@ export default function Gallery() {
                     </span>
                   </div>
                   
+                  {/* 标题与署名 */}
+                  {work.title && <div style={{ fontWeight: 'bold', fontSize: '16px', margin: '10px 0 2px' }}>《{work.title}》</div>}
+                  {bylineOf(work) && <div style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '6px' }}>{bylineOf(work)}</div>}
+
                   {/* 文字截断预览 */}
                   <p style={styles.cardText}>
                     {work.text_content?.substring(0, 120)}
