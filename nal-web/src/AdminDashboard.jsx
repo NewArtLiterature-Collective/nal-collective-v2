@@ -9,6 +9,7 @@ function bylineOf(w) {
   return i && i !== a ? `文 / ${a}　图 / ${i}` : `文·图 / ${a}`;
 }
 import { API_BASE } from './config';
+import ShowcaseAdmin from './ShowcaseAdmin';   // 📚 陈伯吹新儿童文学绘本插画大赛厅布展
 
 export default function AdminDashboard() {
 
@@ -593,7 +594,7 @@ export default function AdminDashboard() {
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '20px', paddingBottom: '15px', borderBottom: '1px dashed #333' }}>
             <div>
-              <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 展厅作品库人工策展（共 {works.length} 篇）</h3>
+              <h3 style={{ margin: '0 0 10px 0', color: '#b48ead' }}>🏆 新艺文社竞赛厅 · 作品库人工策展（共 {works.length} 篇）</h3>
               <p style={{ margin: 0, color: '#64748b', fontSize: '12px', maxWidth: '600px', lineHeight: '1.5' }}>
                 💡 <strong>工作流提示</strong>：您可以在下方列表中单独审阅并挑选作品。选定后，在【闭馆状态下】点击右侧的“预览展厅排版”，即可从上帝视角俯瞰最终展出效果。确认无误后，再开启全网展厅大闸。
               </p>
@@ -675,6 +676,9 @@ export default function AdminDashboard() {
             </table>
           </div>
         </div>
+
+        {/* 📚 陈伯吹新儿童文学绘本插画大赛厅布展 */}
+        <ShowcaseAdmin addLog={addLog} />
 
       </div>
     </div>
