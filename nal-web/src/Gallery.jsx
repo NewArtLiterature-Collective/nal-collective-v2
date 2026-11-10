@@ -18,7 +18,7 @@ import ShowcaseHall from './Showcase';   // 📚 陈伯吹新儿童文学绘本�
 
 export default function Gallery() {
   const navigate = useNavigate();
-  // 展厅分厅：新艺文社竞赛厅（默认）/ 陈伯吹新儿童文学绘本插画大赛厅（?hall=showcase，可直接分享链接；常年开放，不受竞赛展厅开关影响）
+  // 展厅分厅：新艺文社竞赛厅（默认）/ 陈伯吹新儿童文学绘本插画大赛厅（?hall=showcase，可直接分享链接；常年开放，不受竞赛厅开关影响；可在后台单独锁定）
   const [searchParams, setSearchParams] = useSearchParams();
   const hall = searchParams.get('hall') === 'showcase' ? 'showcase' : 'contest';
   const switchHall = (h) => setSearchParams(h === 'showcase' ? { hall: 'showcase' } : {}, { replace: true });
@@ -213,7 +213,7 @@ export default function Gallery() {
       {/* 展厅主视觉区 */}
       <header style={styles.hero}>
         <h1 style={styles.heroTitle}>🏛️ 典藏文学展厅</h1>
-        <p style={styles.heroSubtitle}>{hall === 'showcase' ? '历届绘本 · 插画 AI 评审佳作 · 常年开放' : galleryState.contestName}</p>
+        <p style={styles.heroSubtitle}>{hall === 'showcase' ? '历届绘本 · 插画 AI 评审佳作' : galleryState.contestName}</p>
         <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '28px', flexWrap: 'wrap' }}>
           {[['contest', '🏆 新艺文社竞赛厅'], ['showcase', '📚 陈伯吹新儿童文学绘本插画大赛厅']].map(([k, label]) => (
             <button key={k} onClick={() => switchHall(k)} style={hall === k ? styles.hallTabOn : styles.hallTab}>{label}</button>
