@@ -152,9 +152,20 @@ export default function ShowcaseHall() {
   const [error, setError] = useState('');
   const [cat, setCat] = useState('picturebook');
   const [open, setOpen] = useState(null);
+  const [locked, setLocked] = useState(false);      // 本厅是否被管理员锁定
+  const [isAdmin, setIsAdmin] = useState(false);    // 管理员在锁定期间仍可预览
 
   useEffect(() => {
     (async () => {
+      // 锁定开关：site_settings.is_showcase_active（缺省视为开放）
+      const { data: setting } = await supabase
+        .from('site_settings').select('is_showcase_active').eq('id', 1).maybeSingle();
+      const isLocked = setting?.is_showcase_active === false;
+      const { data: { session } } = await supabase.auth.getSession();
+      const admin = session?.user?.app_metadata?.role === 'admin';
+      setLocked(isLocked); setIsAdmin(admin);
+      if (isLocked && !admin) { setLoading(false); return; }
+
       const { data, error: e } = await supabase
         .from('showcase_works')
         .select('id, category, edition, title, byline, verdict, pages, cover_index, page_format, sort_order, created_at')
@@ -177,8 +188,20 @@ export default function ShowcaseHall() {
     g.items.push(w);
   });
 
+  if (!loading && locked && !isAdmin) {
+    return (
+      <div style={st.status}>
+        <div style={{ fontSize: '56px', marginBottom: '16px' }}>🔐</div>
+        <div style={{ color: '#d8dee9', lineHeight: '1.8', fontSize: '16px' }}>本厅正在布展，暂未开放。<br />敬请期待。</div>
+      </div>
+    );
+  }
+
   return (
     <div>
+      {locked && isAdmin && (
+        <div style={st.previewBar}>🔒 本厅当前处于锁定状态，访客看不到展品。您以管理员身份预览中。</div>
+      )}
       <div style={st.tabs}>
         {[['picturebook', '📖 绘本'], ['illustration', '🎨 插画']].map(([k, label]) => (
           <button key={k} onClick={() => setCat(k)} style={cat === k ? st.tabOn : st.tab}>{label}</button>
@@ -235,6 +258,7 @@ export default function ShowcaseHall() {
 
 const st = {
   tabs: { display: 'flex', gap: '12px', justifyContent: 'center', marginBottom: '16px' },
+  previewBar: { textAlign: 'center', background: 'rgba(191,97,106,.15)', color: '#ebcb8b', border: '1px solid #bf616a', borderRadius: '8px', padding: '10px 16px', marginBottom: '24px', fontSize: '14px' },
   tab: { padding: '10px 26px', background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: '999px', cursor: 'pointer', fontSize: '15px', fontWeight: 'bold' },
   tabOn: { padding: '10px 26px', background: '#ebcb8b', color: '#111', border: '1px solid #ebcb8b', borderRadius: '999px', cursor: 'pointer', fontSize: '15px', fontWeight: 'bold' },
   intro: { textAlign: 'center', color: '#6b7280', fontSize: '14px', margin: '0 0 40px' },
