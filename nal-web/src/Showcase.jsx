@@ -3,6 +3,7 @@
 // · 绘本：按翻书格式阅读（宽屏两页并排、首页为封面单页；窄屏单页；跨页合图每张占一屏）
 // · 插画：按页面显示图片；组图可左右翻看
 // · 每件作品只显示：作品名称（署名选填）+ 简短判词
+// · 防下载：图片已在上传时烧入水印；展示时禁止右键、拖拽、长按保存（只能挡住一般操作，挡不住截图）
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 
@@ -12,6 +13,16 @@ export const showcaseUrl = (path) =>
 
 // 作品名统一去掉书名号，显示时再加一对
 export const cleanTitle = (t) => (t || '').replace(/[《》]/g, '').replace(/^绘本/, '').trim();
+
+// 防下载：屏蔽右键菜单与拖拽（作用在展厅和阅读器的外层容器上）
+const blockSave = (e) => e.preventDefault();
+const protectProps = { onContextMenu: blockSave, onDragStart: blockSave };
+
+// 受保护的图片：不响应指针（右键 / 长按落在外层容器上被屏蔽），不可拖拽、不可选中
+function ProtectedImg({ style, ...rest }) {
+  return <img {...rest} draggable={false} style={{ ...style, ...noSave }} />;
+}
+const noSave = { pointerEvents: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
 
 function useIsWide(breakpoint = 900) {
   const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.innerWidth >= breakpoint);
@@ -75,7 +86,7 @@ function FlipBook({ work, onClose }) {
   const isCover = wide && work.page_format !== 'spread' && idx === 0;
 
   return (
-    <div style={st.overlay} onClick={onClose}>
+    <div style={st.overlay} onClick={onClose} {...protectProps}>
       <div style={st.bookWrap} onClick={e => e.stopPropagation()}
         onTouchStart={e => { touchX.current = e.touches[0].clientX; }}
         onTouchEnd={e => {
@@ -95,7 +106,7 @@ function FlipBook({ work, onClose }) {
                 ...(cur.length === 2 ? { ...(i === 0 ? st.pageLeft : st.pageRight), maxWidth: '50%' } : { maxWidth: '100%' }),
                 ...(isCover ? st.cover : {}),
               }}>
-                <img src={src} alt={`第 ${idx + 1} 屏`} style={st.pageImg} draggable={false} />
+                <ProtectedImg src={src} alt={`第 ${idx + 1} 屏`} style={st.pageImg} />
               </div>
             ))}
           </div>
@@ -127,12 +138,12 @@ function IllustrationViewer({ work, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [go, onClose]);
   return (
-    <div style={st.overlay} onClick={onClose}>
+    <div style={st.overlay} onClick={onClose} {...protectProps}>
       <div style={st.bookWrap} onClick={e => e.stopPropagation()}>
         <button style={st.close} onClick={onClose} aria-label="关闭">×</button>
         <div style={st.stage}>
           {pages.length > 1 && <button style={{ ...st.navBtn, left: 0, visibility: idx > 0 ? 'visible' : 'hidden' }} onClick={() => go(-1)}>‹</button>}
-          <img key={idx} src={pages[idx]} alt={cleanTitle(work.title)} style={st.illusImg} />
+          <ProtectedImg key={idx} src={pages[idx]} alt={cleanTitle(work.title)} style={st.illusImg} />
           {pages.length > 1 && <button style={{ ...st.navBtn, right: 0, visibility: idx < pages.length - 1 ? 'visible' : 'hidden' }} onClick={() => go(1)}>›</button>}
         </div>
         <div style={st.bookFooter}>
@@ -198,7 +209,7 @@ export default function ShowcaseHall() {
   }
 
   return (
-    <div>
+    <div {...protectProps}>
       {locked && isAdmin && (
         <div style={st.previewBar}>🔒 本厅当前处于锁定状态，访客看不到展品。您以管理员身份预览中。</div>
       )}
@@ -228,7 +239,7 @@ export default function ShowcaseHall() {
               return (
                 <button key={w.id} style={st.card} onClick={() => setOpen(w)}>
                   <div style={cat === 'picturebook' ? st.coverBox : st.illusBox}>
-                    {cover && <img src={cover} alt={cleanTitle(w.title)} style={st.coverImg} loading="lazy" />}
+                    {cover && <ProtectedImg src={cover} alt={cleanTitle(w.title)} style={st.coverImg} loading="lazy" />}
                     {cat === 'picturebook' && <span style={st.badge}>翻阅 · {(w.pages || []).length} 页</span>}
                     {cat === 'illustration' && (w.pages || []).length > 1 && <span style={st.badge}>组图 · {(w.pages || []).length} 幅</span>}
                   </div>
