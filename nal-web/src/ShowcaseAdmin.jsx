@@ -1,6 +1,7 @@
 // ShowcaseAdmin.jsx —— 管理后台：陈伯吹新儿童文学绘本插画大赛厅布展
 // 录入陈伯吹新儿童文学绘本插画大赛历届绘本 / 插画的 AI 评审佳作：作品名称、届次、署名（选填）、简短判词、页面图片。
-// 图片在浏览器内压缩（长边 ≤ 2400px，JPEG）后上传到 showcase 公开桶，按顺序存为 <作品ID>/001.jpg …
+// 图片在浏览器内压缩（长边 ≤ 2400px，JPEG）并【烧入水印】后上传到 showcase 公开桶，按顺序存为 <作品ID>/001.jpg …
+// 桶里只存带水印的版本，原图不上传——即使有人拿到图片直链，下载到的也是带水印的图。
 // 只有管理员（JWT app_metadata.role = 'admin'）可写，见 showcase_hall.sql。
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
@@ -8,6 +9,53 @@ import { SHOWCASE_BUCKET, showcaseUrl, cleanTitle } from './Showcase';
 
 const MAX_EDGE = 2400;
 const JPEG_QUALITY = 0.88;
+
+// ---- 水印（如需调整文字或浓淡，改这里）----
+export const WATERMARK_TEXT = '陈伯吹新儿童文学绘本插画大赛 · 新艺文社';
+export const WATERMARK_SUB = 'www.nal-ai.org';
+const WM_TILE_ALPHA = 0.10;    // 斜向平铺的淡水印（覆盖全图，防裁切）
+const WM_CORNER_ALPHA = 0.80;  // 右下角署名水印
+
+// 在画布上烧入水印：全图斜向淡色平铺 + 右下角署名。白字配深色描边，深浅底色上都看得见。
+export function drawWatermark(ctx, w, h) {
+  const base = Math.max(14, Math.round(Math.min(w, h) * 0.026));
+  const family = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif';
+
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(-Math.PI / 6);
+  ctx.font = `${base}px ${family}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(1, base / 10);
+  ctx.fillStyle = `rgba(255,255,255,${WM_TILE_ALPHA})`;
+  ctx.strokeStyle = `rgba(0,0,0,${WM_TILE_ALPHA * 0.6})`;
+  const stepX = ctx.measureText(WATERMARK_TEXT).width + base * 5;
+  const stepY = base * 7;
+  const R = Math.sqrt(w * w + h * h) / 2 + stepX;
+  let row = 0;
+  for (let y = -R; y <= R; y += stepY, row++) {
+    for (let x = -R + (row % 2) * (stepX / 2); x <= R; x += stepX) {
+      ctx.strokeText(WATERMARK_TEXT, x, y);
+      ctx.fillText(WATERMARK_TEXT, x, y);
+    }
+  }
+  ctx.restore();
+
+  ctx.save();
+  const pad = Math.round(base * 0.9);
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = Math.max(2, base / 4);
+  ctx.fillStyle = `rgba(255,255,255,${WM_CORNER_ALPHA})`;
+  ctx.font = `${Math.round(base * 0.75)}px ${family}`;
+  ctx.fillText(WATERMARK_SUB, w - pad, h - pad);
+  ctx.font = `bold ${base}px ${family}`;
+  ctx.fillText(`© ${WATERMARK_TEXT}`, w - pad, h - pad - Math.round(base * 1.05));
+  ctx.restore();
+}
 
 // 文件名自然排序：p2 排在 p10 前面
 const naturalCompare = (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' });
@@ -23,6 +71,7 @@ async function compressImage(file) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);      // PNG 透明底填白
   ctx.drawImage(bitmap, 0, 0, w, h);
   bitmap.close && bitmap.close();
+  drawWatermark(ctx, w, h);                               // 烧入水印
   return await new Promise((resolve, reject) =>
     canvas.toBlob(b => (b ? resolve(b) : reject(new Error('图片压缩失败'))), 'image/jpeg', JPEG_QUALITY));
 }
@@ -223,7 +272,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
               placeholder="一两句话，例如佳作报告里作品名后面的那句" />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label style={lbl}>{form.id ? '重新选择图片（不选则保留原图）' : '作品图片（可多选，按文件名排序，可上下调整）'}</label>
+            <label style={lbl}>{form.id ? '重新选择图片（不选则保留原图；新图会自动加水印）' : '作品图片（可多选，按文件名排序，可上下调整；上传时自动加水印）'}</label>
             <input type="file" multiple accept=".jpg,.jpeg,.png,image/jpeg,image/png" onChange={pickFiles} style={{ color: '#ccc' }} />
             {files.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
