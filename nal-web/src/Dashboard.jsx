@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { usePayment } from './hooks/usePayment';
 import { useEvaluation } from './hooks/useEvaluation';
+import { API_BASE } from './config';
 import logo from './assets/nal_logo.png';
 
 // 🚨 提交格式硬约束：全站仅接受 JPG/PNG（与后端 PIL 管线及 OSS 安全策略对齐）
@@ -45,8 +46,13 @@ export default function Dashboard({ session }) {
   const [isUpdatingReg, setIsUpdatingReg] = useState(false);
   const [regForm, setRegForm] = useState({
     name: '',
+    pen_name: '',      // 展出署名（笔名或真实姓名）
     gender: '保密',
     phone: '',
+    region: '',        // 国家/地区（选填）
+    is_minor: false,   // 未满 18 岁
+    guardian_name: '',
+    guardian_phone: '',
     agreed: false
   });
 
@@ -55,12 +61,22 @@ export default function Dashboard({ session }) {
 
   // 参赛作品专属状态
   const [contestText, setContestText] = useState('');
+  const [contestTitle, setContestTitle] = useState('');            // 作品标题（不计入正文字数）
+  const [contestAuthor, setContestAuthor] = useState('');          // 文字作者署名（默认取报名署名）
+  const [contestIllustrator, setContestIllustrator] = useState(''); // 插画作者署名（选填，空 = 与文字作者相同）
+  // 参赛正文字数：按征稿启事 800–1000 字（不计空格与换行）
+  const CONTEST_MIN_CHARS = 800;
+  const CONTEST_MAX_CHARS = 1000;
+  const contestCharCount = contestText.replace(/\s/g, '').length;
+  const contestCharOk = contestCharCount >= CONTEST_MIN_CHARS && contestCharCount <= CONTEST_MAX_CHARS;
   const [contestImages, setContestImages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // 评审进度相关
   const [userSubmissions, setUserSubmissions] = useState([]); 
   const [isRefreshing, setIsRefreshing] = useState(false); 
+  // 本届是否已因内容违规被取消参赛资格（contest_blocks 有记录）
+  const [contestBlock, setContestBlock] = useState(null);
 
   // 专家模型与引擎配置状态
   const [models, setModels] = useState([]);
@@ -162,6 +178,16 @@ export default function Dashboard({ session }) {
       .order('created_at', { ascending: false });
     
     if (data) setUserSubmissions(data);
+
+    // 本届是否已被取消参赛资格（投稿时被平台内容审核拦截）
+    const { data: blocks } = await supabase
+      .from('contest_blocks')
+      .select('id, created_at')
+      .eq('user_id', session.user.id)
+      .eq('contest_id', activeContestId)
+      .limit(1);
+    setContestBlock(blocks && blocks.length > 0 ? blocks[0] : null);
+
     setTimeout(() => setIsRefreshing(false), 500); 
   }, [session?.user?.id, activeContestId, isAdmin]);
 
@@ -182,9 +208,13 @@ export default function Dashboard({ session }) {
       setRegForm(prev => ({
         ...prev,
         name: meta.real_name || '',
+        pen_name: meta.pen_name || '',
         gender: meta.gender || '保密',
-        phone: meta.phone || ''
+        phone: meta.phone || '',
+        region: meta.region || ''
       }));
+      // 投稿页的署名默认取报名署名（用户可修改）
+      setContestAuthor(prev => prev || meta.pen_name || meta.real_name || '');
     }
   };
 
@@ -247,6 +277,12 @@ export default function Dashboard({ session }) {
     if (!regForm.name.trim() || !regForm.phone.trim()) {
       return alert("请填写完整的姓名和联系电话，以便获奖后与您取得联系。");
     }
+    if (!regForm.pen_name.trim()) {
+      return alert("请填写展出署名（可以是笔名，也可以是真实姓名）。");
+    }
+    if (regForm.is_minor && (!regForm.guardian_name.trim() || !regForm.guardian_phone.trim())) {
+      return alert("未满 18 岁的参赛者须填写监护人姓名和联系电话。");
+    }
     
     setIsUpdatingReg(true);
     try {
@@ -263,7 +299,12 @@ export default function Dashboard({ session }) {
           contest_id: activeContestId,
           real_name: regForm.name,
           phone: regForm.phone,
-          phone_norm: phoneNorm
+          phone_norm: phoneNorm,
+          pen_name: regForm.pen_name.trim(),
+          region: regForm.region.trim() || null,
+          is_minor: !!regForm.is_minor,
+          guardian_name: regForm.is_minor ? regForm.guardian_name.trim() : null,
+          guardian_phone: regForm.is_minor ? regForm.guardian_phone.trim() : null
         }, { onConflict: 'contest_id,user_id' });
 
       if (regErr) {
@@ -279,8 +320,10 @@ export default function Dashboard({ session }) {
       const { data, error } = await supabase.auth.updateUser({
         data: {
           real_name: regForm.name,
+          pen_name: regForm.pen_name.trim(),
           gender: regForm.gender,
           phone: regForm.phone,
+          region: regForm.region.trim(),
           agreed_contests: updatedAgreedContests
         }
       });
@@ -288,6 +331,7 @@ export default function Dashboard({ session }) {
       if (error) throw error;
 
       setRawUserMetadata(data.user.user_metadata);
+      setContestAuthor(prev => prev || regForm.pen_name.trim());
       setShowRegModal(false); // 提交成功，关闭弹窗，瞬间解锁上传大厅
     } catch (error) {
       alert("信息提交失败: " + error.message);
@@ -356,14 +400,19 @@ export default function Dashboard({ session }) {
     }
   }, [maxDocxSize, maxDocSizeDisplay]); 
   
+  // 参赛配图大小上限：所有参赛者统一 10MB，不分身份（日常评审仍按身份区分）
+  const CONTEST_IMAGE_MB = 10;
+
   const handleContestImageUpload = (e) => {
     const files = Array.from(e.target.files);
     // 🚨 格式白名单：仅 JPG/PNG（MIME 与扩展名双重校验）
     const invalidFiles = validateImageFiles(files);
     if (invalidFiles.length > 0) return alert(`格式不支持！仅接受 JPG/PNG 格式。\n问题文件：${invalidFiles.map(f => f.name).join('、')}`);
-    const oversizedFiles = files.filter(f => f.size > maxImageSizeMB * 1024 * 1024);
-    if (oversizedFiles.length > 0) return alert(`文件过大！单张插画不得超过 ${maxImageSizeMB}MB。`);
-    setContestImages(prev => [...prev, ...files].slice(0, 2));
+    const oversizedFiles = files.filter(f => f.size > CONTEST_IMAGE_MB * 1024 * 1024);
+    if (oversizedFiles.length > 0) { e.target.value = ''; return alert(`文件过大！参赛配图不得超过 ${CONTEST_IMAGE_MB}MB。`); }
+    // 本届征稿启事：每件作品必须且只配一幅图
+    setContestImages(files.slice(0, 1));
+    e.target.value = '';
   };
 
   const triggerEvaluation = async () => {
@@ -390,8 +439,11 @@ export default function Dashboard({ session }) {
   };
 
   const submitContestWork = async () => {
-    if (contestImages.length < 1 || contestImages.length > 2) return alert("请上传 1-2 幅插画！");
-    if (contestText.trim().length < 500) return alert("参赛文字内容需接近 800 字。");
+    if (!contestTitle.trim()) return alert("请填写作品标题。");
+    if (contestTitle.trim().length > 50) return alert("作品标题请控制在 50 字以内。");
+    if (!contestAuthor.trim()) return alert("请填写文字作者署名。");
+    if (contestImages.length !== 1) return alert("请上传 1 幅配图（每件作品必须且只配一幅图）。");
+    if (!contestCharOk) return alert(`参赛正文须为 ${CONTEST_MIN_CHARS}–${CONTEST_MAX_CHARS} 字（不计空格与换行），当前 ${contestCharCount} 字。`);
     
     const hasExisting = userSubmissions.some(s => s.status !== 'invalid');
     if (hasExisting) return alert("您已经提交过参赛作品，每个账户限投一次。");
@@ -400,39 +452,56 @@ export default function Dashboard({ session }) {
     //    否则 contest_id 与 current_contest_id 不符会被 RLS 直接拒、且上传出孤儿图。
     if (!activeContestId) return alert("当前没有正在进行的赛事，暂时无法提交，请稍后再试或联系管理员。");
 
+    if (contestBlock) return alert("您的本届参赛资格已因内容违规被取消，不能再提交作品。");
+    if (aiDeclaration !== 'yes' && aiDeclaration !== 'no') return alert("请先完成 AI 辅助创作声明。");
+
     setIsSubmitting(true);
     try {
-      const imageUrls = [];
-      for (const file of contestImages) {
-        // 🚨 扩展名由已校验 MIME 推导，不信任用户文件名（contest_works 为公开桶）
-        const fileExt = safeExtFromType(file);
-        const fileName = `${session?.user?.id}_${Date.now()}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage.from('contest_works').upload(fileName, file);
-        if (uploadError) throw uploadError;
-        const { data } = supabase.storage.from('contest_works').getPublicUrl(fileName);
-        imageUrls.push(data.publicUrl);
-      }
+      // 投稿统一经后端：后端校验资格与格式、做平台级内容拦截，通过后才保存配图并写入作品库
+      const { data: { session: cur } } = await supabase.auth.getSession();
+      const token = cur?.access_token;
+      if (!token) throw new Error("登录已失效，请重新登录后再提交。");
 
-      const targetContestId = activeContestId;   // 已在前面校验非空
+      const form = new FormData();
+      form.append('title', contestTitle.trim());
+      form.append('author_name', contestAuthor.trim());
+      form.append('illustrator_name', contestIllustrator.trim());
+      form.append('text_content', contestText);
+      form.append('ai_declaration', aiDeclaration);
+      form.append('image', contestImages[0]);
 
-      const { error: dbError } = await supabase.from('contest_submissions').insert({
-        user_id: session?.user?.id,
-        user_email: session?.user?.email,
-        text_content: contestText,
-        image_urls: imageUrls,
-        status: 'pending',
-        contest_id: targetContestId,
-        has_declared_ai: aiDeclaration === 'yes' // 🚨 将 AI 声明正式入库
+      const resp = await fetch(`${API_BASE}/api/v1/contest/submit`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: form,
       });
-      if (dbError) throw dbError;
+      let payload = null;
+      try { payload = await resp.json(); } catch { payload = null; }
+
+      if (!resp.ok) {
+        const detail = payload?.detail;
+        const code = detail?.code;
+        const message = (typeof detail === 'string' ? detail : detail?.message) || `提交失败（${resp.status}），请稍后重试。`;
+        if (code === 'content_blocked') {
+          setContestBlock({ id: 'local', created_at: new Date().toISOString() });
+          setContestText(''); setContestTitle(''); setContestIllustrator(''); setContestImages([]);
+          alert("⛔ " + message);
+          return;
+        }
+        if (code === 'duplicate') fetchUserSubmissions();
+        alert("❌ " + message);
+        return;
+      }
 
       alert("🎉 提交成功！您的作品已封存并进入智能评审大阵，请在右侧追踪进度。");
       setContestText('');
+      setContestTitle('');
+      setContestIllustrator('');
       setContestImages([]);
       setAiDeclaration(''); // 提交成功后重置选项
       fetchUserSubmissions(); 
     } catch (error) {
-      alert("❌ 失败: " + error.message);
+      alert("❌ 提交失败：" + (error.message === 'Failed to fetch' ? '网络连接失败，请检查网络后重试。' : error.message));
     } finally {
       setIsSubmitting(false);
     }
@@ -483,7 +552,8 @@ export default function Dashboard({ session }) {
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const now = new Date();
   const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
-  const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline;
+  const isContestBlocked = !!contestBlock;
+  const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline && !isContestBlocked;
 
   // 🚨 统一的「报名通道是否开放」判定：大闸开 + 有当前赛事 + 未过截稿。
   //    任一不满足即视为封闭，所有报名入口须置灰/隐藏，不得进入支付。
@@ -538,14 +608,19 @@ export default function Dashboard({ session }) {
       {/* 报名与参赛规则确认弹窗 */}
       {showRegModal && (
         <div style={styles.overlay}>
-          <div style={{...styles.paymentModal, maxWidth: '550px', textAlign: 'left', padding: '35px'}}>
+          <div style={{...styles.paymentModal, maxWidth: '550px', textAlign: 'left', padding: '35px', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box'}}>
             <h3 style={{ margin: '0 0 20px 0', color: '#111827', borderBottom: '1px solid #e5e7eb', paddingBottom: '15px', fontSize: '20px' }}>
               📝 完善报名信息与参赛声明
             </h3>
             
             <div style={{ marginBottom: '16px' }}>
               <label style={styles.regLabel}>真实姓名 <span style={{color: '#ef4444'}}>*</span></label>
-              <input type="text" style={styles.regInput} value={regForm.name} onChange={e => setRegForm({...regForm, name: e.target.value})} placeholder="请输入您的真实姓名" />
+              <input type="text" style={styles.regInput} value={regForm.name} onChange={e => setRegForm({...regForm, name: e.target.value})} placeholder="仅用于发奖核实身份，不公开" />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={styles.regLabel}>展出署名 <span style={{color: '#ef4444'}}>*</span></label>
+              <input type="text" style={styles.regInput} value={regForm.pen_name} maxLength={40} onChange={e => setRegForm({...regForm, pen_name: e.target.value})} placeholder="展厅与杂志上显示的名字，可填笔名或真实姓名" />
             </div>
             
             <div style={{ marginBottom: '20px', display: 'flex', gap: '15px' }}>
@@ -563,12 +638,35 @@ export default function Dashboard({ session }) {
               </div>
             </div>
 
+            <div style={{ marginBottom: '16px' }}>
+              <label style={styles.regLabel}>国家/地区</label>
+              <input type="text" style={styles.regInput} value={regForm.region} maxLength={40} onChange={e => setRegForm({...regForm, region: e.target.value})} placeholder="选填，例如：中国上海、加拿大安大略省" />
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: regForm.is_minor ? '12px' : '20px', fontSize: '13px', color: '#1f2937', cursor: 'pointer', userSelect: 'none' }}>
+              <input type="checkbox" checked={regForm.is_minor} onChange={e => setRegForm({...regForm, is_minor: e.target.checked})} style={{ transform: 'scale(1.2)', cursor: 'pointer' }} />
+              我未满 18 岁（须在监护人同意下参赛，奖金向监护人发放）
+            </label>
+            {regForm.is_minor && (
+              <div style={{ marginBottom: '20px', display: 'flex', gap: '15px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={styles.regLabel}>监护人姓名 <span style={{color: '#ef4444'}}>*</span></label>
+                  <input type="text" style={styles.regInput} value={regForm.guardian_name} onChange={e => setRegForm({...regForm, guardian_name: e.target.value})} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={styles.regLabel}>监护人电话 <span style={{color: '#ef4444'}}>*</span></label>
+                  <input type="tel" style={styles.regInput} value={regForm.guardian_phone} onChange={e => setRegForm({...regForm, guardian_phone: e.target.value})} />
+                </div>
+              </div>
+            )}
+
             <label style={styles.regLabel}>大赛参赛规则与版权声明</label>
             <div style={styles.rulesBox}>
-              <p>1. <strong>原创性声明</strong>：参赛作品必须为参赛者本人绝对原创，严禁任何形式的抄袭、洗稿或剽窃。若因版权侵权引发法律纠纷，一切后果及法律责任由参赛者本人承担。</p>
-              <p>2. <strong>AI 生成限制</strong>：本平台旨在发掘人类真实的文学情感。严禁直接提交由 ChatGPT、文心一言等 AI 工具自动生成的作品。我们的后台评审引擎包含深度的“去人造化与 AI 痕迹筛查”，一经判定为 AI 纯生成，将直接取消入展资格。</p>
-              <p>3. <strong>版权与使用权归属</strong>：参赛作品的完整著作权（含署名权）永远归创作者所有。但报名并提交作品即视为参赛者**同意并授权** NAL Collective 在其官方平台、线上展厅、相关社交媒体及宣传物料中，非排他性地展示、发表及使用该作品。</p>
-              <p>4. <strong>唯一投递原则</strong>：为保证评审资源的合理分配，每位参赛账户在单个赛季期间，限定只能投递一部完整的代表作品。作品一经点击提交并进入 AI 矩阵，即不可撤回或修改，请务必确认至最终版再提交。</p>
+              <p>1. <strong>原创与未发表</strong>：参赛作品的文字与配图须为本人（或合作者）原创、未公开发表，严禁抄袭、洗稿或剽窃。因侵权引发的纠纷与法律责任由参赛者承担。</p>
+              <p>2. <strong>如实声明 AI 辅助</strong>：投稿时须如实声明是否使用 AI 工具辅助。系统查出 AI 生成痕迹而声明不符的，取消本届参赛资格。</p>
+              <p>3. <strong>版权与使用授权</strong>：作品著作权（含署名权）归作者所有。投稿即同意新艺文社为本届评审、在线展厅展出及相关宣传署名使用作品；在线杂志刊登另行征得作者同意。</p>
+              <p>4. <strong>每账号限投一件</strong>：每个账号每届限投 1 件作品，提交后不可撤回或修改，请确认为最终版本再提交。</p>
+              <p>5. <strong>取消资格</strong>：提交时系统会进行内容安全检查，未通过平台内容审核的，本届取消参赛资格、不能再投稿。抄袭、已发表或 AI 声明不实的作品，一经查实即取消资格，已发放的奖金将追回。未尽事宜以本届征稿启事、参赛规则与服务条款为准。</p>
             </div>
 
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '20px', fontSize: '13px', cursor: 'pointer', color: '#1f2937', userSelect: 'none' }}>
@@ -717,7 +815,14 @@ export default function Dashboard({ session }) {
               </div>
               
               <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
-                {alreadySubmitted ? (
+                {isContestBlocked ? (
+                  <button 
+                    disabled
+                    style={{ padding: '16px 32px', background: '#64748b', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'not-allowed', fontSize: '16px' }}
+                  >
+                    ⛔ 本届参赛资格已取消
+                  </button>
+                ) : alreadySubmitted ? (
                   <button 
                     onClick={() => setActiveTab('contest')}
                     style={{ padding: '16px 32px', background: '#4f46e5', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)' }}
@@ -757,12 +862,14 @@ export default function Dashboard({ session }) {
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
                     <h3 style={{ color: '#1e293b', marginBottom: '15px', fontSize: '20px' }}>
-                      {!isContestActive ? '当前赛季未开放' : 
+                      {isContestBlocked ? '本届参赛资格已取消' : !isContestActive ? '当前赛季未开放' : 
                         (!isEligibleForContest ? '您未获得参赛资格' : 
                           (alreadySubmitted ? '作品大典已封存' : '本届征稿通道已关闭'))}
                     </h3>
                     <p style={{ color: '#64748b', fontSize: '15px', lineHeight: '1.8', maxWidth: '400px', margin: '0 auto' }}>
-                      {!isContestActive
+                      {isContestBlocked
+                        ? '您提交的作品未能通过平台的内容审核。依据参赛规则，本届参赛资格已取消，不能再提交作品。如您认为这是误判，请发邮件至 info@nal-ai.org 说明情况。'
+                        : !isContestActive
                         ? '本届赛事大闸已休眠，此处仅供查看历史战绩。'
                         : (!isEligibleForContest
                           ? '请在左侧“大赛官方动态”中获取本届赛事的门票资格。'
@@ -795,22 +902,42 @@ export default function Dashboard({ session }) {
                 /* 拦截3：已同意规则，一切就绪，展示正式上传大厅 */
                 (
                   <>
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品标题 <span style={{color: '#ef4444'}}>*</span></label>
+                      <input type="text" style={styles.regInput} value={contestTitle} maxLength={50}
+                        onChange={e => setContestTitle(e.target.value)} placeholder="不计入正文字数，50 字以内" />
+                      <div style={{ display: 'flex', gap: '15px', marginTop: '15px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>文字作者署名 <span style={{color: '#ef4444'}}>*</span></label>
+                          <input type="text" style={styles.regInput} value={contestAuthor} maxLength={40}
+                            onChange={e => setContestAuthor(e.target.value)} placeholder="展厅展出时显示的名字" />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>插画作者署名</label>
+                          <input type="text" style={styles.regInput} value={contestIllustrator} maxLength={40}
+                            onChange={e => setContestIllustrator(e.target.value)} placeholder="与文字作者相同可不填" />
+                        </div>
+                      </div>
+                    </div>
+
                     <div style={{ marginTop: '0px' }}>
-                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文 (最大 800 字)</label>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '8px' }}>作品正文（800–1000 字，不计空格与换行）</label>
                       <textarea 
                         style={{ ...styles.textarea, height: '380px', width: '100%', boxSizing: 'border-box', backgroundColor: '#f9fafb', resize: 'none' }}
                         placeholder="在此粘贴您的参赛作品文字内容..."
                         value={contestText}
-                        onChange={(e) => { if (e.target.value.length <= 800) setContestText(e.target.value); }}
+                        onChange={(e) => setContestText(e.target.value)}
                       />
-                      <div style={{ textAlign: 'right', fontSize: '12px', color: contestText.length >= 800 ? '#ef4444' : '#94a3b8', marginTop: '5px' }}>
-                        {contestText.length} / 800 字
+                      <div style={{ textAlign: 'right', fontSize: '12px', color: contestCharCount === 0 ? '#94a3b8' : (contestCharOk ? '#10b981' : '#ef4444'), marginTop: '5px' }}>
+                        {contestCharCount} 字（要求 {CONTEST_MIN_CHARS}–{CONTEST_MAX_CHARS} 字）
+                        {contestCharCount > CONTEST_MAX_CHARS && `，超出 ${contestCharCount - CONTEST_MAX_CHARS} 字`}
+                        {contestCharCount > 0 && contestCharCount < CONTEST_MIN_CHARS && `，还差 ${CONTEST_MIN_CHARS - contestCharCount} 字`}
                       </div>
                     </div>
 
                     <div style={{ marginTop: '20px' }}>
                       <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#374151', marginBottom: '10px' }}>
-                        作品插画 (需 1-2 幅，单张限制 <strong>{maxImageSizeMB}MB</strong>)
+                        作品配图 (必须且只配 1 幅，JPG/PNG，不超过 <strong>{CONTEST_IMAGE_MB}MB</strong>)
                       </label>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {contestImages.map((file, index) => (
@@ -821,10 +948,10 @@ export default function Dashboard({ session }) {
                             <button onClick={() => removeContestImage(index)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>移除</button>
                           </div>
                         ))}
-                        {contestImages.length < 2 && (
+                        {contestImages.length < 1 && (
                           <div style={{...styles.uploadArea, padding: '15px'}}>
-                            <input type="file" id="c-img" hidden multiple accept={IMAGE_ACCEPT_ATTR} onChange={handleContestImageUpload} />
-                            <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>{contestImages.length === 0 ? "➕ 上传第一幅插画" : "➕ 上传第二幅插画"}</label>
+                            <input type="file" id="c-img" hidden accept={IMAGE_ACCEPT_ATTR} onChange={handleContestImageUpload} />
+                            <label htmlFor="c-img" style={{...styles.uploadBtn, fontSize: '13px'}}>➕ 上传配图</label>
                           </div>
                         )}
                       </div>
@@ -852,7 +979,7 @@ export default function Dashboard({ session }) {
                       disabled={isSubmitting || aiDeclaration === ''} 
                       style={{ ...styles.submitBtn, width: '100%', marginTop: '30px', backgroundColor: (isSubmitting || aiDeclaration === '') ? '#94a3b8' : '#4f46e5', cursor: (isSubmitting || aiDeclaration === '') ? 'not-allowed' : 'pointer' }}
                     >
-                      {isSubmitting ? "正在封存上传中..." : (aiDeclaration === '' ? "⛔ 请先勾选上方 AI 声明" : "📤 确认提交参赛作品")}
+                      {isSubmitting ? "正在进行内容安全检查并提交，约需 10–60 秒，请勿关闭页面..." : (aiDeclaration === '' ? "⛔ 请先勾选上方 AI 声明" : "📤 确认提交参赛作品")}
                     </button>
                   </>
                 )}
