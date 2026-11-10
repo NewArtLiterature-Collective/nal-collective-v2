@@ -32,6 +32,8 @@ TABLE = "showcase_works"
 
 def env(name, fallback=None):
     v = os.getenv(name) or (os.getenv(fallback) if fallback else None)
+    # 复制粘贴常带进空格、换行或引号：一律去掉（这类多余字符会导致 "Invalid API key"）
+    v = "".join((v or "").split()).strip("'\"")
     if not v:
         sys.exit(f"❌ 缺少环境变量 {name}" + (f"（或 {fallback}）" if fallback else ""))
     return v
@@ -70,6 +72,15 @@ def main():
     print(f"源（v2）  ：{src_url}\n目标（生产）：{dst_url}\n")
 
     src, dst = create_client(src_url, src_key), create_client(dst_url, dst_key)
+
+    # 先分别验证两边的连接，出错时说清楚是哪一边
+    for label, cli, hint in (("源库（v2）", src, "SRC_SERVICE_KEY 应为 v2 项目的 service_role 密钥"),
+                             ("目标库（生产）", dst, "请检查本服务的 SUPABASE_SERVICE_ROLE_KEY")):
+        try:
+            cli.table(TABLE).select("id").limit(1).execute()
+        except Exception as e:
+            sys.exit(f"❌ 无法读取{label}：{e}\n   {hint}；若提示表不存在，请先在该项目运行 showcase_hall.sql。")
+    print("✅ 两边连接正常\n")
 
     q = src.table(TABLE).select("*").order("category").order("sort_order", desc=True)
     if a.only_published:
