@@ -84,7 +84,9 @@ async def contest_pipeline(submission_id: str):
         if images is None:
             images = []
         # 作者 AI 声明（当前库中可能尚无该字段，缺省视为未声明）
-        has_declared_ai = bool(work.get("ai_declaration") == "yes" or work.get("ai_declared") is True)
+        # 投稿时写入的字段是 has_declared_ai（前端 / 投稿接口），旧字段名保留兼容
+        has_declared_ai = bool(work.get("has_declared_ai") is True or work.get("ai_declaration") == "yes"
+                               or work.get("ai_declared") is True)
 
         print(f"🛠️ [DEBUG] 正在校验作品 {submission_id[:8]} ... 字数: {len(text)}, 图片数: {len(images)}")
 
