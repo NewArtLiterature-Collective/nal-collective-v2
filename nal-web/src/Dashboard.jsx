@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { usePayment } from './hooks/usePayment';
 import { useEvaluation } from './hooks/useEvaluation';
+import { API_BASE } from './config';
 import logo from './assets/nal_logo.png';
 
 // 🚨 提交格式硬约束：全站仅接受 JPG/PNG（与后端 PIL 管线及 OSS 安全策略对齐）
@@ -74,6 +75,8 @@ export default function Dashboard({ session }) {
   // 评审进度相关
   const [userSubmissions, setUserSubmissions] = useState([]); 
   const [isRefreshing, setIsRefreshing] = useState(false); 
+  // 本届是否已因内容违规被取消参赛资格（contest_blocks 有记录）
+  const [contestBlock, setContestBlock] = useState(null);
 
   // 专家模型与引擎配置状态
   const [models, setModels] = useState([]);
@@ -175,6 +178,16 @@ export default function Dashboard({ session }) {
       .order('created_at', { ascending: false });
     
     if (data) setUserSubmissions(data);
+
+    // 本届是否已被取消参赛资格（投稿时被平台内容审核拦截）
+    const { data: blocks } = await supabase
+      .from('contest_blocks')
+      .select('id, created_at')
+      .eq('user_id', session.user.id)
+      .eq('contest_id', activeContestId)
+      .limit(1);
+    setContestBlock(blocks && blocks.length > 0 ? blocks[0] : null);
+
     setTimeout(() => setIsRefreshing(false), 500); 
   }, [session?.user?.id, activeContestId, isAdmin]);
 
@@ -439,34 +452,46 @@ export default function Dashboard({ session }) {
     //    否则 contest_id 与 current_contest_id 不符会被 RLS 直接拒、且上传出孤儿图。
     if (!activeContestId) return alert("当前没有正在进行的赛事，暂时无法提交，请稍后再试或联系管理员。");
 
+    if (contestBlock) return alert("您的本届参赛资格已因内容违规被取消，不能再提交作品。");
+    if (aiDeclaration !== 'yes' && aiDeclaration !== 'no') return alert("请先完成 AI 辅助创作声明。");
+
     setIsSubmitting(true);
     try {
-      const imageUrls = [];
-      for (const file of contestImages) {
-        // 🚨 扩展名由已校验 MIME 推导，不信任用户文件名（contest_works 为公开桶）
-        const fileExt = safeExtFromType(file);
-        const fileName = `${session?.user?.id}_${Date.now()}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage.from('contest_works').upload(fileName, file);
-        if (uploadError) throw uploadError;
-        const { data } = supabase.storage.from('contest_works').getPublicUrl(fileName);
-        imageUrls.push(data.publicUrl);
-      }
+      // 投稿统一经后端：后端校验资格与格式、做平台级内容拦截，通过后才保存配图并写入作品库
+      const { data: { session: cur } } = await supabase.auth.getSession();
+      const token = cur?.access_token;
+      if (!token) throw new Error("登录已失效，请重新登录后再提交。");
 
-      const targetContestId = activeContestId;   // 已在前面校验非空
+      const form = new FormData();
+      form.append('title', contestTitle.trim());
+      form.append('author_name', contestAuthor.trim());
+      form.append('illustrator_name', contestIllustrator.trim());
+      form.append('text_content', contestText);
+      form.append('ai_declaration', aiDeclaration);
+      form.append('image', contestImages[0]);
 
-      const { error: dbError } = await supabase.from('contest_submissions').insert({
-        user_id: session?.user?.id,
-        user_email: session?.user?.email,
-        title: contestTitle.trim(),
-        author_name: contestAuthor.trim(),
-        illustrator_name: contestIllustrator.trim() || null,   // 空 = 文图同一作者
-        text_content: contestText,
-        image_urls: imageUrls,
-        status: 'pending',
-        contest_id: targetContestId,
-        has_declared_ai: aiDeclaration === 'yes' // 🚨 将 AI 声明正式入库
+      const resp = await fetch(`${API_BASE}/api/v1/contest/submit`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: form,
       });
-      if (dbError) throw dbError;
+      let payload = null;
+      try { payload = await resp.json(); } catch { payload = null; }
+
+      if (!resp.ok) {
+        const detail = payload?.detail;
+        const code = detail?.code;
+        const message = (typeof detail === 'string' ? detail : detail?.message) || `提交失败（${resp.status}），请稍后重试。`;
+        if (code === 'content_blocked') {
+          setContestBlock({ id: 'local', created_at: new Date().toISOString() });
+          setContestText(''); setContestTitle(''); setContestIllustrator(''); setContestImages([]);
+          alert("⛔ " + message);
+          return;
+        }
+        if (code === 'duplicate') fetchUserSubmissions();
+        alert("❌ " + message);
+        return;
+      }
 
       alert("🎉 提交成功！您的作品已封存并进入智能评审大阵，请在右侧追踪进度。");
       setContestText('');
@@ -476,7 +501,7 @@ export default function Dashboard({ session }) {
       setAiDeclaration(''); // 提交成功后重置选项
       fetchUserSubmissions(); 
     } catch (error) {
-      alert("❌ 失败: " + error.message);
+      alert("❌ 提交失败：" + (error.message === 'Failed to fetch' ? '网络连接失败，请检查网络后重试。' : error.message));
     } finally {
       setIsSubmitting(false);
     }
@@ -527,7 +552,8 @@ export default function Dashboard({ session }) {
   const alreadySubmitted = userSubmissions.some(s => s.status !== 'invalid');
   const now = new Date();
   const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
-  const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline;
+  const isContestBlocked = !!contestBlock;
+  const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline && !isContestBlocked;
 
   // 🚨 统一的「报名通道是否开放」判定：大闸开 + 有当前赛事 + 未过截稿。
   //    任一不满足即视为封闭，所有报名入口须置灰/隐藏，不得进入支付。
@@ -640,7 +666,7 @@ export default function Dashboard({ session }) {
               <p>2. <strong>如实声明 AI 辅助</strong>：投稿时须如实声明是否使用 AI 工具辅助。系统查出 AI 生成痕迹而声明不符的，取消本届参赛资格。</p>
               <p>3. <strong>版权与使用授权</strong>：作品著作权（含署名权）归作者所有。投稿即同意新艺文社为本届评审、在线展厅展出及相关宣传署名使用作品；在线杂志刊登另行征得作者同意。</p>
               <p>4. <strong>每账号限投一件</strong>：每个账号每届限投 1 件作品，提交后不可撤回或修改，请确认为最终版本再提交。</p>
-              <p>5. <strong>取消资格</strong>：抄袭、已发表或 AI 声明不实的作品，一经查实即取消资格，已发放的奖金将追回。未尽事宜以本届征稿启事、参赛规则与服务条款为准。</p>
+              <p>5. <strong>取消资格</strong>：提交时系统会进行内容安全检查，未通过平台内容审核的，本届取消参赛资格、不能再投稿。抄袭、已发表或 AI 声明不实的作品，一经查实即取消资格，已发放的奖金将追回。未尽事宜以本届征稿启事、参赛规则与服务条款为准。</p>
             </div>
 
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '20px', fontSize: '13px', cursor: 'pointer', color: '#1f2937', userSelect: 'none' }}>
@@ -789,7 +815,14 @@ export default function Dashboard({ session }) {
               </div>
               
               <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
-                {alreadySubmitted ? (
+                {isContestBlocked ? (
+                  <button 
+                    disabled
+                    style={{ padding: '16px 32px', background: '#64748b', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'not-allowed', fontSize: '16px' }}
+                  >
+                    ⛔ 本届参赛资格已取消
+                  </button>
+                ) : alreadySubmitted ? (
                   <button 
                     onClick={() => setActiveTab('contest')}
                     style={{ padding: '16px 32px', background: '#4f46e5', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)' }}
@@ -829,12 +862,14 @@ export default function Dashboard({ session }) {
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
                     <h3 style={{ color: '#1e293b', marginBottom: '15px', fontSize: '20px' }}>
-                      {!isContestActive ? '当前赛季未开放' : 
+                      {isContestBlocked ? '本届参赛资格已取消' : !isContestActive ? '当前赛季未开放' : 
                         (!isEligibleForContest ? '您未获得参赛资格' : 
                           (alreadySubmitted ? '作品大典已封存' : '本届征稿通道已关闭'))}
                     </h3>
                     <p style={{ color: '#64748b', fontSize: '15px', lineHeight: '1.8', maxWidth: '400px', margin: '0 auto' }}>
-                      {!isContestActive
+                      {isContestBlocked
+                        ? '您提交的作品未能通过平台的内容审核。依据参赛规则，本届参赛资格已取消，不能再提交作品。如您认为这是误判，请发邮件至 info@nal-ai.org 说明情况。'
+                        : !isContestActive
                         ? '本届赛事大闸已休眠，此处仅供查看历史战绩。'
                         : (!isEligibleForContest
                           ? '请在左侧“大赛官方动态”中获取本届赛事的门票资格。'
@@ -944,7 +979,7 @@ export default function Dashboard({ session }) {
                       disabled={isSubmitting || aiDeclaration === ''} 
                       style={{ ...styles.submitBtn, width: '100%', marginTop: '30px', backgroundColor: (isSubmitting || aiDeclaration === '') ? '#94a3b8' : '#4f46e5', cursor: (isSubmitting || aiDeclaration === '') ? 'not-allowed' : 'pointer' }}
                     >
-                      {isSubmitting ? "正在封存上传中..." : (aiDeclaration === '' ? "⛔ 请先勾选上方 AI 声明" : "📤 确认提交参赛作品")}
+                      {isSubmitting ? "正在进行内容安全检查并提交，约需 10–60 秒，请勿关闭页面..." : (aiDeclaration === '' ? "⛔ 请先勾选上方 AI 声明" : "📤 确认提交参赛作品")}
                     </button>
                   </>
                 )}
