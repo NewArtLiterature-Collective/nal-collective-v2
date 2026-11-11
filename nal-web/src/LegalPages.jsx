@@ -251,8 +251,8 @@ export function PrivacyPage() {
       </Block>
 
       <Block zh="你的权利" en="Your rights">
-        <Zh>你可以联系 {S.CONTACT_EMAIL}，申请查阅、更正或删除你的个人信息。</Zh>
-        <En>You can contact {S.CONTACT_EMAIL} to access, correct or delete your personal information.</En>
+        <Zh>你可以联系 {S.CONTACT_EMAIL}，申请查阅、更正或删除你的个人信息。你也可以在工作台左下角自行“注销账号”：注销后账号立即永久删除，参赛作品、配图、报名信息和评审上传的图片一并删除，未使用的付费权益随之作废、不予退款。支付记录由 Stripe 依法保留。</Zh>
+        <En>You can contact {S.CONTACT_EMAIL} to access, correct or delete your personal information. You can also delete your account yourself from the bottom left of your dashboard ("注销账号"): the account is deleted permanently and immediately, together with your competition entries, their images, your registration details and the images you uploaded for evaluation; any unused paid entitlements are forfeited without refund. Payment records are kept by Stripe as required by law.</En>
       </Block>
 
       <Block zh="未成年人" en="Minors">
