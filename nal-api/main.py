@@ -10,6 +10,7 @@ from routes.evaluation import router as evaluation_router
 from routes import payment
 from routes import gallery  # 🆕 展厅签名接口（私有桶下展厅取图）
 from routes import contest  # 🆕 参赛投稿接口（经后端校验 + 平台级拦截）
+from routes import account  # 🆕 用户自助注销账号
 
 app = FastAPI(title="NAL API")
 
@@ -35,6 +36,7 @@ app.include_router(evaluation_router, prefix="/api/v1/evaluate", tags=["Evaluati
 app.include_router(payment.router, prefix="/api/v1/payment", tags=["Payment"])
 app.include_router(gallery.router, prefix="/api/v1", tags=["Exhibition"])  # 🆕 → /api/v1/gallery/images
 app.include_router(contest.router, prefix="/api/v1/contest", tags=["Contest"])  # 🆕 → /api/v1/contest/submit
+app.include_router(account.router, prefix="/api/v1/account", tags=["Account"])  # 🆕 → /api/v1/account/delete
 
 # --- 4. 基础健康检查 ---
 @app.get("/")
