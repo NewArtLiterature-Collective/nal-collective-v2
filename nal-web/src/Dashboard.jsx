@@ -23,6 +23,38 @@ const safeExtFromType = (f) => (f.type === 'image/png' ? 'png' : 'jpg');
 export default function Dashboard({ session }) {
   const navigate = useNavigate();
 
+  // --- 注销账号 ---
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [delPassword, setDelPassword] = useState('');
+  const [delConfirm, setDelConfirm] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+  const closeDeleteModal = () => { if (delBusy) return; setShowDeleteModal(false); setDelPassword(''); setDelConfirm(''); };
+  const handleDeleteAccount = async () => {
+    if (delConfirm.trim() !== '注销') return alert('请输入“注销”二字确认。');
+    if (!delPassword) return alert('请输入登录密码。');
+    setDelBusy(true);
+    try {
+      const { data: { session: cur } } = await supabase.auth.getSession();
+      const token = cur?.access_token;
+      if (!token) throw new Error('登录已失效，请重新登录后再操作。');
+      const resp = await fetch(`${API_BASE}/api/v1/account/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ password: delPassword, confirm_text: delConfirm.trim() }),
+      });
+      let payload = null;
+      try { payload = await resp.json(); } catch { payload = null; }
+      if (!resp.ok) throw new Error((typeof payload?.detail === 'string' ? payload.detail : '') || `注销失败（${resp.status}），请稍后重试。`);
+      try { sessionStorage.clear(); } catch {}
+      await supabase.auth.signOut().catch(() => {});
+      alert('您的账号已注销，相关数据已删除。感谢您曾经的参与。');
+      window.location.href = '/';
+    } catch (err) {
+      alert('❌ ' + (err.message === 'Failed to fetch' ? '网络连接失败，请检查网络后重试。' : err.message));
+      setDelBusy(false);
+    }
+  };
+
   // --- 1. 核心状态管理 ---
   const [activeTab, setActiveTab] = useState('text'); 
   const [workText, setWorkText] = useState('');
@@ -606,6 +638,41 @@ export default function Dashboard({ session }) {
       )}
 
       {/* 报名与参赛规则确认弹窗 */}
+      {/* 注销账号确认弹窗 */}
+      {showDeleteModal && (
+        <div style={styles.overlay} onClick={closeDeleteModal}>
+          <div style={{...styles.paymentModal, maxWidth: '480px', textAlign: 'left', padding: '32px', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box'}} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#b91c1c', fontSize: '20px' }}>⚠️ 注销账号</h3>
+            <p style={{ fontSize: '14px', color: '#374151', lineHeight: '1.7', margin: '0 0 12px' }}>注销后账号将<strong>立即永久删除，无法恢复</strong>：</p>
+            <ul style={{ fontSize: '13px', color: '#4b5563', lineHeight: '1.8', paddingLeft: '20px', margin: '0 0 16px' }}>
+              <li>参赛作品、参赛配图和报名信息一并删除，已入展的作品也会从展厅撤下；</li>
+              <li>评审时上传的图片一并删除；</li>
+              <li>尚未使用的付费权益（Pro 会员、加油包额度等）一并作废，<strong>不予退款</strong>；</li>
+              <li>支付记录由支付服务商 Stripe 依法保留，本平台无法删除。</li>
+            </ul>
+            <div style={{ fontSize: '12px', color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 12px', marginBottom: '18px', lineHeight: '1.6' }}>
+              如您的 Pro 会员开通未满 3 天且未使用任何评审服务，可先发邮件至 info@nal-ai.org 申请全额退款，退款完成后再注销。
+            </div>
+            <label style={styles.regLabel}>登录密码</label>
+            <input type="password" style={{...styles.regInput, marginBottom: '14px'}} value={delPassword} onChange={e => setDelPassword(e.target.value)} autoComplete="current-password" />
+            <label style={styles.regLabel}>请输入“注销”二字确认</label>
+            <input type="text" style={styles.regInput} value={delConfirm} onChange={e => setDelConfirm(e.target.value)} placeholder="注销" />
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button onClick={closeDeleteModal} disabled={delBusy} style={{...styles.cancelPayBtn, flex: 1}}>取消</button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={delBusy || delConfirm.trim() !== '注销' || !delPassword}
+                style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', fontWeight: 'bold', color: '#fff',
+                  backgroundColor: (delBusy || delConfirm.trim() !== '注销' || !delPassword) ? '#fca5a5' : '#dc2626',
+                  cursor: (delBusy || delConfirm.trim() !== '注销' || !delPassword) ? 'not-allowed' : 'pointer' }}
+              >
+                {delBusy ? '正在注销…' : '永久注销'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showRegModal && (
         <div style={styles.overlay}>
           <div style={{...styles.paymentModal, maxWidth: '550px', textAlign: 'left', padding: '35px', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box'}}>
@@ -751,6 +818,7 @@ export default function Dashboard({ session }) {
           <div style={styles.userSection}>
             <div style={styles.roleLabel}>{session?.user?.email || '加载中...'}</div>
             <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>退出登录</button>
+            <button onClick={() => setShowDeleteModal(true)} style={{ width: '100%', marginTop: '8px', background: 'none', border: 'none', color: '#9ca3af', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>注销账号</button>
           </div>
         </div>
       </aside>

@@ -1,12 +1,24 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from services.payment_service import PaymentService
-from services.user_service import UserService
+from services.user_service import UserService, supabase_admin
 from core.config import settings
 import stripe
 import os
 
 router = APIRouter()
+
+
+def _current_contest():
+    """当前赛事（site_settings id=1）：返回 (contest_id, is_active)。读取失败返回 (None, False)，不再用写死的默认 ID。"""
+    try:
+        res = supabase_admin.table("site_settings").select("current_contest_id, is_contest_active") \
+            .eq("id", 1).maybe_single().execute()
+        data = (res.data if res else None) or {}
+        return data.get("current_contest_id"), bool(data.get("is_contest_active"))
+    except Exception as e:
+        print(f"⚠️ 读取当前赛事失败: {e}")
+        return None, False
 
 @router.post("/create-session")
 async def create_checkout_session_route(request: Request):
@@ -40,8 +52,15 @@ async def create_checkout_session_route(request: Request):
                     content={"detail": f"您还有 {total} 次可用资源（含高级额度），请耗尽后再购买资源加油包。"}
                 )
 
+        # 🚨 参赛报名：必须有开放中的当前赛事，并把赛事 ID 写进订单
+        contest_id = None
+        if plan == "contestant":
+            contest_id, active = _current_contest()
+            if not contest_id or not active:
+                return JSONResponse(status_code=400, content={"detail": "当前没有开放报名的赛事，暂时无法购买参赛资格。"})
+
         # 正常创建支付链接
-        url = PaymentService.create_checkout_session(user_id, user_email, plan)
+        url = PaymentService.create_checkout_session(user_id, user_email, plan, contest_id=contest_id)
         return {"url": url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -70,12 +89,16 @@ async def stripe_webhook(request: Request):
             metadata = session_dict.get('metadata', {})
             user_id = metadata.get('user_id')
             plan = metadata.get('plan', 'contestant')
-            # 兼容多赛季扩展，可以从 metadata 里传，或者使用默认值
-            contest_id = metadata.get('contest_id', '2026_contest') 
+            # 参赛报名的赛事 ID：取订单里记录的（购买时的当前赛事）；旧订单没有记录时，取当前赛事。
+            # ⚠️ 以前这里写死了默认值 '2026_contest'，与实际赛事 ID（ct_xxx）对不上 → 付款后拿不到参赛资格
+            contest_id = metadata.get('contest_id') or _current_contest()[0]
             
             print(f"💰 Webhook 成功解析：User:{user_id}, Plan:{plan}")
 
             if user_id:
+                if plan == 'contestant' and not contest_id:
+                    print(f"🚨 参赛报名付款无法确定赛事 ID，需人工补发: user={user_id}, session={session_dict.get('id')}")
+                    return JSONResponse(status_code=500, content={"message": "contest id unavailable"})
                 if plan == 'contestant':
                     # =======================================================
                     # 🚨 参赛资格门票：动态精算与发货逻辑

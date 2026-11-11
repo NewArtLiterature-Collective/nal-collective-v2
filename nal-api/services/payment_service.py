@@ -5,8 +5,13 @@ stripe.api_key = settings.STRIPE_SECRET_KEY_EFFECTIVE
 
 class PaymentService:
     @staticmethod
-    def create_checkout_session(user_id: str, user_email: str, plan: str = 'contestant'):
+    def create_checkout_session(user_id: str, user_email: str, plan: str = 'contestant', contest_id: str = None):
         try:
+            # 参赛报名：把购买时的当前赛事 ID 写进订单，webhook 据此发放"本届"参赛资格
+            meta = {"user_id": user_id, "email": user_email, "plan": plan}
+            if contest_id:
+                meta["contest_id"] = contest_id
+
             # 1. 动态配置商品信息 (10元 / 20元 / 500元)
             if plan == 'pro':
                 product_name = 'NAL 专业会员 (1年期)'
@@ -43,18 +48,10 @@ class PaymentService:
                 mode='payment',
                 success_url=f"{settings.FRONTEND_URL}/dashboard?session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=f"{settings.FRONTEND_URL}/dashboard",
-                metadata={
-                    "user_id": user_id,
-                    "email": user_email,
-                    "plan": plan  # 确保套餐标记传给 Webhook
-                },
+                metadata=dict(meta),   # 套餐标记（及参赛报名的赛事 ID）传给 Webhook
                 # 同一份标记也写到付款（PaymentIntent / Charge）上，退款 webhook 才能知道是谁的哪种订单
                 payment_intent_data={
-                    "metadata": {
-                        "user_id": user_id,
-                        "email": user_email,
-                        "plan": plan
-                    }
+                    "metadata": dict(meta)
                 }
             )
             return session.url
