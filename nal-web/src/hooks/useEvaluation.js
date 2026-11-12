@@ -1,19 +1,17 @@
 import { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { API_BASE } from '../config';
+import { uploadEvalImage } from '../media';   // 评审图片经后端存入 Cloudflare R2 私有桶
 
 export function useEvaluation(userRole, usage) {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState(null);
 
-  // 辅助函数：上传图片到 Supabase Storage
-  const uploadImagesToStorage = async (files, userId) => {
+  // 辅助函数：逐张上传图片（经后端存入 R2 私有桶），返回供评审读取的限时链接，保持原顺序
+  const uploadImagesToStorage = async (files) => {
     const urls = [];
     for (let file of files) {
-      const filePath = `user_uploads/${userId}/${Date.now()}_${file.name}`;
-      await supabase.storage.from('nal_images').upload(filePath, file);
-      const { data } = supabase.storage.from('nal_images').getPublicUrl(filePath);
-      urls.push(data.publicUrl);
+      urls.push(await uploadEvalImage(file));
     }
     return urls;
   };
@@ -64,7 +62,7 @@ export function useEvaluation(userRole, usage) {
 
       let publicImageUrls = [];
       if (activeTab === 'picturebook') {
-        publicImageUrls = await uploadImagesToStorage(selectedImages, currentSession.user.id);
+        publicImageUrls = await uploadImagesToStorage(selectedImages);
       }
 
       // 2. 使用 FormData 传输（因为需要同时传文本参数和 Docx 文件体）
