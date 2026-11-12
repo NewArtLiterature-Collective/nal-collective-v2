@@ -1,0 +1,18 @@
+fastapi
+uvicorn
+gunicorn
+pydantic
+pydantic-settings
+supabase
+# 新版 SDK：思考档位（thinking_level）需要较新版本；3.0.0 已验证
+google-genai>=3.0.0
+requests
+python-dotenv
+python-docx
+stripe
+python-multipart
+Pillow>=10.0.0
+numpy
+pandas
+# Cloudflare R2（S3 兼容）文件存储
+boto3

@@ -12,7 +12,7 @@
 #      · 只认平台拦截，不在这里做本平台口径的模型判断（误判风险高，且拦截即取消资格）；
 #        本平台口径的完整内容安全检查仍由截稿后的批量评审（contest_agent.screen_work）完成
 #      · 检查本身出错 / 超时 → 照常收稿，批量评审时会再查
-#   6. 通过：上传配图到 contest_works（私有桶，存对象名）→ 写入 contest_submissions（status=pending）
+#   6. 通过：上传配图到 R2 私有桶 contest_works/（数据库只存对象名）→ 写入 contest_submissions（status=pending）
 # ============================================================================
 
 import io
@@ -27,10 +27,10 @@ from fastapi import APIRouter, Header, Form, File, UploadFile, HTTPException
 from services.user_service import supabase_admin
 from services import content_review as cr
 from services.contest_literary_service import _generate, SCREEN_MODEL
+from services import storage_service as storage     # 参赛配图存 Cloudflare R2 私有桶
 
 router = APIRouter()
 
-CONTEST_BUCKET = "contest_works"
 MIN_CHARS, MAX_CHARS = 800, 1000
 MAX_TITLE, MAX_NAME = 50, 40
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -232,7 +232,7 @@ async def submit_contest_work(
         # ---- 6. 入库：先存配图，再写作品记录 ----
         object_name = f"{uid}_{int(datetime.now(timezone.utc).timestamp() * 1000)}.{ext}"
         try:
-            supabase_admin.storage.from_(CONTEST_BUCKET).upload(object_name, raw, {"content-type": mime})
+            await asyncio.to_thread(storage.put_contest_image, object_name, raw, mime)
         except Exception as e:
             print(f"🚨 参赛配图上传失败: {e}")
             _fail(500, "配图保存失败，请稍后重试。", "storage")
@@ -253,7 +253,7 @@ async def submit_contest_work(
         except Exception as e:
             print(f"🚨 参赛作品写入失败: {e}")
             try:
-                supabase_admin.storage.from_(CONTEST_BUCKET).remove([object_name])
+                storage.delete_contest_images([object_name])
             except Exception:
                 pass
             _fail(500, "作品保存失败，请稍后重试。", "db")

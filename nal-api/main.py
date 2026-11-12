@@ -11,6 +11,7 @@ from routes import payment
 from routes import gallery  # 🆕 展厅签名接口（私有桶下展厅取图）
 from routes import contest  # 🆕 参赛投稿接口（经后端校验 + 平台级拦截）
 from routes import account  # 🆕 用户自助注销账号
+from routes import media  # 🆕 文件上传 / 签名（Cloudflare R2）
 
 app = FastAPI(title="NAL API")
 
@@ -37,6 +38,7 @@ app.include_router(payment.router, prefix="/api/v1/payment", tags=["Payment"])
 app.include_router(gallery.router, prefix="/api/v1", tags=["Exhibition"])  # 🆕 → /api/v1/gallery/images
 app.include_router(contest.router, prefix="/api/v1/contest", tags=["Contest"])  # 🆕 → /api/v1/contest/submit
 app.include_router(account.router, prefix="/api/v1/account", tags=["Account"])  # 🆕 → /api/v1/account/delete
+app.include_router(media.router, prefix="/api/v1/media", tags=["Media"])  # 🆕 → /api/v1/media/*
 
 # --- 4. 基础健康检查 ---
 @app.get("/")

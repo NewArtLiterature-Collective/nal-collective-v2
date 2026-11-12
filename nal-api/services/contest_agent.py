@@ -3,6 +3,7 @@ import sys
 import numpy as np
 import asyncio
 from services.user_service import supabase_admin
+from services import storage_service as storage     # 参赛配图在 Cloudflare R2 私有桶
 from services.contest_literary_service import ContestLiteraryService, VIOLATION_LABELS
 import httpx
 from io import BytesIO
@@ -10,35 +11,13 @@ from PIL import Image
 
 
 async def download_image(url_or_path: str):
-    """
-    NAL 存储桶专属下载器：
-    完美咬合前端 getPublicUrl() 传过来的 'contest_works' 长网址，
-    自动切片提取出纯文件名，利用 admin 权限走高速内网通道拉取。
-    """
+    """参赛配图下载器：从 Cloudflare R2 私有桶读取（2026-11 起取代 Supabase Storage）。
+    数据库里可能是对象名，也可能是旧的 Supabase 完整网址，storage_service 会统一取出对象名。"""
     try:
-        BUCKET_NAME = "contest_works"
-
-        if not url_or_path.startswith("http://") and not url_or_path.startswith("https://"):
-            storage_res = supabase_admin.storage.from_(BUCKET_NAME).download(url_or_path)
-            return Image.open(BytesIO(storage_res))
-
-        if f"/{BUCKET_NAME}/" in url_or_path:
-            parts = url_or_path.split(f"/{BUCKET_NAME}/")
-            if len(parts) > 1:
-                filename = parts[1]
-                storage_res = supabase_admin.storage.from_(BUCKET_NAME).download(filename)
-                return Image.open(BytesIO(storage_res))
-
-        import httpx
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url_or_path)
-            if resp.status_code == 200:
-                return Image.open(BytesIO(resp.content))
-            else:
-                print(f"❌ 外部兜底图片网络请求失败，状态码: {resp.status_code}")
-
+        data = await asyncio.to_thread(storage.get_contest_image, url_or_path)
+        return Image.open(BytesIO(data))
     except Exception as e:
-        print(f"🚨 存储桶 [contest_works] 资产捕获崩溃 [{url_or_path}]: {e}")
+        print(f"🚨 参赛配图读取失败 [{url_or_path}]: {e}")
     return None
 
 

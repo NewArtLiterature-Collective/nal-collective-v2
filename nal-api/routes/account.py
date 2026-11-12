@@ -19,26 +19,15 @@ from supabase import create_client
 
 from core.config import settings
 from services.user_service import supabase_admin
+from services import storage_service as storage     # 文件在 Cloudflare R2
 
 router = APIRouter()
 
-CONTEST_BUCKET = "contest_works"
-EVAL_BUCKET = "nal_images"
 CONFIRM_TEXT = "注销"
 
 
 def _fail(status: int, message: str):
     raise HTTPException(status_code=status, detail=message)
-
-
-def _object_name(url_or_path: str, bucket: str) -> str:
-    """存储里可能是完整公开 URL，也可能是对象名：统一取出对象名。"""
-    if not url_or_path:
-        return ""
-    marker = f"/{bucket}/"
-    if marker in url_or_path:
-        return url_or_path.split(marker, 1)[1].split("?", 1)[0]
-    return url_or_path.lstrip("/")
 
 
 def _verify_password(email: str, password: str) -> bool:
@@ -56,40 +45,21 @@ def _verify_password(email: str, password: str) -> bool:
         return False
 
 
-def _remove_all(bucket: str, names: list):
-    names = [n for n in names if n]
-    for i in range(0, len(names), 100):           # 分批删除
-        supabase_admin.storage.from_(bucket).remove(names[i:i + 100])
-
-
-def _list_eval_uploads(uid: str) -> list:
-    """评审上传的图片在 nal_images/user_uploads/<uid>/ 下。"""
-    prefix = f"user_uploads/{uid}"
-    out, offset = [], 0
-    while True:
-        items = supabase_admin.storage.from_(EVAL_BUCKET).list(prefix, {"limit": 1000, "offset": offset}) or []
-        out += [f"{prefix}/{it['name']}" for it in items if it.get("name")]
-        if len(items) < 1000:
-            return out
-        offset += 1000
-
-
 def _delete_user_data(uid: str) -> dict:
     """删除该用户的全部业务数据与文件。返回统计；出错抛异常（此时账号尚未删除，可重试）。"""
     # 1) 参赛作品与配图
     subs = supabase_admin.table("contest_submissions").select("id, image_urls").eq("user_id", uid).execute().data or []
-    contest_files = [_object_name(u, CONTEST_BUCKET) for s in subs for u in (s.get("image_urls") or [])]
-    _remove_all(CONTEST_BUCKET, contest_files)
+    contest_files = [u for s in subs for u in (s.get("image_urls") or [])]
+    storage.delete_contest_images(contest_files)
     supabase_admin.table("contest_submissions").delete().eq("user_id", uid).execute()
 
     # 2) 报名信息（姓名、电话、监护人等）
     supabase_admin.table("contest_registrations").delete().eq("user_id", uid).execute()
 
     # 3) 日常评审上传的图片
-    eval_files = []
+    eval_files = 0
     try:
-        eval_files = _list_eval_uploads(uid)
-        _remove_all(EVAL_BUCKET, eval_files)
+        eval_files = storage.delete_eval_uploads(uid)
     except Exception as e:
         print(f"⚠️ 注销：评审图片清理失败（不阻断）: {e}")
 
@@ -100,7 +70,7 @@ def _delete_user_data(uid: str) -> dict:
         pass
 
     # contest_blocks 等外键为 on delete cascade 的记录，会随账号删除自动清除
-    return {"submissions": len(subs), "contest_files": len(contest_files), "eval_files": len(eval_files)}
+    return {"submissions": len(subs), "contest_files": len(contest_files), "eval_files": eval_files}
 
 
 @router.post("/delete")

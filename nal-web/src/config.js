@@ -22,3 +22,10 @@ function need(value, name) {
 export const API_BASE = need(import.meta.env.VITE_API_BASE_URL, 'VITE_API_BASE_URL');
 export const SUPABASE_URL = need(import.meta.env.VITE_SUPABASE_URL, 'VITE_SUPABASE_URL');
 export const SUPABASE_ANON_KEY = need(import.meta.env.VITE_SUPABASE_ANON_KEY, 'VITE_SUPABASE_ANON_KEY');
+
+// 🖼️ 公开图片域名（Cloudflare R2 公开桶绑定的自定义域名，例如 https://media.nal-ai.org）
+//    陈伯吹新儿童文学绘本插画大赛厅的展品图片由此加载。未配置时只影响展厅图片，不影响网站其他功能。
+export const MEDIA_BASE_URL = (import.meta.env.VITE_MEDIA_BASE_URL || '').trim().replace(/\/+$/, '');
+if (!MEDIA_BASE_URL) {
+  console.error('[NAL 配置缺失] 环境变量 VITE_MEDIA_BASE_URL 未设置，展厅图片将无法显示。');
+}

@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from services.user_service import supabase_admin
+from services import storage_service as storage     # 参赛配图在 Cloudflare R2 私有桶，签名链接由 R2 生成
 
 router = APIRouter(prefix="/gallery", tags=["Exhibition"])
 
@@ -80,9 +81,7 @@ async def sign_winner_images(req: SignRequest):
                 if not name:
                     continue
                 try:
-                    res = supabase_admin.storage.from_(CONTEST_BUCKET) \
-                        .create_signed_url(name, SIGNED_URL_TTL)
-                    url = res.get("signedURL") or res.get("signedUrl") or res.get("signed_url")
+                    url = storage.sign_contest_image(name, SIGNED_URL_TTL)
                     if url:
                         signed.append(url)
                 except Exception as e:
@@ -112,8 +111,7 @@ async def get_exhibition_works():
                 if not name:
                     continue
                 try:
-                    res = supabase_admin.storage.from_(CONTEST_BUCKET).create_signed_url(name, SIGNED_URL_TTL)
-                    url = res.get("signedURL") or res.get("signedUrl") or res.get("signed_url")
+                    url = storage.sign_contest_image(name, SIGNED_URL_TTL)
                     if url:
                         signed.append(url)
                 except Exception:
