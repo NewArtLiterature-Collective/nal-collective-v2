@@ -7,9 +7,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 
-export const SHOWCASE_BUCKET = 'showcase';
-export const showcaseUrl = (path) =>
-  path ? supabase.storage.from(SHOWCASE_BUCKET).getPublicUrl(path).data.publicUrl : '';
+// 展厅图片在 Cloudflare R2 公开桶（showcase/ 目录），地址由 media.js 拼出
+export { showcaseUrl } from './media';
+import { showcaseUrl } from './media';
 
 // 作品名统一去掉书名号，显示时再加一对
 export const cleanTitle = (t) => (t || '').replace(/[《》]/g, '').replace(/^绘本/, '').trim();

@@ -1,11 +1,12 @@
 // ShowcaseAdmin.jsx —— 管理后台：陈伯吹新儿童文学绘本插画大赛厅布展
 // 录入陈伯吹新儿童文学绘本插画大赛历届绘本 / 插画的 AI 评审佳作：作品名称、届次、署名（选填）、简短判词、页面图片。
-// 图片在浏览器内压缩（长边 ≤ 2400px，JPEG）并【烧入水印】后上传到 showcase 公开桶，按顺序存为 <作品ID>/001.jpg …
+// 图片在浏览器内压缩（长边 ≤ 2400px，JPEG）并【烧入水印】后，经后端上传到 Cloudflare R2 公开桶 showcase/，按顺序存为 <作品ID>/001.jpg …
 // 桶里只存带水印的版本，原图不上传——即使有人拿到图片直链，下载到的也是带水印的图。
 // 只有管理员（JWT app_metadata.role = 'admin'）可写，见 showcase_hall.sql。
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { SHOWCASE_BUCKET, showcaseUrl, cleanTitle } from './Showcase';
+import { showcaseUrl, cleanTitle } from './Showcase';
+import { showcaseUpload, showcaseDelete, showcaseRaw } from './media';   // 图片经后端存取 Cloudflare R2
 
 const MAX_EDGE = 2400;
 const JPEG_QUALITY = 0.88;
@@ -147,7 +148,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
           const paths = await uploadPages(form.id, files);
           row.pages = paths; row.cover_index = 0; row.watermarked = true;
           const stale = (old?.pages || []).filter(p => !paths.includes(p));
-          if (stale.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(stale);
+          if (stale.length) await showcaseDelete(stale);
         }
         const { error } = await supabase.from('showcase_works').update(row).eq('id', form.id);
         if (error) throw error;
@@ -157,7 +158,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
         const paths = await uploadPages(id, files);
         const { error } = await supabase.from('showcase_works').insert({ id, ...row, pages: paths, cover_index: 0, watermarked: true });
         if (error) {
-          await supabase.storage.from(SHOWCASE_BUCKET).remove(paths);
+          await showcaseDelete(paths).catch(() => {});
           throw error;
         }
         addLog(`✅ 陈伯吹新儿童文学绘本插画大赛厅：已录入《${row.title}》（${paths.length} 张图）`);
@@ -178,9 +179,10 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
       setBusy(`正在压缩上传 ${i + 1} / ${list.length} …`);
       const blob = await compressImage(list[i]);
       const path = `${id}/${String(i + 1).padStart(3, '0')}_${Date.now()}.jpg`;
-      const { error } = await supabase.storage.from(SHOWCASE_BUCKET).upload(path, blob, { contentType: 'image/jpeg', upsert: true });
-      if (error) {
-        if (paths.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(paths);
+      try {
+        await showcaseUpload(path, blob);
+      } catch (error) {
+        if (paths.length) await showcaseDelete(paths).catch(() => {});
         throw new Error(`第 ${i + 1} 张上传失败：${error.message}`);
       }
       paths.push(path);
@@ -197,21 +199,20 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
     try {
       for (let i = 0; i < old.length; i++) {
         setBusy(`《${cleanTitle(w.title)}》补加水印 ${i + 1} / ${old.length} …`);
-        const resp = await fetch(`${showcaseUrl(old[i])}?t=${Date.now()}`, { cache: 'no-store' });
-        if (!resp.ok) throw new Error(`第 ${i + 1} 张读取失败（${resp.status}）`);
-        const blob = await compressImage(await resp.blob());          // 尺寸已合规，只加水印并重新编码
+        let raw;
+        try { raw = await showcaseRaw(old[i]); } catch (e) { throw new Error(`第 ${i + 1} 张读取失败：${e.message}`); }
+        const blob = await compressImage(raw);          // 尺寸已合规，只加水印并重新编码
         const path = `${w.id}/${String(i + 1).padStart(3, '0')}_wm_${Date.now()}.jpg`;
-        const { error } = await supabase.storage.from(SHOWCASE_BUCKET).upload(path, blob, { contentType: 'image/jpeg' });
-        if (error) throw new Error(`第 ${i + 1} 张上传失败：${error.message}`);
+        try { await showcaseUpload(path, blob); } catch (e) { throw new Error(`第 ${i + 1} 张上传失败：${e.message}`); }
         fresh.push(path);
       }
       const { error } = await supabase.from('showcase_works').update({ pages: fresh, watermarked: true }).eq('id', w.id);
       if (error) throw error;
-      if (old.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(old);
+      if (old.length) await showcaseDelete(old).catch(() => {});
       addLog(`🖋 《${cleanTitle(w.title)}》已补加水印（${fresh.length} 张），无水印旧图已删除`);
       return true;
     } catch (err) {
-      if (fresh.length) await supabase.storage.from(SHOWCASE_BUCKET).remove(fresh);
+      if (fresh.length) await showcaseDelete(fresh).catch(() => {});
       addLog(`❌ 《${cleanTitle(w.title)}》补加水印失败，已保留原图: ${err.message}`);
       alert(`《${cleanTitle(w.title)}》补加水印失败：${err.message}`);
       return false;
@@ -246,7 +247,7 @@ export default function ShowcaseAdmin({ addLog = () => {} }) {
     if (!window.confirm(`确定删除《${cleanTitle(w.title)}》？图片会一并删除，不可恢复。`)) return;
     const { error } = await supabase.from('showcase_works').delete().eq('id', w.id);
     if (error) return alert('删除失败：' + error.message);
-    if ((w.pages || []).length) await supabase.storage.from(SHOWCASE_BUCKET).remove(w.pages);
+    if ((w.pages || []).length) await showcaseDelete(w.pages).catch(e => addLog(`⚠️ 图片删除失败（记录已删）: ${e.message}`));
     addLog(`🗑️ 已删除《${cleanTitle(w.title)}》`);
     load();
   };

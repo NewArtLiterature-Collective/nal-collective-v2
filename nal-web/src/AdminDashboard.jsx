@@ -9,6 +9,7 @@ function bylineOf(w) {
   return i && i !== a ? `文 / ${a}　图 / ${i}` : `文·图 / ${a}`;
 }
 import { API_BASE } from './config';
+import { adminSignContest } from './media';   // 参赛配图在 Cloudflare R2 私有桶，签名由后端生成
 import ShowcaseAdmin from './ShowcaseAdmin';   // 📚 陈伯吹新儿童文学绘本插画大赛厅布展
 
 export default function AdminDashboard() {
@@ -32,10 +33,9 @@ export default function AdminDashboard() {
     const names = [];
     rows.forEach(r => (r.image_urls || []).forEach(u => { const n = extractName(u); if (n) names.push(n); }));
     if (names.length === 0) return rows.map(r => ({ ...r, signed_urls: [] }));
-    const map = {};
+    let map = {};
     try {
-      const { data } = await supabase.storage.from(CONTEST_BUCKET).createSignedUrls(names, 3600);
-      (data || []).forEach(d => { if (d && d.path && d.signedUrl) map[d.path] = d.signedUrl; });
+      map = await adminSignContest(names);
     } catch (e) { console.error('⚠️ 管理台图片签名失败:', e); }
     return rows.map(r => ({ ...r, signed_urls: (r.image_urls || []).map(u => map[extractName(u)]).filter(Boolean) }));
   };
