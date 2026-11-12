@@ -14,3 +14,5 @@ python-multipart
 Pillow>=10.0.0
 numpy
 pandas
+# Cloudflare R2（S3 兼容）文件存储
+boto3
