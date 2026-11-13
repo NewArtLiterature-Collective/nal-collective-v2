@@ -1,8 +1,9 @@
 // Auth.jsx 修改版 (SVG 图标版 + 物理分流防线)
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import logo from './assets/nal_logo.png';
+import { resendConfirmation, RESEND_COOLDOWN } from './authEmail';
 
 // --- 提取通用的 SVG 图标组件，保持代码整洁 ---
 const EyeOpenIcon = () => (
@@ -25,13 +26,31 @@ export default function Auth() {
   const intent = searchParams.get('intent'); 
 
   // --- 状态管理 ---
-  const [authMode, setAuthMode] = useState('login'); // 'login', 'signup', 'reset'
+  const [authMode, setAuthMode] = useState(searchParams.get('mode') === 'reset' ? 'reset' : 'login'); // 'login', 'signup', 'reset'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // 📧 确认邮件重新发送：登录时提示"邮箱未确认"、或注册成功页上使用
+  const [needConfirm, setNeedConfirm] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+  const readRegEmail = () => { try { return sessionStorage.getItem('nal_registered_email') || ''; } catch { return ''; } };
+  const handleResend = async (addr) => {
+    setResendBusy(true); setErrorMsg(''); setSuccessMsg('');
+    const r = await resendConfirmation(addr);
+    setResendBusy(false);
+    if (r.ok) { setSuccessMsg('📧 ' + r.message); setResendCooldown(RESEND_COOLDOWN); }
+    else setErrorMsg(r.message);
+  };
   
   // 控制密码显示的 state
   const [showPassword, setShowPassword] = useState(false);
@@ -49,6 +68,7 @@ export default function Auth() {
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
+    setNeedConfirm(false);
 
     // 注册时的双重密码校验
     if (authMode === 'signup' && password !== confirmPassword) {
@@ -82,7 +102,10 @@ export default function Auth() {
         // 提前占位：抑制注册瞬间若产生会话时 App 的自动跳转（见 App.jsx LoginWrapper）
         try { sessionStorage.setItem('nal_registered', 'pending'); } catch {}
 
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+          email, password,
+          options: { emailRedirectTo: `${window.location.origin}/login` },
+        });
         if (error) {
           try { sessionStorage.removeItem('nal_registered'); } catch {}
           throw error;
@@ -98,7 +121,7 @@ export default function Auth() {
         } else {
           regMsg = '您的账号已创建成功！请先前往邮箱点击激活链接，再返回登录。';
         }
-        try { sessionStorage.setItem('nal_registered', regMsg); } catch {}
+        try { sessionStorage.setItem('nal_registered', regMsg); sessionStorage.setItem('nal_registered_email', email.trim()); } catch {}
         setRegisteredMsg(regMsg);
         setPassword('');
         setConfirmPassword('');
@@ -114,6 +137,10 @@ export default function Auth() {
     } catch (error) {
       if (error.message.includes("Invalid login credentials")) {
         setErrorMsg('未注册用户或密码错误，请先注册');
+      } else if (/email not confirmed/i.test(error.message || '')) {
+        // 注册后未点确认链接，或确认链接已过期
+        setErrorMsg('您的邮箱尚未确认。请点击注册确认邮件里的链接；链接过期或没收到的话，可以重新发送。');
+        setNeedConfirm(true);
       } else {
         setErrorMsg(error.message || '操作失败，请重试');
       }
@@ -124,7 +151,7 @@ export default function Auth() {
 
   // 前往登录：从"注册成功"页切回登录表单
   const goToLogin = () => {
-    try { sessionStorage.removeItem('nal_registered'); } catch {}
+    try { sessionStorage.removeItem('nal_registered'); sessionStorage.removeItem('nal_registered_email'); } catch {}
     setRegistered(false);
     setRegisteredMsg('');
     setErrorMsg('');
@@ -154,6 +181,16 @@ export default function Auth() {
             <button onClick={goToLogin} style={{ ...styles.submitBtn, width: '100%', marginTop: '28px' }}>
               前往登录
             </button>
+            {readRegEmail() && /邮箱/.test(registeredMsg) && (
+              <div style={{ marginTop: '18px', fontSize: '13px', color: '#6b7280' }}>
+                没收到邮件，或链接已过期？
+                <button onClick={() => handleResend(readRegEmail())} disabled={resendBusy || resendCooldown > 0} style={styles.inlineLink}>
+                  {resendBusy ? '发送中…' : resendCooldown > 0 ? `${resendCooldown} 秒后可重发` : '重新发送确认邮件'}
+                </button>
+                {successMsg && <div style={{ ...styles.successBox, marginTop: '12px', textAlign: 'left' }}>{successMsg}</div>}
+                {errorMsg && <div style={{ ...styles.errorBox, marginTop: '12px', textAlign: 'left' }}>{errorMsg}</div>}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -242,6 +279,12 @@ export default function Auth() {
           )}
 
           {errorMsg && <div style={styles.errorBox}>{errorMsg}</div>}
+          {needConfirm && authMode === 'login' && (
+            <button type="button" onClick={() => handleResend(email)} disabled={resendBusy || resendCooldown > 0}
+              style={{ ...styles.submitBtn, backgroundColor: '#4f46e5', opacity: (resendBusy || resendCooldown > 0) ? 0.6 : 1 }}>
+              {resendBusy ? '发送中…' : resendCooldown > 0 ? `${resendCooldown} 秒后可再次发送` : '📧 重新发送确认邮件'}
+            </button>
+          )}
           {successMsg && <div style={styles.successBox}>{successMsg}</div>}
 
           <button type="submit" disabled={loading} style={styles.submitBtn}>
