@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { supabase, IS_RECOVERY_LINK } from './supabaseClient'
+import { supabase, IS_RECOVERY_LINK, IS_AUTH_LINK_ERROR } from './supabaseClient'
 
 import Home from './Home'
 import Auth from './Auth'
 import Dashboard from './Dashboard'
 import Gallery from './Gallery'
 import ResetPassword from './ResetPassword'
+import EmailConfirm from './EmailConfirm'
 import { PricingPage, TermsPage, RefundPage, PrivacyPage, ContestRulesPage, ContactPage } from './LegalPages'
 
 // 🚨 导入后台专用的组件
@@ -42,6 +43,10 @@ function RecoveryRedirect() {
   const location = useLocation();
   if (IS_RECOVERY_LINK && location.pathname !== '/reset-password') {
     return <Navigate to="/reset-password" replace />;
+  }
+  // 邮件链接已失效（如注册确认链接过期）被带回首页等处 → 转到确认页，说明原因并可重新发送
+  if (IS_AUTH_LINK_ERROR && !IS_RECOVERY_LINK && !['/reset-password', '/auth/confirm'].includes(location.pathname)) {
+    return <Navigate to="/auth/confirm" replace />;
   }
   return null;
 }
@@ -108,6 +113,9 @@ function App() {
         
         {/* 🔑 设置新密码（忘记密码邮件的回跳页，公开访问） */}
         <Route path="/reset-password" element={<ResetPassword />} />
+
+        {/* 📧 注册邮箱确认 / 重新发送确认邮件（公开访问） */}
+        <Route path="/auth/confirm" element={<EmailConfirm />} />
 
         {/* 📜 合规页面（公开访问，支付宝 / 微信支付 / Stripe 审核需要） */}
         <Route path="/pricing" element={<PricingPage />} />

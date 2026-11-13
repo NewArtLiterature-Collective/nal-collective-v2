@@ -5,6 +5,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config'
 // 用于识别"重置密码"链接（type=recovery）以及链接过期的报错（error_code）。
 export const INITIAL_URL_HASH = typeof window !== 'undefined' ? window.location.hash : ''
 export const IS_RECOVERY_LINK = /(^|[#&])type=recovery(&|$)/.test(INITIAL_URL_HASH)
+// 邮件链接失效（过期 / 已用过）时，Supabase 会把用户带回网站并在 # 后附上 error_code
+export const IS_AUTH_LINK_ERROR = /(^|[#&])error_code=/.test(INITIAL_URL_HASH)
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
