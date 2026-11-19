@@ -287,6 +287,11 @@ export function ContestRulesPage() {
         <En>Entries are first assessed against the published criteria by several children's-literature evaluation models, then reviewed and curated by our editorial team. Results depend entirely on the quality of the work; there is no drawing of lots, random selection or lottery.</En>
       </Block>
 
+      <Block zh="未成年人参赛" en="Entrants under 18">
+        <Zh>未满 18 周岁的参赛者，须在父母或法定监护人同意下参赛：报名时由监护人填写本人姓名和联系电话，并勾选确认声明；报名缴费也应由监护人完成。作品展出和刊登只使用参赛者自定的署名，不公开真实姓名，联系方式仅用于发奖核实。获奖奖金向监护人发放。监护人可随时发邮件至 {S.CONTACT_EMAIL}，要求撤下孩子的作品、查阅或删除孩子的个人信息。未如实声明年龄的，取消参赛资格，已发放的奖金将追回。</Zh>
+        <En>Entrants under 18 may take part only with the consent of a parent or legal guardian: at registration the guardian enters their own name and phone number and ticks the consent statement, and the entry fee should be paid by the guardian. Exhibited and published works carry only the pen name the entrant chooses, never their real name, and contact details are used only to verify prize winners. Prizes are paid to the guardian. A guardian may email {S.CONTACT_EMAIL} at any time to have the child's work taken down, or to access or delete the child's personal information. Entrants who misstate their age are disqualified, and any prize paid is recovered.</En>
+      </Block>
+
       <Block zh="结果与展示" en="Results and exhibition">
         <Zh>入选作品可能在线上展厅中署名展出。各届的主题、截稿日期与奖项设置，以首页公布的当届章程为准。</Zh>
         <En>Selected works may be exhibited, with attribution, in our online gallery. Each season's theme, deadline and awards are as set out in that season's announcement on the home page.</En>

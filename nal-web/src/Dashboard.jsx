@@ -85,6 +85,7 @@ export default function Dashboard({ session }) {
     is_minor: false,   // 未满 18 岁
     guardian_name: '',
     guardian_phone: '',
+    guardian_consent: false,   // 监护人确认声明（未满 18 岁时必勾）
     agreed: false
   });
 
@@ -311,6 +312,9 @@ export default function Dashboard({ session }) {
     }
     if (!regForm.pen_name.trim()) {
       return alert("请填写展出署名（可以是笔名，也可以是真实姓名）。");
+    }
+    if (regForm.is_minor && !regForm.guardian_consent) {
+      return alert("未满 18 岁的参赛者，须由监护人勾选确认声明后才能报名。");
     }
     if (regForm.is_minor && (!regForm.guardian_name.trim() || !regForm.guardian_phone.trim())) {
       return alert("未满 18 岁的参赛者须填写监护人姓名和联系电话。");
@@ -725,6 +729,12 @@ export default function Dashboard({ session }) {
                   <input type="tel" style={styles.regInput} value={regForm.guardian_phone} onChange={e => setRegForm({...regForm, guardian_phone: e.target.value})} />
                 </div>
               </div>
+            )}
+            {regForm.is_minor && (
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '20px', padding: '12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', fontSize: '13px', color: '#78350f', cursor: 'pointer', userSelect: 'none', lineHeight: '1.6' }}>
+                <input type="checkbox" checked={regForm.guardian_consent} onChange={e => setRegForm({...regForm, guardian_consent: e.target.checked})} style={{ marginTop: '3px', transform: 'scale(1.2)', cursor: 'pointer' }} />
+                <span><strong>监护人确认（须由监护人勾选）</strong>：我是上述参赛者的父母或法定监护人，已阅读并同意《参赛规则》和《隐私政策》，同意孩子参加本届比赛、提交作品并署名展出；获奖奖金向我发放。</span>
+              </label>
             )}
 
             <label style={styles.regLabel}>大赛参赛规则与版权声明</label>
