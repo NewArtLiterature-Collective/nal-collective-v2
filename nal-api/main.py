@@ -1,4 +1,8 @@
 # nal-api/main.py
+# 🔒 最先安装输出打码：之后任何 print / traceback 里出现的密钥都会被隐藏
+from core.redact import install_output_redaction, install_log_redaction, redact, redact_obj
+install_output_redaction()
+
 import stripe
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +18,25 @@ from routes import account  # 🆕 用户自助注销账号
 from routes import media  # 🆕 文件上传 / 签名（Cloudflare R2）
 
 app = FastAPI(title="NAL API")
+install_log_redaction()
+
+
+# 🔒 返回给浏览器的错误提示统一打码；未捕获的异常只回通用提示，细节（已打码）只进日志
+from fastapi import Request, HTTPException as _HTTPException
+from fastapi.responses import JSONResponse as _JSONResponse
+from starlette.exceptions import HTTPException as _StarletteHTTPException
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def _redacted_http_exception(request: Request, exc: _StarletteHTTPException):
+    return _JSONResponse(status_code=exc.status_code, content={"detail": redact_obj(exc.detail)},
+                         headers=getattr(exc, "headers", None))
+
+
+@app.exception_handler(Exception)
+async def _redacted_unhandled(request: Request, exc: Exception):
+    print(f"🚨 未捕获的异常 {request.method} {request.url.path}: {redact(repr(exc))}")
+    return _JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试。"})
 
 # --- 1. 配置 CORS (允许前端访问) ---
 # 注意：allow_origins=["*"] 时 allow_credentials 必须为 False
