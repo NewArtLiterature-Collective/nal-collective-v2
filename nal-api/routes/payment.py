@@ -63,7 +63,9 @@ async def create_checkout_session_route(request: Request):
         url = PaymentService.create_checkout_session(user_id, user_email, plan, contest_id=contest_id)
         return {"url": url}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # 原始错误（可能含 Stripe 请求细节）只记日志（全局已打码），浏览器只看到通用提示
+        print(f"🚨 创建支付会话失败: {e}")
+        raise HTTPException(status_code=502, detail="支付服务暂时不可用，请稍后重试；如多次失败请联系 info@nal-ai.org。")
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
@@ -75,7 +77,8 @@ async def stripe_webhook(request: Request):
             payload, sig_header, settings.STRIPE_WEBHOOK_SECRET_EFFECTIVE
         )
     except Exception as e:
-        return JSONResponse(status_code=400, content={"message": str(e)})
+        print(f"⚠️ Webhook 签名校验失败: {e}")
+        return JSONResponse(status_code=400, content={"message": "invalid signature"})
 
     if event['type'] == 'checkout.session.completed':
         try:
