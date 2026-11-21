@@ -1,4 +1,5 @@
 from typing import Optional
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -21,6 +22,15 @@ class Settings(BaseSettings):
     STRIPE_USE_LIVE: bool = False
 
     ADMIN_SECRET_KEY: str
+
+    # 🔒 读取时去掉首尾空白、换行与引号：Render 环境变量里粘贴的密钥末尾常带换行，
+    #    会让请求头不合法，底层库报错时还会把整段密钥写进错误信息（2026-11 事故）
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_whitespace(cls, v):
+        if isinstance(v, str):
+            v = v.strip().strip('"').strip("'").strip()
+        return v
 
     # 🚨 这是解决 "Extra inputs are not permitted" 的关键
     model_config = SettingsConfigDict(
