@@ -56,5 +56,5 @@ class PaymentService:
             )
             return session.url
         except Exception as e:
-            print(f"Stripe API Error: {str(e)}")
+            print(f"Stripe API Error: {type(e).__name__}: {e}")   # 输出时全局打码
             raise Exception(f"Stripe 会话创建失败: {str(e)}")
