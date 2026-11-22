@@ -28,7 +28,12 @@ class PaymentService:
             #       (Settings → Payment methods) 的「动态支付方式」统一管理。此处不再传该参数，
             #       要启用 微信/支付宝/卡 等请到 Dashboard 开启。
             #    payment_method_options 仍可保留（微信支付 web 客户端声明，启用微信时必需）。
+            #    customer_email：带入登录账号的邮箱，支付页直接显示、无需用户再输入（收据也发到这个邮箱）
+            extra = {}
+            if user_email and "@" in user_email:
+                extra["customer_email"] = user_email.strip()
             session = stripe.checkout.Session.create(
+                **extra,
                 payment_method_options={
                     "wechat_pay": {
                         "client": "web"
