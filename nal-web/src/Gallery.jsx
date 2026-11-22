@@ -12,6 +12,7 @@ function bylineOf(w) {
 }
 import { API_BASE } from './config';
 import ShowcaseHall from './Showcase';   // 📚 陈伯吹新儿童文学绘本插画大赛厅（常年开放：历届绘本、插画 AI 评审佳作）
+import WritingHall from './WritingHall'; // ✍️ 陈伯吹新儿童文学创作大赛厅（常年开放：历届文字创作佳作，封面 + 正文）
 
 // 🆕 后端地址来自构建期环境变量 VITE_API_BASE_URL（见 config.js），v2 / www 各指各的后端。
 //    私有桶下，展厅图片经此签名获取。
@@ -20,8 +21,10 @@ export default function Gallery() {
   const navigate = useNavigate();
   // 展厅分厅：新艺文社竞赛厅（默认）/ 陈伯吹新儿童文学绘本插画大赛厅（?hall=showcase，可直接分享链接；常年开放，不受竞赛厅开关影响；可在后台单独锁定）
   const [searchParams, setSearchParams] = useSearchParams();
-  const hall = searchParams.get('hall') === 'showcase' ? 'showcase' : 'contest';
-  const switchHall = (h) => setSearchParams(h === 'showcase' ? { hall: 'showcase' } : {}, { replace: true });
+  //   陈伯吹新儿童文学创作大赛厅：?hall=writing（同样常年开放、可单独锁定）
+  const hallParam = searchParams.get('hall');
+  const hall = ['showcase', 'writing'].includes(hallParam) ? hallParam : 'contest';
+  const switchHall = (h) => setSearchParams(h === 'contest' ? {} : { hall: h }, { replace: true });
   
   // 核心状态矩阵
   const [works, setWorks] = useState([]);
@@ -213,9 +216,9 @@ export default function Gallery() {
       {/* 展厅主视觉区 */}
       <header style={styles.hero}>
         <h1 style={styles.heroTitle}>🏛️ 典藏文学展厅</h1>
-        <p style={styles.heroSubtitle}>{hall === 'showcase' ? '历届绘本 · 插画 AI 评审佳作' : galleryState.contestName}</p>
+        <p style={styles.heroSubtitle}>{hall === 'showcase' ? '历届绘本 · 插画 AI 评审佳作' : hall === 'writing' ? '历届文字创作 AI 评审佳作' : galleryState.contestName}</p>
         <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '28px', flexWrap: 'wrap' }}>
-          {[['contest', '🏆 新艺文社竞赛厅'], ['showcase', '📚 陈伯吹新儿童文学绘本插画大赛厅']].map(([k, label]) => (
+          {[['contest', '🏆 新艺文社竞赛厅'], ['writing', '✍️ 陈伯吹新儿童文学创作大赛厅'], ['showcase', '📚 陈伯吹新儿童文学绘本插画大赛厅']].map(([k, label]) => (
             <button key={k} onClick={() => switchHall(k)} style={hall === k ? styles.hallTabOn : styles.hallTab}>{label}</button>
           ))}
         </div>
@@ -224,6 +227,8 @@ export default function Gallery() {
       <main style={styles.main}>
         {hall === 'showcase' ? (
           <ShowcaseHall />
+        ) : hall === 'writing' ? (
+          <WritingHall />
         ) : isLoading ? (
           <div style={styles.statusBox}>
             <span style={{ animation: 'pulse 1.5s infinite', color: '#88c0d0' }}>

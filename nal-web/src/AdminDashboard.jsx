@@ -11,6 +11,7 @@ function bylineOf(w) {
 import { API_BASE } from './config';
 import { adminSignContest } from './media';   // 参赛配图在 Cloudflare R2 私有桶，签名由后端生成
 import ShowcaseAdmin from './ShowcaseAdmin';   // 📚 陈伯吹新儿童文学绘本插画大赛厅布展
+import WritingHallAdmin from './WritingHallAdmin';   // ✍️ 陈伯吹新儿童文学创作大赛厅布展
 
 export default function AdminDashboard() {
 
@@ -857,6 +858,9 @@ export default function AdminDashboard() {
 
         {/* 📚 陈伯吹新儿童文学绘本插画大赛厅布展 */}
         <ShowcaseAdmin addLog={addLog} />
+
+        {/* ✍️ 陈伯吹新儿童文学创作大赛厅布展 */}
+        <WritingHallAdmin addLog={addLog} />
 
       </div>
     </div>
