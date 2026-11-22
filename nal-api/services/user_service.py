@@ -187,12 +187,15 @@ class UserService:
             UserService._save_entitlements(user_id, app)
             return "not_pro"
 
-        # 若此前单独付过参赛报名，恢复参赛选手身份；否则降为免费用户
+        # 退款后按新注册用户处理：免费评审 3 次、高级评审 0 次（与新用户缺省、会员到期降级一致）
+        # 若此前单独付过参赛报名（不退款项目），保留参赛选手身份；否则为免费用户
         app["role"] = "contestant" if app.get("paid_contest_id") else "free"
         app["expiry_date"] = None
-        app["flash_left"] = 0
+        app["flash_left"] = 3
         app["pro_credits"] = 0
         app["pro_daily_used"] = 0
+        app.pop("is_paid", None)
+        app.pop("has_bought_booster", None)
         app["pro_payment_intents"] = []
         app["pro_refunded_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         UserService._save_entitlements(user_id, app)
