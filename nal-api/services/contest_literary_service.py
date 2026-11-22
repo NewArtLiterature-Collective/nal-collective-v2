@@ -1,5 +1,13 @@
 # services/contest_literary_service.py
+# ============================================================================
+# 2026-11-22 修订：
+#   - 切换默认模型至 gemini-4-hydrogen@low（预检）/ gemini-4-hydrogen@medium（评审）
+#   - client 改为懒加载 _get_client()，避免模块导入时未加载 .env 报错
+#   - 异步 _generate() 增加瞬时错误短重试（429/5xx/超时）
+#   - AI 元数据指纹改为整词正则匹配、移除宽泛词 'parameters'、跳过二进制块（防误杀）
+# ============================================================================
 import os
+import re
 import json
 import asyncio
 from core.config import settings
@@ -11,43 +19,41 @@ try:
 except ImportError:          # 直接在 services 目录下运行时
     import content_review as cr
 
-# google-genai 3.x 默认走 v1 接口，预览版模型只在 v1beta 上有 → 固定 v1beta
-client = genai.Client(http_options=types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta")))
+_client = None
 
-# ===== 2026-11-09 修订（主编确认）=====
-# · 文字：内容安全改为"整本内容研判"（services/content_review.py，与离线引擎 lit_engine cr1 同一套），
-#   不再切块；拦截依据的原句须能在正文定位；非干净作品跑两次，拦与不拦一致才采信。
-# · 插画：沿用绘本视觉评审口径（只拦性化呈现，其余写风险提示，两次审查合并）。
-# · 线上即时竞赛（不设转人工队列）。文字和插画同样处理：
-#     违规 → 不予入围、不评审；整本/全部插画被平台拦截（不返回文本）→ 不予入围；
-#     两次结论不一致 → 补跑第三次按多数定；审查调用失败 → 返回可重试的 error（既不放行，也不定性为违规）。
-# · AIGC：只认元数据硬证据才打"作者未申明"横幅；模型对文风/画面的判断只作人工参考，措辞中性。
 
-# ===== 模型（2026-11 迁移到 Gemini 3.8 Flash）=====
-# gemini-2.5-flash / 2.5-pro 于 2026-12-01 停用。写法 "模型名@思考档位"：
-#   带档位 → 设 thinking_level，并去掉 temperature/top_p/top_k（3.8 不接受采样参数）
-#   不带档位（如 gemini-3.1-pro-preview）→ 照旧传采样参数
-# 可用环境变量覆盖，便于试跑对照。
-SCREEN_MODEL = os.getenv("NAL_CONTEST_SCREEN_MODEL", "gemini-3.8-flash@low")     # 预检：内容安全、AIGC 鉴定
-REVIEW_MODEL = os.getenv("NAL_CONTEST_REVIEW_MODEL", "gemini-3.8-flash@medium")  # 评审
+def _get_client():
+    global _client
+    if _client is None:
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        http = types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta"))
+        _client = genai.Client(api_key=key, http_options=http) if key else genai.Client(http_options=http)
+    return _client
 
-# 旧模型名兜底：若别处仍传旧名，自动换成新模型
+
+# ===== 模型配置 =====
+SCREEN_MODEL = os.getenv("NAL_CONTEST_SCREEN_MODEL", "gemini-4-hydrogen@low")     # 预检：内容安全、AIGC 鉴定
+REVIEW_MODEL = os.getenv("NAL_CONTEST_REVIEW_MODEL", "gemini-4-hydrogen@medium")  # 评审
+
 LEGACY_MODEL_MAP = {
-    "gemini-2.5-flash": "gemini-3.8-flash@low",
-    "gemini-2.5-pro": "gemini-3.8-flash@medium",
+    "gemini-2.5-flash": "gemini-4-hydrogen@low",
+    "gemini-2.5-pro": "gemini-4-hydrogen@medium",
+    "gemini-3.8-flash": "gemini-4-hydrogen@low",
 }
 _SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+_RETRYABLE_ERRS = ("429", "quota", "500", "502", "503", "504", "timeout", "timed out", "unavailable", "connection", "reset")
+_NON_RETRYABLE_ERRS = ("400", "401", "403", "404")
 
 
 def resolve_model(spec: str):
-    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    """"gemini-4-hydrogen@low" → ("gemini-4-hydrogen", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
     spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
     name, _, level = spec.partition("@")
     return name.strip(), (level.strip().lower() or None)
 
 
 async def _generate(spec: str, contents, system_instruction: str = None, **cfg):
-    """统一的异步 JSON 调用：带思考档位的设 thinking_level、去掉采样参数；不带的照旧。"""
+    """统一的异步 JSON 调用（含短退避重试）：带思考档位的设 thinking_level、去掉采样参数；不带的照旧。"""
     name, level = resolve_model(spec)
     kw = dict(cfg)
     kw["system_instruction"] = system_instruction
@@ -56,37 +62,47 @@ async def _generate(spec: str, contents, system_instruction: str = None, **cfg):
         for k in _SAMPLING_KEYS:
             kw.pop(k, None)
         kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-    return await client.aio.models.generate_content(
-        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
 
-# 旧版文本切块审查参数（2026-11-09 起文字改为整本内容研判；保留仅供对照）
+    config = types.GenerateContentConfig(**kw)
+    for attempt in range(3):
+        try:
+            return await _get_client().aio.models.generate_content(
+                model=name, contents=contents, config=config)
+        except Exception as e:
+            err = str(e)
+            err_l = err.lower()
+            if any(c in err for c in _NON_RETRYABLE_ERRS):
+                raise
+            if attempt < 2 and any(k in err_l for k in _RETRYABLE_ERRS):
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+
+
 SAFETY_CHUNK_SIZE = 12000
 SAFETY_CHUNK_OVERLAP = 600
 
+# AI 生成器元数据指纹（已移除宽泛词 'parameters'，按整词正则匹配，防误杀 flora/gloria 等）
 AI_KEYWORDS = [
     'stable diffusion', 'midjourney', 'dall-e', 'dall·e',
-    'comfyui', 'automatic1111', 'novelai', 'parameters',
+    'comfyui', 'automatic1111', 'novelai',
     'cfg scale', 'sampler', 'steps:', 'lora', 'controlnet',
-    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl'
-    # swinir 已移除：它是超分辨率放大工具，真人作品放大后也会带这个标记，不能作为 AI 生成的证据
+    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl',
 ]
+_AI_META_RES = [(kw, re.compile(r'(?<![a-z0-9])' + re.escape(kw) + r'(?![a-z0-9])')) for kw in AI_KEYWORDS]
+_META_SKIP_KEYS = {'exif', 'icc_profile', 'xmp_thumbnail', 'thumbnail'}
 
-# 拦截类型（不予入围、不进入评审）；其余敏感内容写成“内容风险提示”，照常评审
-# 2026-11-09：插画在性化呈现之外，增加"大量血腥暴力画面"一类（与文字的整本研判尺度一致）
-# 与 v2 在线视觉评审（vision_llm_service）同一口径
 VIOLATION_LABELS = {
     "sexual_content": "色情性行为描写，或对未成年人、少女形象的性化呈现",
-    "gore_violence": "大量血腥、残忍的暴力画面",               # 插画（2026-11-09 主编确认）
-    "text_content_hold": "文字含有不适合青少年读者的内容",     # 整本内容研判：越线拦截
-    "platform_block": "未能通过平台的内容审核",               # 整本文字或插画被平台拦截，无法评审
+    "gore_violence": "大量血腥、残忍的暴力画面",
+    "text_content_hold": "文字含有不适合青少年读者的内容",
+    "platform_block": "未能通过平台的内容审核",
 }
 
-# 内容风险的两档（与竞赛内容安全复核的结论对应）
 RISK_LEVELS = ("可能被拒绝", "可能交人工")
 
 SCORE_DIMS = ["文学底色", "叙事创新", "时代感", "感官对位"]
 
-# ===== 插画内容安全口径（全局+局部；拦性化呈现与大量血腥暴力，其余写入风险提示）=====
 _SAFETY_COMMON = """读者：10 岁以上的青少年（不含低幼）；作品也会被家长和老师读到。
 
 【一、必须拦截（block）——只有下面列出的】
@@ -132,7 +148,6 @@ _IMG_SAFETY_SYS = ("你是儿童文学评奖平台的内容安全审核员。你
                        where_rule="每处落到具体位置，写作“第N幅”，按附图顺序，第 1 张为第 1 幅。引用画面上的文字必须原样照录，看不清就不引。",
                        where_fmt="第N幅"))
 
-# 2026-11-09：模型的判断只作人工参考（不打横幅、不定性）；只认可指认的破绽，风格印象不算证据
 _AIGC_SYS = """你是 AIGC 鉴定员，服务于儿童文学评奖平台，只找可以指认的 AI 生成痕迹，供人工参考，不评价艺术质量。
 "像 AI""文风工整""模型腔""画得太完美"这类整体印象不是证据，不要据此判断。只记录能指认到具体位置的破绽：
 - 文本：残留的提示语或模型自称、前后自相矛盾的事实、明显由生成工具留下的格式痕迹。引原文为证。
@@ -145,7 +160,6 @@ _AIGC_SYS = """你是 AIGC 鉴定员，服务于儿童文学评奖平台，只�
 
 class ContestLiteraryService:
 
-    # ---------- 工具 ----------
     @staticmethod
     def _norm_conf(v) -> str:
         s = str(v if v is not None else "").strip().lower()
@@ -182,7 +196,6 @@ class ContestLiteraryService:
     @staticmethod
     def _load_json(resp):
         if not getattr(resp, "text", None):
-            # 无文本 = 可能触发底层安全过滤，视作强风险信号
             raise ValueError("模型未返回文本（疑似触发底层内容安全机制）")
         data = json.loads(resp.text)
         if isinstance(data, list):
@@ -193,35 +206,36 @@ class ContestLiteraryService:
 
     @staticmethod
     def _extract_ai_fingerprint_from_pil(img) -> str:
-        """在入库前，深度扫描 PIL 对象的深层元数据与生成参数。"""
-        meta_text = ""
+        """深度扫描 PIL 对象的文本元数据（跳过二进制块，按整词正则匹配防误杀）。"""
+        blobs = []
         try:
-            if hasattr(img, 'text') and img.text:
-                for k, v in img.text.items():
-                    meta_text += f"{k}:{v}\n".lower()
-            if hasattr(img, 'info') and img.info:
+            if getattr(img, 'text', None):
+                blobs.append(" ".join(f"{k}:{v}" for k, v in img.text.items()))
+            if getattr(img, 'info', None):
                 for k, v in img.info.items():
-                    if k != 'exif':
-                        meta_text += f"{k}:{v}\n".lower()
+                    if k in _META_SKIP_KEYS:
+                        continue
+                    if isinstance(v, (bytes, bytearray)):
+                        if "xmp" not in str(k).lower():
+                            continue
+                        v = v.decode('utf-8', errors='ignore')
+                    blobs.append(f"{k}:{v}")
             if hasattr(img, 'getexif'):
                 exif = img.getexif()
                 if exif:
                     for tag_id, value in exif.items():
-                        if isinstance(value, bytes):
-                            try:
-                                meta_text += value.decode('utf-8', errors='ignore').lower() + "\n"
-                            except Exception:
-                                pass
+                        if isinstance(value, (bytes, bytearray)):
+                            blobs.append(value.decode('utf-8', errors='ignore'))
                         else:
-                            meta_text += str(value).lower() + "\n"
-            for kw in AI_KEYWORDS:
-                if kw in meta_text:
+                            blobs.append(str(value))
+            meta_text = " ".join(blobs).lower()
+            for kw, rx in _AI_META_RES:
+                if rx.search(meta_text):
                     return kw
         except Exception:
             pass
         return ""
 
-    # ---------- 独立前置：内容安全（文本分块 + 图像；各跑两次再合并）----------
     @classmethod
     def _parse_safety(cls, resp) -> dict:
         data = cls._load_json(resp)
@@ -237,7 +251,6 @@ class ContestLiteraryService:
 
     @staticmethod
     def _same_place(a: str, b: str, is_text: bool) -> bool:
-        """两次审查的位置是否同一处：插画比“第N幅”；文本比照录原文是否有 4 字以上重合。"""
         a, b = "".join(str(a).split()), "".join(str(b).split())
         if not a or not b:
             return False
@@ -251,8 +264,6 @@ class ContestLiteraryService:
 
     @classmethod
     def _merge_safety(cls, runs: list, is_text: bool) -> dict:
-        """两次审查合并（与在线视觉评审同一规则）：两次都判拦截才拦截；风险按位置对齐，
-        两次同档才采用该档，不一致（档位不同或只出现一次）降为“可能交人工”。只拦截一次的，转为一条交人工提示。"""
         runs = [r for r in runs if isinstance(r, dict)]
         if not runs:
             return {"block": False, "risks": []}
@@ -282,18 +293,15 @@ class ContestLiteraryService:
 
     @staticmethod
     def _platform(where: str, reason: str, diag: str = "") -> dict:
-        """被平台拦截：无法评审，按不予入围处理。"""
         return {"block": True, "block_type": "platform_block", "evidence": reason,
                 "where": where, "diag": diag, "risks": []}
 
     @staticmethod
     def _screen_error(where: str, reason: str, diag: str = "") -> dict:
-        """审查调用失败：不是作品的问题，不放行也不定性，交调用方稍后重试。"""
         return {"block": False, "error": True, "evidence": reason, "where": where, "diag": diag, "risks": []}
 
     @classmethod
     async def _safety_once(cls, contents, system_instruction) -> dict:
-        # 温度 0.2：两次审查须是两次独立判断（只对不带思考档位的模型生效；3.8 本身就是独立采样）
         resp = await _generate(SCREEN_MODEL, contents, system_instruction, temperature=0.2,
                                safety_settings=cr.moderation_safety_settings())
         if cr.platform_blocked(resp):
@@ -315,14 +323,11 @@ class ContestLiteraryService:
             else:
                 ok.append(r)
         where = "text" if is_text else "image"
-        # 平台拦截不是"抖动"，是信号：无法评审，不予入围（2026-11-09 起不再放行）
         if blocked:
             print(f"⚠️ {label}被平台拦截: {blocked[0]}")
             return cls._platform(where, f"{label}未能通过平台的内容审核", blocked[0])
-        # 两次都异常：没有结论，返回可重试的 error（不再默认放行）
         if not ok:
             return cls._screen_error(where, f"{label}内容审查暂时无法完成", "；".join(errs))
-        # 一次判拦截、一次不拦：补跑第三次，按多数定（线上竞赛不设转人工）
         if len(ok) == 2 and bool(ok[0].get("block")) != bool(ok[1].get("block")):
             try:
                 third = await cls._safety_once(contents, system_instruction)
@@ -334,13 +339,11 @@ class ContestLiteraryService:
                 hit = ok[0] if ok[0].get("block") else ok[1]
                 return {"block": True, "block_type": hit.get("block_type", "sexual_content"),
                         "evidence": hit.get("evidence", ""), "risks": [], "tiebreak": True}
-            ok = [r for r in ok if not r.get("block")] + [third]   # 两次不拦的合并风险提示
-        # 只有一次成功：沿用原规则，以这一次为准
+            ok = [r for r in ok if not r.get("block")] + [third]
         return cls._merge_safety(ok, is_text)
 
     @classmethod
     async def _scan_text_safety(cls, text: str) -> dict:
-        """文字：整本内容研判（services/content_review.py），整体判断，不再切块。"""
         if not (text or "").strip():
             return {"block": False, "risks": []}
 
@@ -362,11 +365,10 @@ class ContestLiteraryService:
             r = cls._platform("text", "文字未能通过平台的内容审核", rv.get("diag", ""))
             r["content_review"] = rv
             return r
-        if decision in ("disagree", "error"):   # 线上模式下 disagree 只在第三次调用失败时出现
+        if decision in ("disagree", "error"):
             r = cls._screen_error("text", "文字内容研判暂时无法完成", rv.get("diag", ""))
             r["content_review"] = rv
             return r
-        # 标注（零星越线，不阻断）→ 风险提示；拦截依据原句定位不到的 → 交人工提示；"需留意"只留在 content_review 里
         risks = []
         for i in final.get("flag", []):
             risks.append({"where": f"文本「{cr.as_text(i.get('quote'))[:20]}」", "issue": cr.as_text(i.get("type")),
@@ -385,12 +387,11 @@ class ContestLiteraryService:
         if r.get("block"):
             return {**r, "where": "image"}
         if r.get("error"):
-            return r                       # 审查未完成：交调用方重试，不当作通过
+            return r
         return {"block": False, "risks": [{**x, "where": f"插画{x.get('where') or ''}"} for x in r.get("risks", [])]}
 
     @staticmethod
     def render_risks(risks: list) -> str:
-        """内容风险提示（无风险时返回空串）；供评语顶部统一加一次。"""
         if not risks:
             return ""
         order = {lv: i for i, lv in enumerate(RISK_LEVELS)}
@@ -400,17 +401,14 @@ class ContestLiteraryService:
             lines.append(f"- {where}{r.get('issue', '')}｜{r.get('level', '')}：{r.get('reason', '')}")
         return "\n".join(lines) + "\n\n"
 
-    # ---------- 独立前置：AIGC 鉴定（元数据硬证据 + 文本/画面判断）----------
     @classmethod
     async def _scan_aigc(cls, text: str, pil_images: list) -> dict:
-        # 1) 元数据指纹：硬证据
         meta_fp = ""
         for img in pil_images or []:
             fp = cls._extract_ai_fingerprint_from_pil(img)
             if fp:
                 meta_fp = fp
                 break
-        # 2) 文本+画面：只找可指认的破绽，结果只作人工参考（2026-11-09：风格印象不构成证据）
         ref = {"suspected": False, "confidence": "low", "evidence": ""}
         try:
             contents = [f"【待鉴定文本】：\n{(text or '')[:cr.DOC_MAXCHARS]}"] + (pil_images or [])
@@ -421,7 +419,6 @@ class ContestLiteraryService:
                    "evidence": (data.get("evidence") or "").strip()}
         except Exception as e:
             print(f"⚠️ AIGC 参考鉴定降级: {e}")
-        # 认定只看元数据硬证据
         if meta_fp:
             return {"suspected": True, "confidence": "high",
                     "evidence": f"图片元数据含 AI 生成工具特征（{meta_fp}）",
@@ -429,34 +426,21 @@ class ContestLiteraryService:
         return {"suspected": False, "confidence": "low", "evidence": "",
                 "meta_fingerprint": "", "reference": ref}
 
-    # ---------- 可被调用方单独调用的"一次性筛查"（推荐在 persona 循环前跑一次）----------
     @classmethod
     async def screen_work(cls, text: str, pil_images: list, has_declared_ai: bool = False) -> dict:
-        """内容安全 + AIGC 独立前置筛查。返回供调用方决定是否入围/是否标注。
-        · 文字：整本内容研判判为越线 → content_blocked；
-        · 插画：两次审查都判为性化呈现 → content_blocked；
-        · 文字或插画被平台拦截 → content_blocked（类型 platform_block，无法评审）；
-        · 两次结论不一致 → 补跑第三次按多数定；
-        · 审查调用失败 → screen_error=True，content_blocked=False，调用方应稍后重试，不得当作通过；
-        · 其余内容风险放在 risks 里，照常评审，由调用方在评语顶部标注、交人工复核；
-        · AIGC 只有元数据硬证据才 ai_flag；模型判断放在 aigc["reference"]，只供人工参考。"""
         t_safe, i_safe, aigc = await asyncio.gather(
             cls._scan_text_safety(text),
             cls._scan_image_safety(pil_images),
             cls._scan_aigc(text, pil_images),
         )
-        # 越线优先于平台拦截（理由更明确）
         hits = [r for r in (t_safe, i_safe) if r.get("block")]
         hit = next((r for r in hits if r.get("block_type") != "platform_block"), hits[0] if hits else None)
-        # 保持旧字段格式，contest_agent._build_block_message 无需改动
         content_safety = ({"content_violation": True, "violation_type": hit.get("block_type", "sexual_content"),
                            "evidence": hit.get("evidence", ""), "where": hit.get("where")}
                           if hit else {"content_violation": False})
         errs = [r for r in (t_safe, i_safe) if r.get("error")]
         screen_error = (not hit) and bool(errs)
         risks = [] if hit else (t_safe.get("risks", []) + i_safe.get("risks", []))
-
-        # 未申明且有元数据硬证据 → 打标（大赛口径：不拦，照评但显著标注）
         ai_flag = bool(aigc.get("suspected")) and not has_declared_ai
 
         return {
@@ -464,7 +448,7 @@ class ContestLiteraryService:
             "screen_error": screen_error,
             "screen_error_detail": "；".join(r.get("evidence", "") for r in errs) if screen_error else "",
             "content_safety": content_safety,
-            "content_review": t_safe.get("content_review"),   # 整本研判明细（含"需留意"记录），供存档查阅
+            "content_review": t_safe.get("content_review"),
             "risks": risks,
             "aigc": aigc,
             "ai_declared": bool(has_declared_ai),
@@ -503,30 +487,18 @@ class ContestLiteraryService:
     def _ai_prob_from(aigc: dict) -> int:
         return {"high": 95, "medium": 55, "low": 10}.get(aigc.get("confidence", "low"), 10)
 
-    # ---------- 评审 ----------
     @staticmethod
     async def evaluate_contest_work(text: str, pil_images: list, persona: str = "panoramic",
                                     has_declared_ai: bool = False, screen: dict = None,
                                     mark_ai: bool = True, mark_risks: bool = None):
-        """
-        多模态会诊（文本+插画）。内容安全与 AIGC 已改为独立前置：
-        · 内容违规 → 不予入围、不评审（返回 content_blocked，供批处理记录/直接返回用户）。
-        · 未申明却检测到 AI → 不拦，照常评审，结果显著标注（大赛口径）。
-        调用方可在 persona 循环前调用 screen_work() 一次，并把结果作为 screen= 传入以复用，避免重复扫描。
-        mark_ai=False 时本次不在单条评语顶部加 AIGC 横幅（由调用方在合并评语处统一加一次）。
-        mark_risks 控制是否在单条评语顶部加内容风险提示，缺省跟随 mark_ai。
-        """
         if mark_risks is None:
             mark_risks = mark_ai
         cls = ContestLiteraryService
-        # 1) 独立前置筛查（未传入则自行跑一遍，保证单独调用也安全）
         if screen is None:
             screen = await cls.screen_work(text, pil_images, has_declared_ai)
 
-        # 2) 内容违规 → 不予入围、不进入评审
         if screen.get("content_blocked"):
             return cls._blocked_result(screen)
-        # 2b) 审查未能完成 → 不评审，返回可重试的 error（不放行、不定性）
         if screen.get("screen_error"):
             return {"status": "error", "content_blocked": False, "screen_error": True,
                     "scores": {d: 0 for d in SCORE_DIMS},
@@ -536,7 +508,6 @@ class ContestLiteraryService:
         aigc = screen.get("aigc") or {}
         ai_flag = bool(screen.get("ai_flag"))
 
-        # 3) 评审提示词（已剥离自纠察红线；内容安全/AI 鉴定已在前置完成）
         base = ("（内容安全与 AI 鉴定已在评审前由独立环节完成，此处无需再做，专注评审即可。）\n"
                 "🚨【绝对指令】：打分必须采用严格的百分制（0-100 的整数）。\n")
         prompts = {
@@ -564,7 +535,7 @@ class ContestLiteraryService:
             contents = [text] + (pil_images or [])
             response = await _generate(
                 REVIEW_MODEL, contents, system_instruction,
-                temperature=0.3, top_p=0.95, top_k=40,   # 仅对不带思考档位的模型生效
+                temperature=0.3, top_p=0.95, top_k=40,
             )
             result_json = cls._load_json(response)
         except json.JSONDecodeError as je:
@@ -581,19 +552,16 @@ class ContestLiteraryService:
         scores = result_json.get("scores") or {d: 0 for d in SCORE_DIMS}
         review = (result_json.get("review") or "").strip()
 
-        # 4) 未申明且有元数据硬证据 → 评语顶部标注（不扣分、不拦，大赛口径）
         if ai_flag and mark_ai:
             evid = (aigc.get("evidence") or "").strip()
             banner = ("🤖【AI 生成证据 · 作者未申明】" + (evid or "图片元数据含 AI 生成工具特征")
                       + "；作者声明为纯人类原创。评分正常给出，须人工复核其 AI 使用情况。\n\n")
             review = banner + review
-        # 4b) 模型找到的可指认破绽：只作人工参考，附在评语末尾，措辞中性
         ref = aigc.get("reference") or {}
         if (mark_ai and not has_declared_ai and not ai_flag and ref.get("suspected")
                 and ref.get("confidence") in ("high", "medium") and ref.get("evidence")):
             review = review + f"\n\n🔎 AI 使用参考（仅供人工参考，不构成认定）：{ref['evidence']}"
 
-        # 5) 内容风险（非性内容）→ 不拦、照评，评语顶部提示，交人工复核
         risks = screen.get("risks") or []
         if risks and mark_risks:
             review = cls.render_risks(risks) + review
