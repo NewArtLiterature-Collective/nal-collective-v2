@@ -1,28 +1,16 @@
 # nal-api/services/literary_llm_service.py
 # ============================================================================
-# v2（2026-11）：迁移到新版 SDK google-genai 与 Gemini 3.8 Flash
-#   - Gemini 2.5 系列 2026-12-01 停用；旧 SDK google.generativeai 已停止维护，且无法设置思考档位
-#   - 对外接口（各方法名、参数、返回值、422/500 行为）不变，路由无需修改
-#   - 模型写法"模型名@思考档位"；路由传入的旧模型名自动映射：
-#       gemini-2.5-pro → gemini-3.8-flash@medium，gemini-2.5-flash → gemini-3.8-flash@low
-#   - 写了思考档位的调用不再传 temperature / top_p（3.x 不接受采样参数）
-#   - 依赖：pip install -U google-genai；读取环境变量 GEMINI_API_KEY（或 GOOGLE_API_KEY）
-# v3（2026-11-09，主编确认）：
-#   - 内容安全改为"整本内容研判"（services/content_review.py，与离线引擎 lit_engine cr1 同一套）：
-#     整本通读、整体判断；拦截依据的原句须能在正文定位；非干净作品跑两次，拦与不拦一致才采信。
-#     线上即时服务：两次不一致补跑第三次按多数定（不转人工）；整本被平台拦截的不予评审；
-#     接口异常不再放行，改为请用户稍后重试。违规作品不给评审、不给建议。
-#   - 取消凭"文风"判定的 AI 代写 422：风格印象不构成证据（疑罪从无）。报告末尾的 AI 使用参考
-#     只写可指认的具体破绽，措辞中性，不下"与声明不符"的结论。
-#   - 评审请求本身被平台拦截时，返回明确的 422 提示，而不是笼统的 500。
-#   - 删去用户提示中"照着范例格式"的残留句（系统指令明确不提供范例，前后矛盾）。
-# v4（2026-11-13，主编确认）：判词引原文改用与离线引擎 lit_engine（QUOTE_RULE）同一条引号规则——
-#   「」只用于逐字照录的原文；概括、转述、术语、评语不加任何引号；记不准原话就不加「」，改为指出情节或段落。
-#   依据：离线终审测试中约 1/4 的引号内容在原文里找不到，主因是概括、术语、转述也加了引号；
-#   加规则后第四届正式运行的引文逐字定位率由 75% 升到 99%。
+# v2（2026-11）：迁移到新版 SDK google-genai
+# v3（2026-11-09，主编确认）：整本内容研判 + 取消凭文风判定的 AI 422
+# v4（2026-11-13，主编确认）：「」引号规则
+# v5（2026-11-22）：
+#   - 切换默认模型至 gemini-4-hydrogen@low（2.5-pro 映射至 gemini-4-hydrogen@medium）
+#   - 异步 generate() 增加瞬时错误短重试（429/5xx/超时）
+#   - evaluate_work 放宽思考模型的 max_output_tokens 至 16384，防止长篇判词截断
 # ============================================================================
 import os
 import json
+import asyncio
 from google import genai
 from google.genai import types
 from fastapi import HTTPException
@@ -32,12 +20,15 @@ try:
 except ImportError:          # 直接在 services 目录下运行时
     import content_review as cr
 
-# 旧模型名 → 新模型（路由或数据库里仍写旧名时自动换掉，12-01 之后照常可用）
+# 旧模型名 → 新模型（路由或数据库里仍写旧名时自动换掉）
 LEGACY_MODEL_MAP = {
-    "gemini-2.5-pro": "gemini-3.8-flash@medium",
-    "gemini-2.5-flash": "gemini-3.8-flash@low",
+    "gemini-2.5-pro": "gemini-4-hydrogen@medium",
+    "gemini-2.5-flash": "gemini-4-hydrogen@low",
+    "gemini-3.8-flash": "gemini-4-hydrogen@low",
 }
 _SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+_RETRYABLE_ERRS = ("429", "quota", "500", "502", "503", "504", "timeout", "timed out", "unavailable", "connection", "reset")
+_NON_RETRYABLE_ERRS = ("400", "401", "403", "404")
 _client = None
 
 
@@ -52,14 +43,14 @@ def _get_client():
 
 
 def resolve_model(spec: str):
-    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    """"gemini-4-hydrogen@low" → ("gemini-4-hydrogen", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
     spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
     name, _, level = spec.partition("@")
     return name.strip(), (level.strip().lower() or None)
 
 
 async def generate(spec: str, contents, system_instruction: str = None, json_mode: bool = False, **cfg):
-    """统一的异步调用：写了思考档位的设 thinking_level、去掉采样参数；没写的照旧传采样参数。"""
+    """统一的异步调用（含短退避重试）：写了思考档位的设 thinking_level、去掉采样参数；没写的照旧传采样参数。"""
     name, level = resolve_model(spec)
     kw = dict(cfg)
     if system_instruction:
@@ -70,8 +61,21 @@ async def generate(spec: str, contents, system_instruction: str = None, json_mod
         for k in _SAMPLING_KEYS:
             kw.pop(k, None)
         kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-    return await _get_client().aio.models.generate_content(
-        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
+
+    config = types.GenerateContentConfig(**kw)
+    for attempt in range(3):
+        try:
+            return await _get_client().aio.models.generate_content(
+                model=name, contents=contents, config=config)
+        except Exception as e:
+            err = str(e)
+            err_l = err.lower()
+            if any(c in err for c in _NON_RETRYABLE_ERRS):
+                raise
+            if attempt < 2 and any(k in err_l for k in _RETRYABLE_ERRS):
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
 
 
 def _has_text(res) -> bool:
@@ -79,8 +83,8 @@ def _has_text(res) -> bool:
 
 
 class LiteraryLLMService:
-    # 预读、AI 代写检测、内容安全分块扫描专用模型（原 gemini-2.5-flash）
-    MODEL_ADAPTIVE = os.getenv("NAL_TEXT_FLASH_MODEL", "gemini-3.8-flash@low")
+    # 预读、内容安全研判专用模型
+    MODEL_ADAPTIVE = os.getenv("NAL_TEXT_FLASH_MODEL", "gemini-4-hydrogen@low")
 
     @classmethod
     async def generate_creative_guide(cls, user_prompt: str, mentor_desc: str, focus_dimensions: str, snippet_rule: str, target_model: str) -> str:
@@ -169,7 +173,7 @@ class LiteraryLLMService:
         total = sum(adjusted_weights.values())
         final_weights = {k: round((v/total)*100, 1) for k, v in adjusted_weights.items()}
         weight_desc = "\n".join([f"- {k}: {v}%" for k, v in final_weights.items()])
-        
+
         return f"""
         ---
         【内部权重参数（仅用于计算维度配比，不要写进判词，也不要使用这里的标签化措辞）】
@@ -182,7 +186,6 @@ class LiteraryLLMService:
 
     @staticmethod
     def _build_detection_excerpt(text: str, budget: int = 9000) -> str:
-        """为 AI 代写检测构造代表性片段：短文全取，长文取 头+中+尾，便于判断痕迹是否贯穿全文。"""
         text = text or ""
         if len(text) <= budget:
             return text
@@ -195,12 +198,10 @@ class LiteraryLLMService:
 
     @staticmethod
     def _norm_confidence(v) -> str:
-        """把模型可能返回的中英文/大小写置信度统一成 high/medium/low（含"极高/很高/非常高"等变体）。"""
         s = str(v if v is not None else "").strip().lower()
-        # 先按子串兜底，覆盖"极高/很高/非常高/偏高""very high/strong"等写法
         if "high" in s or "强" in s or "确凿" in s or "极高" in s or "很高" in s or "非常高" in s:
             return "high"
-        if "高" in s:   # 兜底："高""偏高"等
+        if "高" in s:
             return "high"
         if "medium" in s or "mid" in s or "中等" in s or "一般" in s:
             return "medium"
@@ -210,7 +211,6 @@ class LiteraryLLMService:
 
     @staticmethod
     def _is_affirmative(v) -> bool:
-        """把模型可能返回的 bool / 'true' / '是' / 'yes' 统一成布尔真。"""
         if isinstance(v, bool):
             return v
         return str(v if v is not None else "").strip().lower() in (
@@ -220,14 +220,6 @@ class LiteraryLLMService:
     # ⏸ 2026-11-09 起不再调用：凭文风判定 AI 代写不构成证据（疑罪从无）。保留代码仅供对照。
     @classmethod
     async def _check_ai_authenticity(cls, raw_text: str) -> dict:
-        """
-        🕵️ 独立的 AI 代写前置检测（仅在作者声明"未使用 AI"时调用）。
-        专职一件事：判断是否为 AI 代写，不掺杂评审，避免"既当运动员又当裁判"导致中止失效。
-        返回 {"ai_ghostwritten": bool, "confidence": "high|medium|low", "evidence": str}
-        门槛设高：只有痕迹强、贯穿全文、几乎无人类个人印记时才给 high。
-        """
-        # 读近乎全文（长篇多章的"每章结尾升华"等模型腔需看到多章才识别得稳；
-        # gemini-flash 上下文足够，检测准确比省 token 更重要）
         excerpt = cls._build_detection_excerpt(raw_text, budget=40000)
 
         detect_prompt = """你是一个严谨的 AI 代写检测器，服务于一个儿童文学评奖平台。作者已声明本文为"纯人类原创，未使用 AI 工具"。你的任务是判断这一声明是否属实。
@@ -269,13 +261,11 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
             print(f"⚠️ AI 代写前置检测降级（默认放行）: {e}")
             return {"ai_ghostwritten": False, "confidence": "low", "evidence": ""}
 
-    # 旧版切块审查参数（2026-11-09 起改为整本内容研判，见 services/content_review.py；保留仅供对照）
     SAFETY_CHUNK_SIZE = 12000
     SAFETY_CHUNK_OVERLAP = 600
 
     @classmethod
     def _chunk_text(cls, text: str, size: int, overlap: int) -> list:
-        """把全文切成带重叠的块（重叠防止违规句恰好被切在块边界而漏判）。"""
         text = text or ""
         if not text.strip():
             return []
@@ -292,10 +282,6 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
 
     @classmethod
     async def _check_content_safety(cls, raw_text: str) -> dict:
-        """
-        整本内容研判（独立前置，只做内容判断，不掺评审）。实现见 services/content_review.py。
-        返回 content_review 的结果：decision ∈ pass / flag / hold / platform / disagree / error。
-        """
         async def gen(contents, system_instruction, **cfg):
             return await generate(cls.MODEL_ADAPTIVE, contents, system_instruction=system_instruction,
                                   json_mode=True, **cfg)
@@ -307,7 +293,6 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
 
     @staticmethod
     def _content_notice(review: dict) -> str:
-        """判为"标注"（零星越线、不阻断）时附在报告末尾的提示；其余情况返回空串。"""
         final = (review or {}).get("final") or {}
         if review.get("decision") != "flag" or not final.get("flag"):
             return ""
@@ -322,11 +307,6 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         """
         ⚖️ 深度学术评审系统 (融合 AI 痕迹筛查与动态惩罚)
         """
-        # ==========================================
-        # 🆕 内容安全前置闸（独立调用，最高优先级，代码强制执行）
-        # 对所有文字都查，不分声明。命中违规 → 评审前直接 422，不扣费。
-        # 独立成一次专职判断，避免让评审模型"既评审又当裁判"导致漏拦。
-        # ==========================================
         review = await cls._check_content_safety(raw_text)
         decision = (review or {}).get("decision")
         if decision == "hold":
@@ -358,14 +338,11 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
             )
         content_notice = cls._content_notice(review)
 
-        # AI 代写：不再前置拦截（2026-11-09）。文风印象不构成证据；AI 使用情况只在报告末尾作中性参考。
-        # 列出维度清单供模型逐项评定（不提供范例句，避免模型照抄空洞句式）
         dims_list = "、".join(base_weights.keys())
         dims_lines = ""
         for k, v in base_weights.items():
             dims_lines += f"- {k}（本项满分 {v} 分）\n"
 
-        # 针对不同场景设定不同的 AI 检测规则
         ai_detection_policy = ""
         if is_contest:
             ai_detection_policy = f"""
@@ -432,15 +409,18 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
 
         adaptive_inst = await cls._get_adaptive_instruction(raw_text, base_weights, user_note)
         combined_instruction = adaptive_inst + "\n\n" + eval_sys_inst
-        
+
         try:
             prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格按 System Instruction 中的输出结构完成评审，给出真实的打分数字。"
-            
-            res = await generate(target_model, prompt, system_instruction=combined_instruction, temperature=0.2)
+
+            _, level = resolve_model(target_model)
+            res = await generate(
+                target_model, prompt, system_instruction=combined_instruction,
+                temperature=0.2, max_output_tokens=16384 if level else 8192,
+            )
 
             if _has_text(res):
                 result_text = res.text.strip()
-                # 内容研判已在评审前完成；判为"标注"的，在报告末尾附内容提示
                 return result_text + content_notice
             if cr.platform_blocked(res):
                 print(f"⚠️ 评审请求被平台拦截：{cr.diag(res)}")
@@ -451,7 +431,6 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
             raise ValueError("模型未返回有效文本。")
 
         except HTTPException:
-            # 前置核查的 422（内容违规 / AI 声明不符）必须原样向上抛，不能被转成 500
             raise
         except Exception as e:
             print(f"🚨 评审引擎调用异常: {e}")
