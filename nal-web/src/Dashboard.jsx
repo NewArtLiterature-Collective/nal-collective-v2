@@ -66,8 +66,13 @@ export default function Dashboard({ session }) {
   const [activeContestId, setActiveContestId] = useState(''); 
   const [contestName, setContestName] = useState('');
   const [contestDescription, setContestDescription] = useState('');
-  const [submissionDeadline, setSubmissionDeadline] = useState(null); 
-  
+  const [submissionDeadline, setSubmissionDeadline] = useState(null);
+
+  // 📰 官方动态：后台发布的新闻消息；赛事章程以链接形式在弹窗中查看
+  const [announcements, setAnnouncements] = useState([]);
+  const [linkedContests, setLinkedContests] = useState({});   // 动态里关联的赛事：id → { id, name, description, submission_deadline }
+  const [rulesModal, setRulesModal] = useState(null);          // 正在查看章程的赛事
+
   // 🚨 新增：全局展厅开关状态，用于控制是否向作者公开入展信息
   const [isGalleryActive, setIsGalleryActive] = useState(false); 
 
@@ -273,8 +278,31 @@ export default function Dashboard({ session }) {
     }
   };
   
+  // 📰 读取官方动态（置顶优先，其余按发布时间倒序），并取回动态里关联的赛事章程
+  const fetchAnnouncements = async () => {
+    try {
+      const { data, error } = await supabase.from('announcements')
+        .select('id, title, content, contest_id, is_pinned, created_at')
+        .order('is_pinned', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      const list = data || [];
+      setAnnouncements(list);
+      const ids = [...new Set(list.map(a => a.contest_id).filter(Boolean))];
+      if (ids.length > 0) {
+        const { data: cs } = await supabase.from('contests')
+          .select('id, name, description, submission_deadline').in('id', ids);
+        setLinkedContests(Object.fromEntries((cs || []).map(c => [c.id, c])));
+      }
+    } catch (err) {
+      console.error('⚠️ 读取官方动态失败:', err);
+    }
+  };
+
   useEffect(() => {
     fetchSiteSettings();
+    fetchAnnouncements();
     if (!isAdmin) {
       refreshUserMetadata();
     }
@@ -641,7 +669,27 @@ export default function Dashboard({ session }) {
         </div>
       )}
 
-      {/* 报名与参赛规则确认弹窗 */}
+      {/* 📜 赛事章程查看弹窗（官方动态中的赛事链接） */}
+      {rulesModal && (
+        <div style={styles.overlay} onClick={() => setRulesModal(null)}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '16px', width: '92%', maxWidth: '760px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', textAlign: 'left', boxShadow: '0 20px 50px rgba(0,0,0,0.25)', boxSizing: 'border-box' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', padding: '24px 28px 16px', borderBottom: '1px solid #e5e7eb' }}>
+              <div>
+                <div style={{ fontSize: '13px', color: '#b45309', fontWeight: 'bold', marginBottom: '6px' }}>📜 赛事章程</div>
+                <h3 style={{ margin: 0, fontSize: '22px', color: '#111827', lineHeight: 1.4 }}>{rulesModal.name || '赛事章程'}</h3>
+                {rulesModal.submission_deadline && (
+                  <div style={{ marginTop: '6px', fontSize: '13px', color: '#6b7280' }}>截稿日期：{String(rulesModal.submission_deadline).slice(0, 10)}</div>
+                )}
+              </div>
+              <button onClick={() => setRulesModal(null)} style={{ background: 'none', border: 'none', fontSize: '26px', color: '#9ca3af', cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ padding: '20px 28px 28px', overflowY: 'auto', fontSize: '15px', lineHeight: 2, color: '#374151', whiteSpace: 'pre-wrap', textAlign: 'justify', wordBreak: 'break-word' }}>
+              {rulesModal.description || '章程内容尚未发布。'}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 注销账号确认弹窗 */}
       {showDeleteModal && (
         <div style={styles.overlay} onClick={closeDeleteModal}>
@@ -772,7 +820,7 @@ export default function Dashboard({ session }) {
             <h2 style={styles.logo}>NAL Collective</h2>
           </div>
           <nav style={styles.nav}>
-            {isContestActive && (
+            {(isContestActive || announcements.length > 0) && (
               <button onClick={() => setActiveTab('dynamics')} style={activeTab === 'dynamics' ? {...styles.navActive, backgroundColor: '#b45309'} : { ...styles.navBtn, color: '#fbbf24' }}>
                 🔥 大赛官方动态
               </button>
@@ -881,53 +929,61 @@ export default function Dashboard({ session }) {
 
         <div style={styles.content}>
           {activeTab === 'dynamics' ? (
-            <div style={{ padding: '40px', borderRadius: '16px', background: 'linear-gradient(145deg, #111827 0%, #1f2937 100%)', border: '1px solid #374151', color: '#f3f4f6', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
-              <div style={{ display: 'inline-block', padding: '6px 16px', background: '#ef4444', color: '#fff', fontSize: '13px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '20px' }}>
-                🔥 官方征稿 / 评审进行中
-              </div>
-              <h2 style={{ fontSize: '32px', color: '#fbbf24', margin: '0 0 20px 0', fontWeight: '900', letterSpacing: '-0.5px' }}>
-                {contestName || 'NAL 年度文学大赏'}
-              </h2>
-              <div style={{ fontSize: '16px', lineHeight: '2.0', color: '#e5e7eb', background: 'rgba(0,0,0,0.3)', padding: '30px', borderRadius: '12px', whiteSpace: 'pre-wrap', border: '1px solid rgba(255,255,255,0.05)' }}>
-                {contestDescription || '具体章程与评审机制正在获取中...'}
-              </div>
-              
-              <div style={{ marginTop: '30px', display: 'flex', gap: '15px' }}>
-                {isContestBlocked ? (
-                  <button 
-                    disabled
-                    style={{ padding: '16px 32px', background: '#64748b', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'not-allowed', fontSize: '16px' }}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left' }}>
+              {/* 当前赛事：只显示信息，章程以链接形式查看（报名、投稿入口在左侧栏） */}
+              {isContestActive && activeContestId && (
+                <div style={{ padding: '28px 32px', borderRadius: '16px', background: 'linear-gradient(145deg, #111827 0%, #1f2937 100%)', border: '1px solid #374151', color: '#f3f4f6', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
+                  <div style={{ display: 'inline-block', padding: '4px 12px', background: isPastDeadline ? '#64748b' : '#ef4444', color: '#fff', fontSize: '12px', fontWeight: 'bold', borderRadius: '6px', marginBottom: '14px' }}>
+                    {isPastDeadline ? '🛑 已截稿 · 评审进行中' : '🔥 本届赛事 · 征稿进行中'}
+                  </div>
+                  <h2 style={{ fontSize: '26px', color: '#fbbf24', margin: '0 0 10px 0', fontWeight: '900', lineHeight: 1.4 }}>
+                    {contestName || 'NAL 年度文学大赏'}
+                  </h2>
+                  {submissionDeadline && (
+                    <div style={{ fontSize: '14px', color: '#9ca3af', marginBottom: '16px' }}>截稿日期：{String(submissionDeadline).slice(0, 10)}</div>
+                  )}
+                  <button
+                    onClick={() => setRulesModal({ id: activeContestId, name: contestName, description: contestDescription, submission_deadline: submissionDeadline })}
+                    style={{ background: 'none', border: 'none', padding: 0, color: '#93c5fd', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '4px' }}
                   >
-                    ⛔ 本届参赛资格已取消
+                    📜 查看赛事章程 →
                   </button>
-                ) : alreadySubmitted ? (
-                  <button 
-                    onClick={() => setActiveTab('contest')}
-                    style={{ padding: '16px 32px', background: '#4f46e5', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)' }}
-                  >
-                    ✅ 您已提交本届作品，点击查看档案与进度
-                  </button>
-                ) : isPastDeadline ? (
-                  <button 
-                    disabled
-                    style={{ padding: '16px 32px', background: '#64748b', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'not-allowed', fontSize: '16px' }}
-                  >
-                    🛑 本届截稿时间已过，提交通道已关闭
-                  </button>
-                ) : isEligibleForContest ? (
-                  <button 
-                    onClick={() => setActiveTab('contest')}
-                    style={{ padding: '16px 32px', background: '#10b981', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
-                  >
-                    ⚡ 您已获资格，前往正式投稿通道
-                  </button>
+                </div>
+              )}
+
+              {/* 动态消息列表 */}
+              <div>
+                <h3 style={{ margin: '4px 0 12px 0', fontSize: '17px', color: '#111827' }}>📰 最新动态</h3>
+                {announcements.length === 0 ? (
+                  <div style={{ padding: '40px 20px', textAlign: 'center', color: '#9ca3af', background: '#f9fafb', border: '1px dashed #e5e7eb', borderRadius: '12px', fontSize: '14px' }}>
+                    暂无动态消息
+                  </div>
                 ) : (
-                  <button 
-                    onClick={() => handlePayment('contestant')}
-                    style={{ padding: '16px 32px', background: '#10b981', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}
-                  >
-                    🚀 立即报名获取参赛资格
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {announcements.map(a => {
+                      const lc = a.contest_id ? (linkedContests[a.contest_id] || (a.contest_id === activeContestId ? { id: activeContestId, name: contestName, description: contestDescription, submission_deadline: submissionDeadline } : null)) : null;
+                      return (
+                        <article key={a.id} style={{ background: '#fff', border: a.is_pinned ? '1px solid #fcd34d' : '1px solid #e5e7eb', borderRadius: '12px', padding: '20px 24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                            {a.is_pinned && <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: '4px' }}>置顶</span>}
+                            <h4 style={{ margin: 0, fontSize: '17px', color: '#111827', lineHeight: 1.5 }}>{a.title}</h4>
+                            <span style={{ fontSize: '13px', color: '#9ca3af', marginLeft: 'auto' }}>{new Date(a.created_at).toLocaleDateString('zh-CN')}</span>
+                          </div>
+                          {a.content && (
+                            <div style={{ fontSize: '15px', lineHeight: 1.9, color: '#374151', whiteSpace: 'pre-wrap', textAlign: 'justify', wordBreak: 'break-word' }}>{a.content}</div>
+                          )}
+                          {lc && (
+                            <button
+                              onClick={() => setRulesModal(lc)}
+                              style={{ marginTop: '10px', background: 'none', border: 'none', padding: 0, color: '#4f46e5', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '4px' }}
+                            >
+                              📜 查看《{lc.name}》赛事章程 →
+                            </button>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             </div>
@@ -950,7 +1006,7 @@ export default function Dashboard({ session }) {
                         : !isContestActive
                         ? '本届赛事大闸已休眠，此处仅供查看历史战绩。'
                         : (!isEligibleForContest
-                          ? '请在左侧“大赛官方动态”中获取本届赛事的门票资格。'
+                          ? '请点击左侧栏下方的“立即报名”获取本届赛事的参赛资格。'
                           : (alreadySubmitted 
                             ? '您的作品已进入评审矩阵不可更改。请在右侧关注实时进度。' 
                             : '截稿时间已过。目前已全面进入紧张的 AI 离线评审与专家会诊阶段，右侧为您的参展档案。'))}

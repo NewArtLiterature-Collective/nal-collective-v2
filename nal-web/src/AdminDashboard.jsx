@@ -11,6 +11,7 @@ function bylineOf(w) {
 import { API_BASE } from './config';
 import { adminSignContest } from './media';   // 参赛配图在 Cloudflare R2 私有桶，签名由后端生成
 import ShowcaseAdmin from './ShowcaseAdmin';   // 📚 陈伯吹新儿童文学绘本插画大赛厅布展
+import WritingHallAdmin from './WritingHallAdmin';   // ✍️ 陈伯吹新儿童文学创作大赛厅布展
 
 export default function AdminDashboard() {
 
@@ -62,6 +63,16 @@ export default function AdminDashboard() {
   const [newContestName, setNewContestName] = useState('');
   const [newContestDesc, setNewContestDesc] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // 📜 赛事章程：查看与修改（针对当前下拉框选中的赛事）
+  const [rulesEditing, setRulesEditing] = useState(false);
+  const [rulesDraft, setRulesDraft] = useState({ name: '', description: '' });
+  const [showRules, setShowRules] = useState(false);
+
+  // 📰 官方动态：发布与删除
+  const [announcements, setAnnouncements] = useState([]);
+  const [newsForm, setNewsForm] = useState({ title: '', content: '', contest_id: '', is_pinned: false });
+  const [newsBusy, setNewsBusy] = useState(false);
 
   // 2. 模拟终端日志打印器
   const addLog = (msg) => {
@@ -208,6 +219,93 @@ export default function AdminDashboard() {
 
   // 当前下拉框选中的是否为一个真实存在的赛事（无赛事时为 false，推举与大闸按钮不可点击）
   const hasSelectedContest = contests.some(c => c.id === selectedContestId);
+  const selectedContest = contests.find(c => c.id === selectedContestId) || null;
+
+  // ---------- 📜 赛事章程：修改并保存 ----------
+  const startEditRules = () => {
+    if (!selectedContest) return;
+    setRulesDraft({ name: selectedContest.name || '', description: selectedContest.description || '' });
+    setRulesEditing(true);
+    setShowRules(true);
+  };
+
+  const handleSaveRules = async () => {
+    if (!selectedContest) return;
+    if (!rulesDraft.name.trim()) return alert('赛事名称不得为空！');
+    try {
+      const { data, error } = await supabase.from('contests')
+        .update({ name: rulesDraft.name.trim(), description: rulesDraft.description })
+        .eq('id', selectedContest.id).select();
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        addLog('❌ 章程保存未生效：数据库未更新任何记录，请检查管理员权限（改过角色需重新登录）。');
+        return alert('保存未生效，请检查管理员权限。');
+      }
+      addLog(`✅ 赛事章程已更新：【${data[0].name}】`);
+      setRulesEditing(false);
+      fetchContestMetadata();
+    } catch (err) {
+      addLog(`❌ 章程保存失败: ${err.message}`);
+      alert('保存失败：' + err.message);
+    }
+  };
+
+  // ---------- 📰 官方动态：读取 / 发布 / 删除 ----------
+  const fetchAnnouncements = async () => {
+    const { data, error } = await supabase.from('announcements')
+      .select('id, title, content, contest_id, is_pinned, created_at')
+      .order('is_pinned', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) {
+      addLog(`❌ 读取官方动态失败: ${error.message}（如提示表不存在，请先在 Supabase 运行 announcements.sql）`);
+      return;
+    }
+    setAnnouncements(data || []);
+  };
+
+  useEffect(() => { fetchAnnouncements(); }, []);
+
+  const handlePublishNews = async (e) => {
+    e.preventDefault();
+    const title = newsForm.title.trim();
+    if (!title) return alert('动态标题不得为空！');
+    setNewsBusy(true);
+    try {
+      const { data, error } = await supabase.from('announcements').insert({
+        title,
+        content: newsForm.content.trim(),
+        contest_id: newsForm.contest_id || null,
+        is_pinned: newsForm.is_pinned
+      }).select();
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('数据库未写入任何记录，请检查管理员权限');
+      addLog(`📰 已发布动态：「${title}」`);
+      setNewsForm({ title: '', content: '', contest_id: '', is_pinned: false });
+      fetchAnnouncements();
+    } catch (err) {
+      addLog(`❌ 发布动态失败: ${err.message}`);
+      alert('发布失败：' + err.message);
+    } finally {
+      setNewsBusy(false);
+    }
+  };
+
+  const handleDeleteNews = async (item) => {
+    if (!window.confirm(`确定删除动态「${item.title}」吗？删除后前台立即不再显示，且无法恢复。`)) return;
+    try {
+      const { data, error } = await supabase.from('announcements').delete().eq('id', item.id).select();
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('数据库未删除任何记录，请检查管理员权限');
+      addLog(`🗑️ 已删除动态：「${item.title}」`);
+      fetchAnnouncements();
+    } catch (err) {
+      addLog(`❌ 删除动态失败: ${err.message}`);
+      alert('删除失败：' + err.message);
+    }
+  };
+
+  const contestNameOf = (id) => (contests.find(c => c.id === id) || {}).name || id;
 
   const handleSwitchGlobalActiveContest = async () => {
     if (!hasSelectedContest) return alert('暂无赛事，请先「筹备新赛季」。');
@@ -337,6 +435,7 @@ export default function AdminDashboard() {
   const handleContestSelectionChange = (e) => {
     const cid = e.target.value;
     setSelectedContestId(cid);
+    setRulesEditing(false);
     fetchDashboardData(cid);
     syncTimeState(cid, contests);
   };
@@ -424,7 +523,7 @@ export default function AdminDashboard() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '10px' }}>
               <div>
                 <h4 style={{ color: '#88c0d0', margin: '0 0 10px 0', borderBottom: '1px dashed #444', paddingBottom: '5px' }}>📝 作者正文 / 故事大纲</h4>
-                <div style={{ backgroundColor: '#111', padding: '20px', borderRadius: '8px', color: '#eceff4', whiteSpace: 'pre-wrap', lineHeight: '1.8', fontSize: '14px', border: '1px solid #222' }}>
+                <div style={{ backgroundColor: '#111', padding: '20px', borderRadius: '8px', color: '#eceff4', whiteSpace: 'pre-wrap', lineHeight: '1.8', fontSize: '14px', border: '1px solid #222', textAlign: 'justify', wordBreak: 'break-word' }}>
                   {previewWork.text_content || <span style={{ color: '#4c566a' }}>[作者未提供正文描述]</span>}
                 </div>
               </div>
@@ -508,7 +607,7 @@ export default function AdminDashboard() {
               </div>
               <div style={{ marginBottom: '15px' }}>
                 <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>章程宣发文案:</label>
-                <textarea value={newContestDesc} onChange={e => setNewContestDesc(e.target.value)} rows={3} style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px' }} />
+                <textarea value={newContestDesc} onChange={e => setNewContestDesc(e.target.value)} rows={10} style={{ width: '100%', maxWidth: '900px', padding: '10px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px', lineHeight: 1.7, boxSizing: 'border-box' }} placeholder="创建后可在下方「赛事章程」中随时查看和修改" />
               </div>
               <button type="submit" style={{ padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>🔨 确认铸造新赛季</button>
             </form>
@@ -521,6 +620,86 @@ export default function AdminDashboard() {
                 {isContestActive ? "封印当前投稿大闸" : "激活当前投稿大闸"}
               </button>
             )}
+          </div>
+
+          {/* 📜 赛事章程：查看与修改（当前下拉框选中的赛事） */}
+          {selectedContest && (
+            <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #222', textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <span style={{ color: '#ebcb8b', fontWeight: 'bold' }}>📜 赛事章程：{selectedContest.name}</span>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {!rulesEditing && (
+                    <button onClick={() => setShowRules(!showRules)} style={{ padding: '5px 15px', backgroundColor: 'transparent', color: '#88c0d0', border: '1px solid #88c0d0', cursor: 'pointer', fontSize: '12px', borderRadius: '4px' }}>
+                      {showRules ? '收起章程' : '👁️ 查看章程'}
+                    </button>
+                  )}
+                  {!rulesEditing && (
+                    <button onClick={startEditRules} style={{ padding: '5px 15px', backgroundColor: '#5e81ac', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', borderRadius: '4px' }}>✏️ 修改章程</button>
+                  )}
+                </div>
+              </div>
+
+              {rulesEditing ? (
+                <div style={{ marginTop: '15px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', color: '#888' }}>赛事名称:</label>
+                  <input type="text" value={rulesDraft.name} onChange={e => setRulesDraft(d => ({ ...d, name: e.target.value }))} style={{ width: '100%', maxWidth: '600px', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px', boxSizing: 'border-box' }} />
+                  <label style={{ display: 'block', margin: '15px 0 5px', color: '#888' }}>章程全文（前台「官方动态」点"查看赛事章程"时显示，换行与空行会原样保留）:</label>
+                  <textarea value={rulesDraft.description} onChange={e => setRulesDraft(d => ({ ...d, description: e.target.value }))} rows={18} style={{ width: '100%', padding: '12px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px', lineHeight: 1.8, fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                    <button onClick={handleSaveRules} style={{ padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>💾 保存章程</button>
+                    <button onClick={() => setRulesEditing(false)} style={{ padding: '8px 20px', backgroundColor: 'transparent', color: '#888', border: '1px solid #444', cursor: 'pointer', borderRadius: '4px' }}>取消</button>
+                  </div>
+                </div>
+              ) : showRules && (
+                <div style={{ marginTop: '15px', backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '6px', border: '1px solid #222', color: '#d8dee9', whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: '14px', textAlign: 'justify', wordBreak: 'break-word', maxHeight: '60vh', overflowY: 'auto' }}>
+                  {selectedContest.description || <span style={{ color: '#4c566a' }}>[章程尚未填写，点“修改章程”补充]</span>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 📰 官方动态：发布与删除 */}
+        <div style={{ padding: '20px', background: '#111', border: '1px solid #222', borderRadius: '4px', textAlign: 'left' }}>
+          <h3 style={{ margin: '0 0 15px 0', color: '#ebcb8b' }}>📰 官方动态发布（前台「大赛官方动态」栏目）</h3>
+          <form onSubmit={handlePublishNews} style={{ display: 'flex', flexDirection: 'column', gap: '12px', paddingBottom: '20px', borderBottom: '1px dashed #333' }}>
+            <input type="text" value={newsForm.title} maxLength={100} onChange={e => setNewsForm(f => ({ ...f, title: e.target.value }))} placeholder="动态标题（必填，100 字以内）" style={{ width: '100%', padding: '8px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px', boxSizing: 'border-box' }} />
+            <textarea value={newsForm.content} maxLength={5000} onChange={e => setNewsForm(f => ({ ...f, content: e.target.value }))} rows={6} placeholder="动态正文（可留空，5000 字以内；换行会原样保留）" style={{ width: '100%', padding: '10px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px', lineHeight: 1.7, boxSizing: 'border-box', fontFamily: 'inherit' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+              <label style={{ color: '#888', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                附带赛事章程链接：
+                <select value={newsForm.contest_id} onChange={e => setNewsForm(f => ({ ...f, contest_id: e.target.value }))} style={{ padding: '6px 10px', background: '#222', color: '#fff', border: '1px solid #444', borderRadius: '4px', fontFamily: 'monospace' }}>
+                  <option value="">不附带</option>
+                  {contests.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+              <label style={{ color: '#888', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                <input type="checkbox" checked={newsForm.is_pinned} onChange={e => setNewsForm(f => ({ ...f, is_pinned: e.target.checked }))} /> 置顶
+              </label>
+              <button type="submit" disabled={newsBusy} style={{ marginLeft: 'auto', padding: '8px 24px', backgroundColor: '#a3be8c', color: '#000', border: 'none', cursor: newsBusy ? 'wait' : 'pointer', fontWeight: 'bold', borderRadius: '4px', opacity: newsBusy ? 0.6 : 1 }}>
+                {newsBusy ? '发布中…' : '📢 发布动态'}
+              </button>
+            </div>
+          </form>
+
+          <div style={{ marginTop: '15px' }}>
+            <div style={{ color: '#888', fontSize: '13px', marginBottom: '10px' }}>已发布 {announcements.length} 条</div>
+            {announcements.length === 0 ? (
+              <div style={{ color: '#4c566a', fontSize: '13px', padding: '10px 0' }}>暂无动态</div>
+            ) : announcements.map(a => (
+              <div key={a.id} style={{ display: 'flex', gap: '15px', alignItems: 'flex-start', padding: '12px 0', borderBottom: '1px solid #222' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: '#eceff4', fontWeight: 'bold' }}>
+                    {a.is_pinned && <span style={{ color: '#ebcb8b', marginRight: '6px' }}>[置顶]</span>}
+                    {a.title}
+                    <span style={{ color: '#666', fontSize: '12px', fontWeight: 'normal', marginLeft: '10px' }}>{new Date(a.created_at).toLocaleString('zh-CN', { hour12: false })}</span>
+                  </div>
+                  {a.content && <div style={{ color: '#9ca3af', fontSize: '13px', marginTop: '4px', whiteSpace: 'pre-wrap', lineHeight: 1.6, maxHeight: '4.8em', overflow: 'hidden', textAlign: 'left' }}>{a.content}</div>}
+                  {a.contest_id && <div style={{ color: '#88c0d0', fontSize: '12px', marginTop: '4px' }}>📜 附带章程链接：{contestNameOf(a.contest_id)}</div>}
+                </div>
+                <button onClick={() => handleDeleteNews(a)} style={{ padding: '4px 12px', backgroundColor: 'transparent', color: '#bf616a', border: '1px solid #bf616a', cursor: 'pointer', fontSize: '12px', borderRadius: '4px', flexShrink: 0 }}>🗑️ 删除</button>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -679,6 +858,9 @@ export default function AdminDashboard() {
 
         {/* 📚 陈伯吹新儿童文学绘本插画大赛厅布展 */}
         <ShowcaseAdmin addLog={addLog} />
+
+        {/* ✍️ 陈伯吹新儿童文学创作大赛厅布展 */}
+        <WritingHallAdmin addLog={addLog} />
 
       </div>
     </div>

@@ -18,7 +18,8 @@ const WM_TILE_ALPHA = 0.10;    // 斜向平铺的淡水印（覆盖全图，防�
 const WM_CORNER_ALPHA = 0.80;  // 右下角署名水印
 
 // 在画布上烧入水印：全图斜向淡色平铺 + 右下角署名。白字配深色描边，深浅底色上都看得见。
-export function drawWatermark(ctx, w, h) {
+// text：水印文字（各展厅不同，缺省为绘本插画大赛厅）
+export function drawWatermark(ctx, w, h, text = WATERMARK_TEXT) {
   const base = Math.max(14, Math.round(Math.min(w, h) * 0.026));
   const family = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif';
 
@@ -32,14 +33,14 @@ export function drawWatermark(ctx, w, h) {
   ctx.lineWidth = Math.max(1, base / 10);
   ctx.fillStyle = `rgba(255,255,255,${WM_TILE_ALPHA})`;
   ctx.strokeStyle = `rgba(0,0,0,${WM_TILE_ALPHA * 0.6})`;
-  const stepX = ctx.measureText(WATERMARK_TEXT).width + base * 5;
+  const stepX = ctx.measureText(text).width + base * 5;
   const stepY = base * 7;
   const R = Math.sqrt(w * w + h * h) / 2 + stepX;
   let row = 0;
   for (let y = -R; y <= R; y += stepY, row++) {
     for (let x = -R + (row % 2) * (stepX / 2); x <= R; x += stepX) {
-      ctx.strokeText(WATERMARK_TEXT, x, y);
-      ctx.fillText(WATERMARK_TEXT, x, y);
+      ctx.strokeText(text, x, y);
+      ctx.fillText(text, x, y);
     }
   }
   ctx.restore();
@@ -54,15 +55,15 @@ export function drawWatermark(ctx, w, h) {
   ctx.font = `${Math.round(base * 0.75)}px ${family}`;
   ctx.fillText(WATERMARK_SUB, w - pad, h - pad);
   ctx.font = `bold ${base}px ${family}`;
-  ctx.fillText(`© ${WATERMARK_TEXT}`, w - pad, h - pad - Math.round(base * 1.05));
+  ctx.fillText(`© ${text}`, w - pad, h - pad - Math.round(base * 1.05));
   ctx.restore();
 }
 
 // 文件名自然排序：p2 排在 p10 前面
 const naturalCompare = (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' });
 
-// 浏览器内压缩为 JPEG
-async function compressImage(file) {
+// 浏览器内压缩为 JPEG（并烧入水印；wmText 为水印文字，创作大赛厅也复用此函数）
+export async function compressImage(file, wmText = WATERMARK_TEXT) {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
   const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
@@ -72,7 +73,7 @@ async function compressImage(file) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);      // PNG 透明底填白
   ctx.drawImage(bitmap, 0, 0, w, h);
   bitmap.close && bitmap.close();
-  drawWatermark(ctx, w, h);                               // 烧入水印
+  drawWatermark(ctx, w, h, wmText);                       // 烧入水印
   return await new Promise((resolve, reject) =>
     canvas.toBlob(b => (b ? resolve(b) : reject(new Error('图片压缩失败'))), 'image/jpeg', JPEG_QUALITY));
 }
