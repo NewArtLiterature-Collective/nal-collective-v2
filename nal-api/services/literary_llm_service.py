@@ -25,7 +25,7 @@
 #     旧名映射：gemini-2.5-pro → gemini-4-hydrogen@medium，gemini-2.5-flash / gemini-3.8-flash → gemini-4-hydrogen@low
 #     Gemini 4 同样不接受采样参数，写了思考档位的调用照旧去掉 temperature / top_p
 #   - generate() 对瞬时错误（429 / 5xx / 超时 / 连接中断）短退避重试两次；4xx 等错误直接抛出
-#   - 评审调用不设 max_output_tokens：Gemini 3.x / 4 的思考过程计入输出上限，设小了反而会截断长判词，用模型默认（65536）
+#   - 评审与创作指导调用都不设 max_output_tokens：Gemini 3.x / 4 的思考过程计入输出上限，设小了反而会截断，用模型默认（65536）
 # ============================================================================
 import os
 import json
@@ -134,11 +134,11 @@ class LiteraryLLMService:
         """
 
         try:
-            # 思考用的 token 也计入输出上限：写了思考档位的，把上限放宽到 16384，避免长片段被截断
-            _, level = resolve_model(target_model)
+            # 不设 max_output_tokens（2026-11-23 主编确认）：思考用的 token 也计入输出上限，
+            # 原先的 16384 / 8192（3.1-pro-preview）会截断长片段，改用模型默认上限（65536）
             res = await generate(
                 target_model, user_prompt, system_instruction=creative_sys_inst,
-                temperature=0.7, top_p=0.95, max_output_tokens=16384 if level else 8192,
+                temperature=0.7, top_p=0.95,
             )
             if _has_text(res):
                 return res.text
