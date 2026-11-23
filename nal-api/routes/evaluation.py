@@ -12,11 +12,11 @@ from services.vision_llm_service import VisionLLMService
 
 router = APIRouter()
 
-# 模型名称常量（2026-11 迁移：2.5 系列 12-01 停用）
+# 模型名称常量（2026-11 迁移：2.5 系列 12-01 停用；2026-11-23 主编确认 3.8 Flash 换为 Gemini 4 Hydrogen）
 # 写法 "模型名@思考档位"，由 literary/vision 服务的 resolve_model() 解析
-FLASH_MODEL = "gemini-3.8-flash@low"           # 免费额度 / 初读
+FLASH_MODEL = "gemini-4-hydrogen@low"          # 免费额度 / 初读（原 gemini-3.8-flash@low）
 PRO_MODEL_DAILY = "gemini-3.1-pro-preview"     # Pro 用户每日配额内使用（不带档位，照旧传 temperature）
-PRO_MODEL_CREDIT = "gemini-3.8-flash@medium"   # pro_credits 加油包使用（原 gemini-2.5-pro）
+PRO_MODEL_CREDIT = "gemini-4-hydrogen@medium"  # pro_credits 加油包使用（原 gemini-3.8-flash@medium）
 
 
 @router.post("/process")

@@ -32,7 +32,7 @@ except Exception:          # 仅用于构造 safety_settings；缺失时按平�
 CONTENT_REVIEW_VER = "cr1"
 
 # 送审上限：中文 20 万字、外文 90 万字符（与 lit_engine 一致）
-DOC_MAXCHARS = 600000
+DOC_MAXCHARS = 200000
 DOC_MAXCHARS_LATIN = 900000
 LATIN_SCALE = 3
 
@@ -144,15 +144,13 @@ def moderation_safety_settings():
 _BLOCK_FINISH = ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY")
 
 
-_PLATFORM_BLOCK_REASONS = ("PROHIBITED_CONTENT", "SAFETY")
-
 def platform_blocked(res) -> bool:
+    """响应是否为平台拦截：输入阶段 block_reason，或候选因安全原因结束且没有文本。"""
     if res is None:
         return False
     try:
         pf = getattr(res, "prompt_feedback", None)
-        br = getattr(pf, "block_reason", None) if pf else None
-        if br and any(k in str(br) for k in _PLATFORM_BLOCK_REASONS):
+        if pf and getattr(pf, "block_reason", None):
             return True
         cands = getattr(res, "candidates", None) or []
         if cands:
