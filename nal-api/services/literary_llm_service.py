@@ -26,6 +26,13 @@
 #     Gemini 4 同样不接受采样参数，写了思考档位的调用照旧去掉 temperature / top_p
 #   - generate() 对瞬时错误（429 / 5xx / 超时 / 连接中断）短退避重试两次；4xx 等错误直接抛出
 #   - 评审与创作指导调用都不设 max_output_tokens：Gemini 3.x / 4 的思考过程计入输出上限，设小了反而会截断，用模型默认（65536）
+# v6（2026-11-24，主编确认）：文字评审流程调整为"内容研判 → 指定专家评审"
+#   - 指定专家：用户在工作台选定的专家（evaluation_models 的 system_instruction 与维度），放在评审指令最前面，
+#     作为评审者的身份与眼光；不再另设"顶级学术评审专家""资深编辑"等通用身份（两套身份会互相冲突）
+#   - 取消自适应调权（预读前 2000 字 + 关键词调权）：它与"各项满分"的说法矛盾，且只看开头；
+#     维度与满分直接取指定专家的配置，各项相加即综合评分
+#   - 内容研判仍在专家评审之前（违规作品不给评审、不给建议，也不白花评审调用）
+#   - 用户提示把作品全文放在最前，评委备注与任务说明在后
 # ============================================================================
 import os
 import json
@@ -149,6 +156,7 @@ class LiteraryLLMService:
             print(f"🚨 创作引擎调用异常: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    # ⏸ 2026-11-24 起不再调用：评审改由指定专家直接按其维度与满分评定，不再预读调权。保留代码仅供对照。
     @classmethod
     async def _get_adaptive_instruction(cls, current_text: str, base_weights: dict, user_note: str = "") -> str:
         """
@@ -345,7 +353,8 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
     @classmethod
     async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str, has_declared_ai: bool = False, is_contest: bool = False) -> str:
         """
-        ⚖️ 深度学术评审系统 (融合 AI 痕迹筛查与动态惩罚)
+        ⚖️ 文字评审：① 整本内容研判（违规不评审）→ ② 指定专家评审。
+        selected_model / base_weights / model_system_instruction 均来自用户选定的专家（evaluation_models）。
         """
         # ==========================================
         # 🆕 内容安全前置闸（独立调用，最高优先级，代码强制执行）
@@ -389,6 +398,11 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         dims_lines = ""
         for k, v in base_weights.items():
             dims_lines += f"- {k}（本项满分 {v} 分）\n"
+        try:
+            total_full = round(sum(float(v) for v in base_weights.values()))
+        except Exception:
+            total_full = 100
+        expert_identity = (model_system_instruction or "").strip() or "你是一位高水平儿童文学评论家。"
 
         # 针对不同场景设定不同的 AI 检测规则
         ai_detection_policy = ""
@@ -406,18 +420,20 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         在报告末尾新增 `### 🤖 AI 使用参考评估` 一节。
         这一节供作者参考，不构成认定。只写可以指认、能用「」逐字引原文为证的具体现象（如残留的提示语或模型自称、前后自相矛盾的事实、空泛概括句成片出现的段落），不凭"像不像 AI"的整体印象下结论。没有就如实写"未见可指认的 AI 使用痕迹"，不必为凑内容而硬挑毛病。"""
 
-        eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
+        eval_sys_inst = f"""【评审专家】
+        {expert_identity}
+
+        你以上面这位专家的身份与眼光通读全文、作出评审（评审体系：【{selected_model}】）。
 
         （内容安全已在评审前由独立环节完成审核，此处无需再做内容安全判断，专注文学评审即可。）
 
-        当前执行的评审体系：【{selected_model}】
-        评审维度与各自满分：
+        【评审维度与满分】
         {dims_lines}
-        四个维度的单项得分相加，等于最终综合评分（满分 100）。
+        各维度的单项得分相加，等于最终综合评分（满分 {total_full}）。
 
-        【你是谁】
-        你是一位资深的儿童文学编辑与评论者。你的判词写给作者本人看——他要靠它判断作品好在哪、弱在哪、下一步怎么改。
-        真正的专业体现在判断的准确和依据的扎实，不在词汇的艰深。一位真懂行的人说一部作品好，会说清好在哪一处、这一处为什么难、换个平庸的写法会怎样；说不好，会指出是哪个环节塌了、塌在哪里、根子是什么。
+        【判词写给谁】
+        判词写给作者本人看——他要靠它判断作品好在哪、弱在哪、下一步怎么改。
+        真正的专业体现在判断的准确和依据的扎实，不在词汇的艰深。真懂行的人说一部作品好，会说清好在哪一处、这一处为什么难、换个平庸的写法会怎样；说不好，会指出是哪个环节塌了、塌在哪里、根子是什么。
 
         【判词的三条铁律】（贯穿全文，每一句评价都要遵守）
         一、落到具体处：每一句判断都要咬住作品里的具体对象——某一段、某个情节、某句话、某处对话、某个转折。泛泛而论、放到任何作品上都成立的话，不要写。
@@ -444,24 +460,24 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         - 原创性：X/10 分，说明理由时指出具体的套路或新意所在。
 
         ### 🧮 维度解析与单项得分
-        逐项评定下列维度，每项给出"分数 / 满分"，后面跟一段评语。评语必须以作品里的具体文字或情节为据（引原文按上面的引号规则用「」逐字照录，说情节则直接概述、不加引号），说清这个分数是怎么来的——高在哪一处、若未满分则差在哪一处。四项得分之和等于综合评分。
+        逐项评定下列维度，每项给出"分数 / 满分"，后面跟一段评语。评语必须以作品里的具体文字或情节为据（引原文按上面的引号规则用「」逐字照录，说情节则直接概述、不加引号），说清这个分数是怎么来的——高在哪一处、若未满分则差在哪一处。各项得分之和等于综合评分。
         维度：{dims_list}
 
         ### 📝 核心修改建议
         给出 2-4 条可执行的建议。每条都要针对作品中一个具体的问题点（指明在哪里），说清怎么改、改了之后会解决什么。不写放之四海而皆准的空泛建议。
 
-        ### 📊 综合学术评分：[总分]/100
+        ### 📊 综合学术评分：[总分]/{total_full}
 
         （报告末尾按上文要求补充 AI 使用参考一节）
         """
 
-        adaptive_inst = await cls._get_adaptive_instruction(raw_text, base_weights, user_note)
-        combined_instruction = adaptive_inst + "\n\n" + eval_sys_inst
-        
         try:
-            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格按 System Instruction 中的输出结构完成评审，给出真实的打分数字。"
-            
-            res = await generate(target_model, prompt, system_instruction=combined_instruction, temperature=0.2)
+            # 作品全文在前，评委备注与任务说明在后；专家身份与评审规则在 system instruction 里
+            prompt = (f"【需要评审的作品内容】：\n{raw_text}\n\n"
+                      f"【评委备注】：{user_note if user_note else '无'}\n\n"
+                      "请以 System Instruction 中指定专家的身份，严格按其中的输出结构完成评审，给出真实的打分数字。")
+
+            res = await generate(target_model, prompt, system_instruction=eval_sys_inst, temperature=0.2)
 
             if _has_text(res):
                 result_text = res.text.strip()
