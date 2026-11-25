@@ -618,6 +618,9 @@ export default function Dashboard({ session }) {
   const isPastDeadline = submissionDeadline ? now > new Date(submissionDeadline) : false;
   const isContestBlocked = !!contestBlock;
   const canSubmitNew = isContestActive && isEligibleForContest && !alreadySubmitted && !isPastDeadline && !isContestBlocked;
+  // 本届投过稿（含被拦截、不合格的）或已被取消资格的用户：投稿关闭后仍可进入"参赛作品与档案"查看状态，只是不能再投
+  const hasContestRecord = userSubmissions.length > 0 || isContestBlocked;
+  const showContestTab = (isContestActive && isEligibleForContest) || hasContestRecord;
 
   // 🚨 统一的「报名通道是否开放」判定：大闸开 + 有当前赛事 + 未过截稿。
   //    任一不满足即视为封闭，所有报名入口须置灰/隐藏，不得进入支付。
@@ -831,7 +834,7 @@ export default function Dashboard({ session }) {
             <button onClick={() => setActiveTab('picturebook')} style={activeTab === 'picturebook' ? styles.navActive : styles.navBtn}>🎨 绘本插画</button>
             <button onClick={() => navigate('/gallery')} style={{...styles.navBtn, border: '1px solid #4b5563', marginTop: '10px', color: '#fff'}}>🏛️ 访问文学展厅</button>
             
-            {(isContestActive && isEligibleForContest) && (
+            {showContestTab && (
               <button 
                 onClick={() => setActiveTab('contest')} 
                 style={activeTab === 'contest' ? { ...styles.navActive, backgroundColor: '#4f46e5', marginTop: '10px' } : { ...styles.navBtn, color: '#818cf8', marginTop: '10px' }}
@@ -996,20 +999,23 @@ export default function Dashboard({ session }) {
                   <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
                     <h3 style={{ color: '#1e293b', marginBottom: '15px', fontSize: '20px' }}>
-                      {isContestBlocked ? '本届参赛资格已取消' : !isContestActive ? '当前赛季未开放' : 
-                        (!isEligibleForContest ? '您未获得参赛资格' : 
-                          (alreadySubmitted ? '作品大典已封存' : '本届征稿通道已关闭'))}
+                      {isContestBlocked ? '本届参赛资格已取消'
+                        : alreadySubmitted ? '作品已提交'
+                        : !isContestActive ? '当前赛季未开放'
+                        : (!isEligibleForContest ? '您未获得参赛资格' : '本届征稿通道已关闭')}
                     </h3>
                     <p style={{ color: '#64748b', fontSize: '15px', lineHeight: '1.8', maxWidth: '400px', margin: '0 auto' }}>
                       {isContestBlocked
                         ? '您提交的作品未能通过平台的内容审核。依据参赛规则，本届参赛资格已取消，不能再提交作品。如您认为这是误判，请发邮件至 info@nal-ai.org 说明情况。'
+                        : alreadySubmitted
+                        ? ((isContestActive && !isPastDeadline)
+                          ? '您的作品已提交，不能修改或重复投稿。请在右侧关注评审进度。'
+                          : '本届投稿通道已关闭。您的作品已提交，请在右侧查看评审状态。')
                         : !isContestActive
-                        ? '本届赛事大闸已休眠，此处仅供查看历史战绩。'
+                        ? '本届投稿通道已关闭。'
                         : (!isEligibleForContest
                           ? '请点击左侧栏下方的“立即报名”获取本届赛事的参赛资格。'
-                          : (alreadySubmitted 
-                            ? '您的作品已进入评审矩阵不可更改。请在右侧关注实时进度。' 
-                            : '截稿时间已过。目前已进入 AI 评审与专家会诊阶段，右侧为您的参展档案。'))}
+                          : '截稿时间已过，投稿通道已关闭。')}
                     </p>
                   </div>
                 ) : 
