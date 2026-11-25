@@ -1,5 +1,6 @@
 # services/contest_literary_service.py
 import os
+import re
 import json
 import asyncio
 from core.config import settings
@@ -11,8 +12,18 @@ try:
 except ImportError:          # 直接在 services 目录下运行时
     import content_review as cr
 
-# google-genai 3.x 默认走 v1 接口，预览版模型只在 v1beta 上有 → 固定 v1beta
-client = genai.Client(http_options=types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta")))
+_client = None
+
+
+def _get_client():
+    """懒加载（2026-11-23）：用到时才创建，避免模块导入时环境变量尚未加载而报错。
+    google-genai 3.x 默认走 v1 接口，预览版模型只在 v1beta 上有 → 固定 v1beta。"""
+    global _client
+    if _client is None:
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        http = types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta"))
+        _client = genai.Client(api_key=key, http_options=http) if key else genai.Client(http_options=http)
+    return _client
 
 # ===== 2026-11-09 修订（主编确认）=====
 # · 文字：内容安全改为"整本内容研判"（services/content_review.py，与离线引擎 lit_engine cr1 同一套），
@@ -23,31 +34,43 @@ client = genai.Client(http_options=types.HttpOptions(api_version=os.getenv("GOOG
 #     两次结论不一致 → 补跑第三次按多数定；审查调用失败 → 返回可重试的 error（既不放行，也不定性为违规）。
 # · AIGC：只认元数据硬证据才打"作者未申明"横幅；模型对文风/画面的判断只作人工参考，措辞中性。
 
-# ===== 模型（2026-11 迁移到 Gemini 3.8 Flash）=====
-# gemini-2.5-flash / 2.5-pro 于 2026-12-01 停用。写法 "模型名@思考档位"：
-#   带档位 → 设 thinking_level，并去掉 temperature/top_p/top_k（3.8 不接受采样参数）
+# ===== 模型 =====
+# 2026-11 由 2.5 系列（12-01 停用）迁到 Gemini 3.8 Flash；2026-11-23 主编确认换为 Gemini 4 Hydrogen
+# （11-12 发布，单价约为 3.8 Flash 的 2 倍）。写法 "模型名@思考档位"：
+#   带档位 → 设 thinking_level，并去掉 temperature/top_p/top_k（3.8 / 4 均不接受采样参数）
 #   不带档位（如 gemini-3.1-pro-preview）→ 照旧传采样参数
 # 可用环境变量覆盖，便于试跑对照。
-SCREEN_MODEL = os.getenv("NAL_CONTEST_SCREEN_MODEL", "gemini-3.8-flash@low")     # 预检：内容安全、AIGC 鉴定
-REVIEW_MODEL = os.getenv("NAL_CONTEST_REVIEW_MODEL", "gemini-3.8-flash@medium")  # 评审
+SCREEN_MODEL = os.getenv("NAL_CONTEST_SCREEN_MODEL", "gemini-4-hydrogen@low")     # 预检：内容安全、AIGC 鉴定
+REVIEW_MODEL = os.getenv("NAL_CONTEST_REVIEW_MODEL", "gemini-4-hydrogen@medium")  # 评审
 
 # 旧模型名兜底：若别处仍传旧名，自动换成新模型
 LEGACY_MODEL_MAP = {
-    "gemini-2.5-flash": "gemini-3.8-flash@low",
-    "gemini-2.5-pro": "gemini-3.8-flash@medium",
+    "gemini-2.5-flash": "gemini-4-hydrogen@low",
+    "gemini-2.5-pro": "gemini-4-hydrogen@medium",
+    "gemini-3.8-flash": "gemini-4-hydrogen@low",
 }
 _SAMPLING_KEYS = ("temperature", "top_p", "top_k")
 
 
 def resolve_model(spec: str):
-    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    """"gemini-4-hydrogen@low" → ("gemini-4-hydrogen", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
     spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
     name, _, level = spec.partition("@")
     return name.strip(), (level.strip().lower() or None)
 
 
+def _is_retryable(e) -> bool:
+    """瞬时错误才重试：429（限流）、5xx（服务端）、超时 / 连接中断。4xx 参数错误等不重试。
+    优先看 SDK 异常自带的状态码；没有状态码时才看错误文字（只认超时、连接类关键词，不在文字里找数字）。"""
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    if isinstance(code, int):
+        return code == 429 or code >= 500
+    s = str(e).lower()
+    return any(k in s for k in ("timeout", "timed out", "deadline", "unavailable", "connection", "reset", "resource_exhausted"))
+
+
 async def _generate(spec: str, contents, system_instruction: str = None, **cfg):
-    """统一的异步 JSON 调用：带思考档位的设 thinking_level、去掉采样参数；不带的照旧。"""
+    """统一的异步 JSON 调用（瞬时错误短退避重试）：带思考档位的设 thinking_level、去掉采样参数；不带的照旧。"""
     name, level = resolve_model(spec)
     kw = dict(cfg)
     kw["system_instruction"] = system_instruction
@@ -56,8 +79,15 @@ async def _generate(spec: str, contents, system_instruction: str = None, **cfg):
         for k in _SAMPLING_KEYS:
             kw.pop(k, None)
         kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-    return await client.aio.models.generate_content(
-        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
+    config = types.GenerateContentConfig(**kw)
+    for attempt in range(3):      # 瞬时错误短退避重试（1.5s、3s），其余错误直接抛出
+        try:
+            return await _get_client().aio.models.generate_content(model=name, contents=contents, config=config)
+        except Exception as e:
+            if attempt < 2 and _is_retryable(e):
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
 
 # 旧版文本切块审查参数（2026-11-09 起文字改为整本内容研判；保留仅供对照）
 SAFETY_CHUNK_SIZE = 12000
@@ -65,11 +95,48 @@ SAFETY_CHUNK_OVERLAP = 600
 
 AI_KEYWORDS = [
     'stable diffusion', 'midjourney', 'dall-e', 'dall·e',
-    'comfyui', 'automatic1111', 'novelai', 'parameters',
+    'comfyui', 'automatic1111', 'novelai',
     'cfg scale', 'sampler', 'steps:', 'lora', 'controlnet',
-    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl'
+    'dreamshaper', 'invokeai', 'leonardo.ai', 'sdxl',
+    # ComfyUI 的工作流节点名（整词匹配后 sampler / lora 匹配不到 KSampler / LoraLoader，须单列）
+    'ksampler', 'ksampleradvanced', 'loraloader', 'cliptextencode', 'checkpointloadersimple',
+    'emptylatentimage', 'vaedecode',
     # swinir 已移除：它是超分辨率放大工具，真人作品放大后也会带这个标记，不能作为 AI 生成的证据
 ]
+# 2026-11-23：改为整词匹配（原为子串匹配，会把元数据里的 flora / gloria 误判为 lora——视觉评审认定指纹即中止，误判代价大）；
+# 去掉宽泛词 parameters（A1111 的 parameters 段里本身含 Steps: / Sampler: / CFG scale，照样能认出）；
+# 跳过 ICC 色彩配置、缩略图等二进制块，只有 XMP 解码成文字再查。
+_AI_META_RES = [(kw, re.compile(r'(?<![a-z0-9])' + re.escape(kw) + r'(?![a-z0-9])')) for kw in AI_KEYWORDS]
+_META_SKIP_KEYS = {'exif', 'icc_profile', 'xmp_thumbnail', 'thumbnail'}
+
+
+def ai_metadata_fingerprint(img) -> str:
+    """扫描 PIL 图片的文本元数据（PNG 文字段、info、EXIF、XMP），命中 AI 生成工具特征时返回该特征词，否则返回空串。"""
+    blobs = []
+    try:
+        if getattr(img, 'text', None):
+            blobs.append(" ".join(f"{k}:{v}" for k, v in img.text.items()))
+        if getattr(img, 'info', None):
+            for k, v in img.info.items():
+                if k in _META_SKIP_KEYS:
+                    continue
+                if isinstance(v, (bytes, bytearray)):
+                    if "xmp" not in str(k).lower():
+                        continue
+                    v = v.decode('utf-8', errors='ignore')
+                blobs.append(f"{k}:{v}")
+        if hasattr(img, 'getexif'):
+            exif = img.getexif()
+            if exif:
+                for _tag, value in exif.items():
+                    blobs.append(value.decode('utf-8', errors='ignore') if isinstance(value, (bytes, bytearray)) else str(value))
+        meta_text = " ".join(blobs).lower()
+        for kw, rx in _AI_META_RES:
+            if rx.search(meta_text):
+                return kw
+    except Exception:
+        pass
+    return ""
 
 # 拦截类型（不予入围、不进入评审）；其余敏感内容写成“内容风险提示”，照常评审
 # 2026-11-09：插画在性化呈现之外，增加"大量血腥暴力画面"一类（与文字的整本研判尺度一致）
@@ -193,33 +260,8 @@ class ContestLiteraryService:
 
     @staticmethod
     def _extract_ai_fingerprint_from_pil(img) -> str:
-        """在入库前，深度扫描 PIL 对象的深层元数据与生成参数。"""
-        meta_text = ""
-        try:
-            if hasattr(img, 'text') and img.text:
-                for k, v in img.text.items():
-                    meta_text += f"{k}:{v}\n".lower()
-            if hasattr(img, 'info') and img.info:
-                for k, v in img.info.items():
-                    if k != 'exif':
-                        meta_text += f"{k}:{v}\n".lower()
-            if hasattr(img, 'getexif'):
-                exif = img.getexif()
-                if exif:
-                    for tag_id, value in exif.items():
-                        if isinstance(value, bytes):
-                            try:
-                                meta_text += value.decode('utf-8', errors='ignore').lower() + "\n"
-                            except Exception:
-                                pass
-                        else:
-                            meta_text += str(value).lower() + "\n"
-            for kw in AI_KEYWORDS:
-                if kw in meta_text:
-                    return kw
-        except Exception:
-            pass
-        return ""
+        """在入库前扫描 PIL 对象的元数据与生成参数（实现见模块级 ai_metadata_fingerprint）。"""
+        return ai_metadata_fingerprint(img)
 
     # ---------- 独立前置：内容安全（文本分块 + 图像；各跑两次再合并）----------
     @classmethod
@@ -537,23 +579,30 @@ class ContestLiteraryService:
         ai_flag = bool(screen.get("ai_flag"))
 
         # 3) 评审提示词（已剥离自纠察红线；内容安全/AI 鉴定已在前置完成）
+        # 2026-11-25（主编确认）：三位专家保留，口吻由"严厉/犀利/破格/绝对"改为如实评审，各自角度不变。
         base = ("（内容安全与 AI 鉴定已在评审前由独立环节完成，此处无需再做，专注评审即可。）\n"
-                "🚨【绝对指令】：打分必须采用严格的百分制（0-100 的整数）。\n")
+                "打分采用百分制（0–100 的整数）。\n"
+                "评审要如实：好就是好，不足就是不足，不夸大也不打压；每个判断都落到具体的文字或画面，说清为什么。"
+                "题材可以传统，在传统题材里写出新东西的，要看出来，不要简单归为套路。\n")
         prompts = {
             "panoramic": (
-                "你是资深编辑，关注结构与图文绝对对位。你现在能同时看到故事文本和配套插画。\n"
+                "你是资深儿童文学编辑，关注作品结构与图文对位。你现在能同时看到故事文本和配套插画。\n"
                 + base +
-                "请评估画面视觉张力与文本互文结构，给出四个维度的打分和 80 字以内总结。"
+                "请评估画面的视觉张力与文本的互文结构——插画与文字是互相补充、彼此呼应，还是各说各话。"
+                "给出四个维度的打分和 100 字以内的评语。"
             ),
             "nal_chief": (
-                "你是首席专家，严厉打击“人造儿童”。你现在能同时看到故事文本和配套插画。\n"
+                "你是首席专家，关注作品里的儿童是否真实可信——警惕为说教或讨好而造出来的“人造儿童”。"
+                "你现在能同时看到故事文本和配套插画。\n"
                 + base +
-                "重点寻找插画与文字配合时的先锋性和实验性。评语要犀利，若有艺术灵性请破格给高分。"
+                "重点看插画与文字配合时有没有真正的新意和探索；有艺术灵性的给足分数，平庸的如实指出。"
+                "给出四个维度的打分和 100 字以内的评语。"
             ),
             "li_lifang": (
-                "你是学术专家，基于李利芳儿童精神理论。你现在能同时看到故事文本和配套插画。\n"
+                "你是学术专家，依据李利芳的儿童精神理论评审。你现在能同时看到故事文本和配套插画。\n"
                 + base +
-                "考察图文结合后展现出的儿童本体深度。评语要深邃。"
+                "考察图文结合后呈现的儿童精神深度：作品是否从儿童本身出发、尊重儿童的感受与思考。"
+                "给出四个维度的打分和 100 字以内的评语。"
             ),
         }
         system_instruction = prompts.get(persona, prompts["panoramic"])

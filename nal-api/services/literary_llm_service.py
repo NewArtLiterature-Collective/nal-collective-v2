@@ -20,9 +20,23 @@
 #   「」只用于逐字照录的原文；概括、转述、术语、评语不加任何引号；记不准原话就不加「」，改为指出情节或段落。
 #   依据：离线终审测试中约 1/4 的引号内容在原文里找不到，主因是概括、术语、转述也加了引号；
 #   加规则后第四届正式运行的引文逐字定位率由 75% 升到 99%。
+# v5（2026-11-23，主编确认更换模型）：
+#   - 默认模型由 Gemini 3.8 Flash 换为 Gemini 4 Hydrogen（2026-11-12 发布，单价约为 3.8 Flash 的 2 倍）；
+#     旧名映射：gemini-2.5-pro → gemini-4-hydrogen@medium，gemini-2.5-flash / gemini-3.8-flash → gemini-4-hydrogen@low
+#     Gemini 4 同样不接受采样参数，写了思考档位的调用照旧去掉 temperature / top_p
+#   - generate() 对瞬时错误（429 / 5xx / 超时 / 连接中断）短退避重试两次；4xx 等错误直接抛出
+#   - 评审与创作指导调用都不设 max_output_tokens：Gemini 3.x / 4 的思考过程计入输出上限，设小了反而会截断，用模型默认（65536）
+# v6（2026-11-24，主编确认）：文字评审流程调整为"内容研判 → 指定专家评审"
+#   - 指定专家：用户在工作台选定的专家（evaluation_models 的 system_instruction 与维度），放在评审指令最前面，
+#     作为评审者的身份与眼光；不再另设"顶级学术评审专家""资深编辑"等通用身份（两套身份会互相冲突）
+#   - 取消自适应调权（预读前 2000 字 + 关键词调权）：它与"各项满分"的说法矛盾，且只看开头；
+#     维度与满分直接取指定专家的配置，各项相加即综合评分
+#   - 内容研判仍在专家评审之前（违规作品不给评审、不给建议，也不白花评审调用）
+#   - 用户提示把作品全文放在最前，评委备注与任务说明在后
 # ============================================================================
 import os
 import json
+import asyncio
 from google import genai
 from google.genai import types
 from fastapi import HTTPException
@@ -32,10 +46,11 @@ try:
 except ImportError:          # 直接在 services 目录下运行时
     import content_review as cr
 
-# 旧模型名 → 新模型（路由或数据库里仍写旧名时自动换掉，12-01 之后照常可用）
+# 旧模型名 → 新模型（路由或数据库里仍写旧名时自动换掉）
 LEGACY_MODEL_MAP = {
-    "gemini-2.5-pro": "gemini-3.8-flash@medium",
-    "gemini-2.5-flash": "gemini-3.8-flash@low",
+    "gemini-2.5-pro": "gemini-4-hydrogen@medium",
+    "gemini-2.5-flash": "gemini-4-hydrogen@low",
+    "gemini-3.8-flash": "gemini-4-hydrogen@low",
 }
 _SAMPLING_KEYS = ("temperature", "top_p", "top_k")
 _client = None
@@ -52,14 +67,24 @@ def _get_client():
 
 
 def resolve_model(spec: str):
-    """"gemini-3.8-flash@low" → ("gemini-3.8-flash", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
+    """"gemini-4-hydrogen@low" → ("gemini-4-hydrogen", "low")；旧名先按 LEGACY_MODEL_MAP 换成新模型。"""
     spec = LEGACY_MODEL_MAP.get(str(spec).strip(), str(spec).strip())
     name, _, level = spec.partition("@")
     return name.strip(), (level.strip().lower() or None)
 
 
+def _is_retryable(e) -> bool:
+    """瞬时错误才重试：429（限流）、5xx（服务端）、超时 / 连接中断。4xx 参数错误等不重试。
+    优先看 SDK 异常自带的状态码；没有状态码时才看错误文字（只认超时、连接类关键词，不在文字里找数字）。"""
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    if isinstance(code, int):
+        return code == 429 or code >= 500
+    s = str(e).lower()
+    return any(k in s for k in ("timeout", "timed out", "deadline", "unavailable", "connection", "reset", "resource_exhausted"))
+
+
 async def generate(spec: str, contents, system_instruction: str = None, json_mode: bool = False, **cfg):
-    """统一的异步调用：写了思考档位的设 thinking_level、去掉采样参数；没写的照旧传采样参数。"""
+    """统一的异步调用（瞬时错误短退避重试）：写了思考档位的设 thinking_level、去掉采样参数；没写的照旧传采样参数。"""
     name, level = resolve_model(spec)
     kw = dict(cfg)
     if system_instruction:
@@ -70,8 +95,15 @@ async def generate(spec: str, contents, system_instruction: str = None, json_mod
         for k in _SAMPLING_KEYS:
             kw.pop(k, None)
         kw["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-    return await _get_client().aio.models.generate_content(
-        model=name, contents=contents, config=types.GenerateContentConfig(**kw))
+    config = types.GenerateContentConfig(**kw)
+    for attempt in range(3):      # 瞬时错误短退避重试（1.5s、3s），其余错误直接抛出
+        try:
+            return await _get_client().aio.models.generate_content(model=name, contents=contents, config=config)
+        except Exception as e:
+            if attempt < 2 and _is_retryable(e):
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
 
 
 def _has_text(res) -> bool:
@@ -79,8 +111,8 @@ def _has_text(res) -> bool:
 
 
 class LiteraryLLMService:
-    # 预读、AI 代写检测、内容安全分块扫描专用模型（原 gemini-2.5-flash）
-    MODEL_ADAPTIVE = os.getenv("NAL_TEXT_FLASH_MODEL", "gemini-3.8-flash@low")
+    # 预读、内容安全研判专用模型（原 gemini-2.5-flash → 3.8 Flash → 2026-11-23 起 4 Hydrogen）
+    MODEL_ADAPTIVE = os.getenv("NAL_TEXT_FLASH_MODEL", "gemini-4-hydrogen@low")
 
     @classmethod
     async def generate_creative_guide(cls, user_prompt: str, mentor_desc: str, focus_dimensions: str, snippet_rule: str, target_model: str) -> str:
@@ -109,11 +141,11 @@ class LiteraryLLMService:
         """
 
         try:
-            # 思考用的 token 也计入输出上限：写了思考档位的，把上限放宽到 16384，避免长片段被截断
-            _, level = resolve_model(target_model)
+            # 不设 max_output_tokens（2026-11-23 主编确认）：思考用的 token 也计入输出上限，
+            # 原先的 16384 / 8192（3.1-pro-preview）会截断长片段，改用模型默认上限（65536）
             res = await generate(
                 target_model, user_prompt, system_instruction=creative_sys_inst,
-                temperature=0.7, top_p=0.95, max_output_tokens=16384 if level else 8192,
+                temperature=0.7, top_p=0.95,
             )
             if _has_text(res):
                 return res.text
@@ -124,6 +156,7 @@ class LiteraryLLMService:
             print(f"🚨 创作引擎调用异常: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    # ⏸ 2026-11-24 起不再调用：评审改由指定专家直接按其维度与满分评定，不再预读调权。保留代码仅供对照。
     @classmethod
     async def _get_adaptive_instruction(cls, current_text: str, base_weights: dict, user_note: str = "") -> str:
         """
@@ -320,7 +353,8 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
     @classmethod
     async def evaluate_work(cls, raw_text: str, selected_model: str, base_weights: dict, model_system_instruction: str, user_note: str, target_model: str, has_declared_ai: bool = False, is_contest: bool = False) -> str:
         """
-        ⚖️ 深度学术评审系统 (融合 AI 痕迹筛查与动态惩罚)
+        ⚖️ 文字评审：① 整本内容研判（违规不评审）→ ② 指定专家评审。
+        selected_model / base_weights / model_system_instruction 均来自用户选定的专家（evaluation_models）。
         """
         # ==========================================
         # 🆕 内容安全前置闸（独立调用，最高优先级，代码强制执行）
@@ -364,6 +398,11 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         dims_lines = ""
         for k, v in base_weights.items():
             dims_lines += f"- {k}（本项满分 {v} 分）\n"
+        try:
+            total_full = round(sum(float(v) for v in base_weights.values()))
+        except Exception:
+            total_full = 100
+        expert_identity = (model_system_instruction or "").strip() or "你是一位高水平儿童文学评论家。"
 
         # 针对不同场景设定不同的 AI 检测规则
         ai_detection_policy = ""
@@ -381,18 +420,20 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         在报告末尾新增 `### 🤖 AI 使用参考评估` 一节。
         这一节供作者参考，不构成认定。只写可以指认、能用「」逐字引原文为证的具体现象（如残留的提示语或模型自称、前后自相矛盾的事实、空泛概括句成片出现的段落），不凭"像不像 AI"的整体印象下结论。没有就如实写"未见可指认的 AI 使用痕迹"，不必为凑内容而硬挑毛病。"""
 
-        eval_sys_inst = f"""你现在是 NAL 数字化平台的顶级学术评审专家。
+        eval_sys_inst = f"""【评审专家】
+        {expert_identity}
+
+        你以上面这位专家的身份与眼光通读全文、作出评审（评审体系：【{selected_model}】）。
 
         （内容安全已在评审前由独立环节完成审核，此处无需再做内容安全判断，专注文学评审即可。）
 
-        当前执行的评审体系：【{selected_model}】
-        评审维度与各自满分：
+        【评审维度与满分】
         {dims_lines}
-        四个维度的单项得分相加，等于最终综合评分（满分 100）。
+        各维度的单项得分相加，等于最终综合评分（满分 {total_full}）。
 
-        【你是谁】
-        你是一位资深的儿童文学编辑与评论者。你的判词写给作者本人看——他要靠它判断作品好在哪、弱在哪、下一步怎么改。
-        真正的专业体现在判断的准确和依据的扎实，不在词汇的艰深。一位真懂行的人说一部作品好，会说清好在哪一处、这一处为什么难、换个平庸的写法会怎样；说不好，会指出是哪个环节塌了、塌在哪里、根子是什么。
+        【判词写给谁】
+        判词写给作者本人看——他要靠它判断作品好在哪、弱在哪、下一步怎么改。
+        真正的专业体现在判断的准确和依据的扎实，不在词汇的艰深。真懂行的人说一部作品好，会说清好在哪一处、这一处为什么难、换个平庸的写法会怎样；说不好，会指出是哪个环节塌了、塌在哪里、根子是什么。
 
         【判词的三条铁律】（贯穿全文，每一句评价都要遵守）
         一、落到具体处：每一句判断都要咬住作品里的具体对象——某一段、某个情节、某句话、某处对话、某个转折。泛泛而论、放到任何作品上都成立的话，不要写。
@@ -419,24 +460,24 @@ E. 通篇反复依赖同一种机械句式（如"不是……而是……"）却
         - 原创性：X/10 分，说明理由时指出具体的套路或新意所在。
 
         ### 🧮 维度解析与单项得分
-        逐项评定下列维度，每项给出"分数 / 满分"，后面跟一段评语。评语必须以作品里的具体文字或情节为据（引原文按上面的引号规则用「」逐字照录，说情节则直接概述、不加引号），说清这个分数是怎么来的——高在哪一处、若未满分则差在哪一处。四项得分之和等于综合评分。
+        逐项评定下列维度，每项给出"分数 / 满分"，后面跟一段评语。评语必须以作品里的具体文字或情节为据（引原文按上面的引号规则用「」逐字照录，说情节则直接概述、不加引号），说清这个分数是怎么来的——高在哪一处、若未满分则差在哪一处。各项得分之和等于综合评分。
         维度：{dims_list}
 
         ### 📝 核心修改建议
         给出 2-4 条可执行的建议。每条都要针对作品中一个具体的问题点（指明在哪里），说清怎么改、改了之后会解决什么。不写放之四海而皆准的空泛建议。
 
-        ### 📊 综合学术评分：[总分]/100
+        ### 📊 综合学术评分：[总分]/{total_full}
 
         （报告末尾按上文要求补充 AI 使用参考一节）
         """
 
-        adaptive_inst = await cls._get_adaptive_instruction(raw_text, base_weights, user_note)
-        combined_instruction = adaptive_inst + "\n\n" + eval_sys_inst
-        
         try:
-            prompt = f"【评审特定方向引导】：{model_system_instruction}\n【需要评审的作品内容】：\n{raw_text}\n\n【评委备注】：{user_note if user_note else '无'}\n\n请严格按 System Instruction 中的输出结构完成评审，给出真实的打分数字。"
-            
-            res = await generate(target_model, prompt, system_instruction=combined_instruction, temperature=0.2)
+            # 作品全文在前，评委备注与任务说明在后；专家身份与评审规则在 system instruction 里
+            prompt = (f"【需要评审的作品内容】：\n{raw_text}\n\n"
+                      f"【评委备注】：{user_note if user_note else '无'}\n\n"
+                      "请以 System Instruction 中指定专家的身份，严格按其中的输出结构完成评审，给出真实的打分数字。")
+
+            res = await generate(target_model, prompt, system_instruction=eval_sys_inst, temperature=0.2)
 
             if _has_text(res):
                 result_text = res.text.strip()

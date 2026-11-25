@@ -1,10 +1,14 @@
 # services/contest_agent.py
+import re
 import sys
 import numpy as np
 import asyncio
 from services.user_service import supabase_admin
 from services import storage_service as storage     # 参赛配图在 Cloudflare R2 私有桶
 from services.contest_literary_service import ContestLiteraryService, VIOLATION_LABELS
+
+# 参赛正文字数（不计空格与换行），与投稿接口 routes/contest.py 的 MIN_CHARS / MAX_CHARS 一致
+MIN_CHARS, MAX_CHARS = 800, 1000
 import httpx
 from io import BytesIO
 from PIL import Image
@@ -69,9 +73,11 @@ async def contest_pipeline(submission_id: str):
 
         print(f"🛠️ [DEBUG] 正在校验作品 {submission_id[:8]} ... 字数: {len(text)}, 图片数: {len(images)}")
 
-        # --- Agent A: Gatekeeper (门槛校验) ---
-        if len(text) < 500 or len(images) < 1:
-            error_detail = f"未达参赛门槛（系统检测到字数: {len(text)}, 图片数: {len(images)}）"
+        # --- Agent A: Gatekeeper (门槛校验，与投稿规则一致：正文 800–1000 字、1 幅配图；2026-11-25) ---
+        n_chars = len(re.sub(r"\s", "", text or ""))
+        if not (MIN_CHARS <= n_chars <= MAX_CHARS) or len(images) < 1:
+            error_detail = (f"未达参赛门槛（正文须为 {MIN_CHARS}–{MAX_CHARS} 字、至少 1 幅配图；"
+                            f"系统检测到字数: {n_chars}, 图片数: {len(images)}）")
             await update_status(submission_id, "invalid", error_detail)
             return
 

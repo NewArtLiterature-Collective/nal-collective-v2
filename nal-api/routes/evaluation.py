@@ -12,11 +12,11 @@ from services.vision_llm_service import VisionLLMService
 
 router = APIRouter()
 
-# 模型名称常量（2026-11 迁移：2.5 系列 12-01 停用）
+# 模型名称常量（2026-11 迁移：2.5 系列 12-01 停用；2026-11-23 主编确认 3.8 Flash 换为 Gemini 4 Hydrogen）
 # 写法 "模型名@思考档位"，由 literary/vision 服务的 resolve_model() 解析
-FLASH_MODEL = "gemini-3.8-flash@low"           # 免费额度 / 初读
+FLASH_MODEL = "gemini-4-hydrogen@low"          # 免费额度 / 初读（原 gemini-3.8-flash@low）
 PRO_MODEL_DAILY = "gemini-3.1-pro-preview"     # Pro 用户每日配额内使用（不带档位，照旧传 temperature）
-PRO_MODEL_CREDIT = "gemini-3.8-flash@medium"   # pro_credits 加油包使用（原 gemini-2.5-pro）
+PRO_MODEL_CREDIT = "gemini-4-hydrogen@medium"  # pro_credits 加油包使用（原 gemini-3.8-flash@medium）
 
 
 @router.post("/process")
@@ -31,6 +31,7 @@ async def process_evaluation(
     ai_declaration: str = Form(""),        # 🆕 "no" = 纯人类原创 / "yes" = 已使用 AI
     page_format: str = Form("single"),     # 📐 "single" 单页 / "spread" 跨页合图（绘本专属）
     has_pro_limit: str = Form("false"),
+    model_db_id: str = Form(""),           # 用户在工作台选定的专家（evaluation_models.id）；绘本插画不传
     file: UploadFile = File(None)
 ):
     # ==========================================
@@ -126,28 +127,41 @@ async def process_evaluation(
             raise HTTPException(status_code=403, detail="资源已耗尽，请购买加油包或报名参赛。")
 
     # ==========================================
-    # 4. 动态读取模型配置（文字赛道）
+    # 4. 读取用户指定的专家（文字评审 / 创作指导）
+    #    2026-11-24：按用户在工作台选定的专家评审（此前前端传了 model_db_id，后端未读取，
+    #    文字评审固定用"首席专家锐评"）。非 Pro 用户只能用"全景综合""首席专家"两位（与前端一致）；
+    #    未指定、无权使用或读取失败时，回落到"首席专家锐评"。
     # ==========================================
-    selected_model_name = "全景综合-通用基准模型"
-    if task_type == "text":
-        selected_model_name = "NAL-首席专家锐评模型"
+    DEFAULT_EXPERT = "NAL-首席专家锐评模型"
+    FALLBACK_WEIGHTS = {"心理契合": 25, "文学质感": 25, "时代立意": 25, "逻辑与创新": 25}
+    FALLBACK_INSTRUCTION = "你是一位高水平儿童文学评论家。"
 
+    def _expert_allowed(name: str) -> bool:
+        return role == "pro" or ("全景综合" in (name or "")) or ("首席专家" in (name or ""))
+
+    expert = None
     try:
-        model_setting_res = supabase_admin.table("evaluation_models") \
-            .select("parameters, system_instruction") \
-            .eq("name", selected_model_name) \
-            .single().execute()
-
-        if model_setting_res.data:
-            base_weights = model_setting_res.data.get("parameters", {})
-            model_system_instruction = model_setting_res.data.get("system_instruction", "")
-        else:
-            base_weights = {"心理契合": 25, "文学质感": 25, "时代立意": 25, "逻辑与创新": 25}
-            model_system_instruction = "你是一位高水平儿童文学评论家。"
+        if model_db_id and task_type in ("text", "guide"):
+            r = supabase_admin.table("evaluation_models") \
+                .select("id, name, parameters, system_instruction") \
+                .eq("id", model_db_id).limit(1).execute()
+            row = (r.data or [None])[0]
+            if row and _expert_allowed(row.get("name")):
+                expert = row
+            elif row:
+                print(f"⚠️ 用户 {user.id} 无权使用专家【{row.get('name')}】，改用默认专家")
+        if expert is None:
+            r = supabase_admin.table("evaluation_models") \
+                .select("id, name, parameters, system_instruction") \
+                .eq("name", DEFAULT_EXPERT).limit(1).execute()
+            expert = (r.data or [None])[0]
     except Exception as e:
-        print(f"⚠️ 读取云端模型维度失败，启动学术维度兜底: {e}")
-        base_weights = {"心理契合": 25, "文学质感": 25, "时代立意": 25, "逻辑与创新": 25}
-        model_system_instruction = "你是一位高水平儿童文学评论家。"
+        print(f"⚠️ 读取专家配置失败，启用兜底维度: {e}")
+        expert = None
+
+    selected_model_name = (expert or {}).get("name") or DEFAULT_EXPERT
+    base_weights = (expert or {}).get("parameters") or FALLBACK_WEIGHTS
+    model_system_instruction = (expert or {}).get("system_instruction") or FALLBACK_INSTRUCTION
 
     # ==========================================
     # 5. 调用 AI 核心
