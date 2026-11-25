@@ -65,7 +65,7 @@ def _build_block_message(content_safety: dict) -> str:
 
 async def contest_pipeline(submission_id: str):
     """
-    NAL 大赛 Agent 流水线：竞争夺锁 -> 门槛校验 -> 内容安全闸 -> 三专家会诊 -> 计算争议 -> 入库
+    NAL 大赛 Agent 流水线：竞争夺锁 -> 门槛校验 -> 内容安全闸 -> 图文相关性 -> 三专家会诊 -> 计算争议 -> 入库
     """
     try:
         # 🚨 核心安全升级：原子夺锁机制
@@ -128,6 +128,21 @@ async def contest_pipeline(submission_id: str):
             detail = screen.get("screen_error_detail") or "内容审查暂时无法完成"
             await update_status(submission_id, "pending", f"内容审查未完成，等待重试：{detail}")
             print(f"⏳ 作品 {submission_id[:8]} 内容审查未完成，已退回待审，下一批重试。")
+            return
+
+        # --- Agent A++: 图文相关性（2026-11-25 主编确认：配图与文字几乎无关的作品不予评审）---
+        rel = await ContestLiteraryService.check_relevance(text, valid_images)
+        if rel.get("error"):
+            await update_status(submission_id, "pending", "图文相关性检查未完成，等待重试")
+            print(f"⏳ 作品 {submission_id[:8]} 图文相关性检查未完成，已退回待审，下一批重试。")
+            return
+        if rel.get("unrelated"):
+            msg = ("❌ 配图与文字无关，不予评审：本赛事为图文作品征集，配图须与文字内容相关。"
+                   + (f"\n参考依据：{rel['reason']}" if rel.get("reason") else ""))
+            supabase_admin.table("contest_submissions").update({
+                "status": "invalid", "error_msg": msg, "ai_review": msg,
+            }).eq("id", submission_id).execute()
+            print(f"❌ 作品 {submission_id[:8]} 配图与文字无关，不予评审。")
             return
 
         # --- Agent B: Evaluator (三专家会诊)；复用 screen，避免重复扫描；横幅由下方统一加一次 ---

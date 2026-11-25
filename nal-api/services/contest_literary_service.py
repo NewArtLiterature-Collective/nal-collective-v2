@@ -223,6 +223,17 @@ _AIGC_SYS = """你是 AIGC 鉴定员，服务于儿童文学评奖平台，只�
 {"ai_suspected": false, "confidence": "low", "evidence": "40字内，逐条写出破绽的位置与内容；没有就留空"}"""
 
 
+# 2026-11-25（主编确认）：配图与文字几乎无关的作品不予评审。
+# 只拦"无关"（画面里的人物、事物、场景、事件、情绪与文字都对不上）；象征、抽象、写意、只画了其中一个片段，都算相关。
+_RELEVANCE_SYS = """你是图文作品的形式审核员。作品由一段文字和一幅配图组成。你只判断配图与文字有没有关系，不评价质量。
+判断标准：
+- 相关：配图画的是文字里的人物、事物、场景、事件，或明显表达文字的情绪、意象。象征、抽象、写意、只画了其中一个片段、风格与文字反差很大，都算相关。
+- 部分相关：有一些对得上的地方，但不完整或比较牵强。
+- 无关：配图的人物、事物、场景、事件、情绪与文字都对不上，看不出是为这段文字配的图（例如文字写室内的冬日清晨，配图是游客在峡谷溪边的风景照）。
+拿不准时，判为"部分相关"，不要判"无关"。
+只返回 JSON：{"relation": "相关 / 部分相关 / 无关（三选一）", "reason": "一两句话，说明配图画了什么、与文字哪里对得上或对不上"}"""
+
+
 class ContestLiteraryService:
 
     # ---------- 工具 ----------
@@ -456,6 +467,34 @@ class ContestLiteraryService:
         return "\n".join(lines) + "\n\n"
 
     # ---------- 独立前置：AIGC 鉴定（元数据硬证据 + 文本/画面判断）----------
+    @classmethod
+    async def check_relevance(cls, text: str, pil_images: list) -> dict:
+        """配图与文字是否相关。各自独立跑两次：两次都判"无关"才认定无关（疑罪从无）。
+        返回 {"unrelated": bool, "reason": str, "error": bool}：
+        · unrelated=True → 不予评审；
+        · error=True → 没有可靠结论（调用失败，或只有一次判无关、另一次失败），调用方退回待审稍后重试；
+        · 其余 → 照常评审。"""
+        if not pil_images:
+            return {"unrelated": False, "reason": "", "error": False}
+
+        async def once():
+            resp = await _generate(SCREEN_MODEL, [f"【文字】：\n{text}\n\n【配图】见附图。"] + list(pil_images),
+                                   _RELEVANCE_SYS, temperature=0.2)
+            data = cls._load_json(resp)
+            rel = str(data.get("relation") or "").strip()
+            return {"unrelated": rel.startswith("无关"), "reason": str(data.get("reason") or "").strip()}
+
+        runs = await asyncio.gather(once(), once(), return_exceptions=True)
+        ok = [r for r in runs if isinstance(r, dict)]
+        for r in runs:
+            if not isinstance(r, dict):
+                print(f"⚠️ 图文相关性检查异常: {r}")
+        if len(ok) == 2 and all(r["unrelated"] for r in ok):
+            return {"unrelated": True, "reason": ok[0]["reason"], "error": False}
+        if any(not r["unrelated"] for r in ok):
+            return {"unrelated": False, "reason": "", "error": False}
+        return {"unrelated": False, "reason": "", "error": True}
+
     @classmethod
     async def _scan_aigc(cls, text: str, pil_images: list) -> dict:
         # 1) 元数据指纹：硬证据
