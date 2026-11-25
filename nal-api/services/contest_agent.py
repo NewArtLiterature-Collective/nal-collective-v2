@@ -11,6 +11,7 @@ from services.contest_literary_service import ContestLiteraryService, VIOLATION_
 MIN_CHARS, MAX_CHARS = 800, 1000
 import httpx
 from io import BytesIO
+from datetime import datetime, timezone
 from PIL import Image
 
 
@@ -194,23 +195,44 @@ async def update_status(sid, status, error=None):
     }).eq("id", sid).execute()
 
 
+def deadline_passed(deadline) -> bool:
+    """截稿时间是否已过（未设截稿或无法解析 → 视为未截稿）。"""
+    if not deadline:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > dt
+    except Exception:
+        return False
+
+
 async def run_batch_review():
     """
     云端一次性批处理引擎 (Batch Job)
-    由 FastAPI 前端按钮唤醒，拉取所有待审作品，评完立刻安全退出。
+    由管理台"启动评审"按钮唤醒，拉取待审作品，评完立刻安全退出。
+    2026-11-25：只评审【已截稿】赛事的作品；未截稿赛事的作品留在待审，截稿后再评。
     """
-    print("🚀 [NAL 离线评审引擎] 启动！正在扫描数据库...")
+    print("🚀 [NAL 评审引擎] 启动！正在扫描数据库...")
 
     try:
+        cs = supabase_admin.table("contests").select("id, submission_deadline").execute()
+        closed_ids = [c["id"] for c in (cs.data or []) if deadline_passed(c.get("submission_deadline"))]
+        if not closed_ids:
+            print("🏁 [NAL 评审引擎] 没有已截稿的赛事，任务结束。")
+            return
+
         res = supabase_admin.table("contest_submissions") \
             .select("id") \
             .eq("status", "pending") \
+            .in_("contest_id", closed_ids) \
             .execute()
 
         pending_works = res.data
 
         if not pending_works:
-            print("🏁 [NAL 离线评审引擎] 侦测到当前没有待评审的作品，任务结束。")
+            print("🏁 [NAL 评审引擎] 已截稿赛事中没有待评审的作品，任务结束。")
             return
 
         print(f"📊 发现 {len(pending_works)} 篇待评审作品，开始注入 AI 算力...")
@@ -221,7 +243,7 @@ async def run_batch_review():
             print(f"\n--- 正在处理第 {index}/{len(pending_works)} 篇 ---")
             await contest_pipeline(target_id)
 
-        print("\n🎉 [NAL 离线评审引擎] 当前批次所有作品已全部处理完毕！")
+        print("\n🎉 [NAL 评审引擎] 当前批次所有作品已全部处理完毕！")
 
     except Exception as e:
         print(f"🚨 批处理引擎发生致命错误: {e}")
