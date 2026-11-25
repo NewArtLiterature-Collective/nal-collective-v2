@@ -97,7 +97,9 @@ def _get_client():
     global _client
     if _client is None:
         key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        _client = genai.Client(api_key=key) if key else genai.Client()
+        # 与文字、比赛服务一致固定 v1beta（google-genai 3.x 默认 v1，预览版模型只在 v1beta 上有）
+        http = types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta"))
+        _client = genai.Client(api_key=key, http_options=http) if key else genai.Client(http_options=http)
     return _client
 
 
