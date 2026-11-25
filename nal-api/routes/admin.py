@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
 from pydantic import BaseModel
 from services.user_service import supabase_admin
-from services.contest_agent import run_batch_review
+from services.contest_agent import run_batch_review, deadline_passed
 from services.curator_script import auto_curate_top_percent
 
 router = APIRouter(prefix="/admin", tags=["Admin Control"])
@@ -53,7 +53,7 @@ async def update_gallery_time(settings_data: TimeSettings, authorization: str = 
 
 # 2. 评审引擎
 def run_contest_agent():
-    print("⚡ 接收到中控台指令，正在唤醒 AI 评审引擎...")
+    print("⚡ 接收到中控台指令，正在启动 AI 评审...")
     asyncio.run(run_batch_review())
 
 
@@ -63,6 +63,23 @@ async def start_review_engine(
     authorization: str = Header(None)
 ):
     verify_admin(authorization)
+    # 2026-11-25：评审只能在当前主赛事截稿之后启动（未设截稿日期也不能启动）
+    try:
+        s = supabase_admin.table("site_settings").select("current_contest_id").eq("id", 1).maybe_single().execute()
+        cid = ((s.data if s else None) or {}).get("current_contest_id")
+        dl = None
+        if cid:
+            c = supabase_admin.table("contests").select("submission_deadline").eq("id", cid).maybe_single().execute()
+            dl = ((c.data if c else None) or {}).get("submission_deadline")
+    except Exception as e:
+        print(f"⚠️ 读取截稿时间失败: {e}")
+        raise HTTPException(status_code=500, detail="读取赛事截稿时间失败，请稍后重试")
+    if not cid:
+        raise HTTPException(status_code=403, detail="未设置当前主赛事，无法启动评审")
+    if not dl:
+        raise HTTPException(status_code=403, detail="当前主赛事尚未设置截稿日期，截稿后才能启动评审")
+    if not deadline_passed(dl):
+        raise HTTPException(status_code=403, detail=f"尚未截稿（截稿：{str(dl)[:10]}），截稿后才能启动评审")
     background_tasks.add_task(run_contest_agent)
     return {"status": "success", "msg": "评审引擎已在后台启动"}
 

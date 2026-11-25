@@ -374,7 +374,15 @@ export default function AdminDashboard() {
     }
   };
 
+  // 评审只能在截稿之后启动（后端同样校验）：以当前下拉框选中赛事的截稿时间为准
+  const selectedDeadline = (contests.find(c => c.id === selectedContestId) || {}).submission_deadline || null;
+  const deadlinePassed = !!selectedDeadline && new Date() > new Date(selectedDeadline);
+  const reviewBlockedReason = !selectedDeadline
+    ? '该赛事尚未设置截稿日期，截稿后才能启动评审'
+    : (!deadlinePassed ? `截稿后才能启动评审（截稿：${String(selectedDeadline).slice(0, 10)}）` : '');
+
   const handleStartReviewEngine = async () => {
+    if (reviewBlockedReason) { addLog(`❌ ${reviewBlockedReason}`); return; }
     setIsReviewing(true); addLog("⚡ 向中控台发送唤醒指令...");
     try {
       const res = await fetch(`${API_BASE}/admin/engine/start-review`, { method: 'POST', headers: await authHeaders() });
@@ -386,7 +394,7 @@ export default function AdminDashboard() {
   };
 
   const handleRunGlobalCuration = async () => {
-    setIsCurating(true); addLog("📊 正在下达离线全局决算指令...");
+    setIsCurating(true); addLog("📊 正在下达全局策展指令...");
     try {
       const res = await fetch(`${API_BASE}/admin/engine/run-curation`, { method: 'POST', headers: await authHeaders() });
       const data = await res.json();
@@ -781,10 +789,15 @@ export default function AdminDashboard() {
               <span style={{ color: '#888' }}>当前视角下待审 (Pending): </span>
               <strong style={{ fontSize: '20px', color: '#bf616a', marginLeft: '10px' }}>{pendingCount}</strong> 篇
             </div>
-            <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0} style={{ padding: '12px 24px', backgroundColor: pendingCount === 0 ? '#444' : '#5e81ac', color: '#fff', border: 'none', cursor: pendingCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isReviewing ? "🤖 会诊中..." : "⚡ 启动离线评审"}</button>
+            <button onClick={handleStartReviewEngine} disabled={isReviewing || pendingCount === 0 || !!reviewBlockedReason}
+              title={reviewBlockedReason || (pendingCount === 0 ? '当前没有待审作品' : '')}
+              style={{ padding: '12px 24px', backgroundColor: (pendingCount === 0 || reviewBlockedReason) ? '#444' : '#5e81ac', color: (pendingCount === 0 || reviewBlockedReason) ? '#888' : '#fff', border: 'none', cursor: (pendingCount === 0 || reviewBlockedReason) ? 'not-allowed' : 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isReviewing ? "🤖 评审中..." : "⚡ 启动评审"}</button>
             <button onClick={handleRunGlobalCuration} disabled={isCurating || works.length === 0} style={{ padding: '12px 24px', backgroundColor: '#d08770', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{isCurating ? "📊 计算中..." : "📊 全局策展划线 (Top 5%)"}</button>
             <button onClick={handleRequeueStuck} title="把卡在“评审中”的作品退回待审（仅在无批次运行时用）" style={{ padding: '12px 20px', backgroundColor: 'transparent', color: '#ebcb8b', border: '1px solid #ebcb8b', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>🔧 重置卡死评审</button>
           </div>
+          {reviewBlockedReason && (
+            <div style={{ color: '#ebcb8b', fontSize: '12px', margin: '-8px 0 12px' }}>⏳ {reviewBlockedReason}</div>
+          )}
           <div style={{ background: '#000', padding: '15px', borderRadius: '4px', height: '120px', overflowY: 'auto', border: '1px solid #333', fontSize: '12px', lineHeight: '1.6' }}>
             {logMessages.length === 0 ? <span style={{ color: '#4c566a' }}>&gt;_ 等待中控调度...</span> : logMessages.map((log, i) => <div key={i} style={{ color: log.includes('❌') ? '#bf616a' : log.includes('✅') || log.includes('SUCCESS') ? '#a3be8c' : '#d8dee9' }}>{log}</div>)}
           </div>
