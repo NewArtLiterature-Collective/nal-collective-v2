@@ -179,7 +179,7 @@ export default function AdminDashboard() {
       // 🚨 剔除与策展无关的 AI 声明字段，保持纯净
       const { data: submissions, error: successError } = await supabase
         .from('contest_submissions')
-        .select('id, title, author_name, illustrator_name, word_count, ai_total_score, ai_variance, is_manual_recommended, manual_rank, text_content, image_urls')
+        .select('id, title, author_name, illustrator_name, word_count, ai_total_score, ai_variance, ai_scores, ai_review, is_manual_recommended, manual_rank, text_content, image_urls')
         .eq('status', 'success')
         .eq('contest_id', contestId) 
         .order('manual_rank', { ascending: false })
@@ -541,6 +541,28 @@ export default function AdminDashboard() {
                   </div>
                 ) : (
                   <div style={{ color: '#4c566a', fontStyle: 'italic', padding: '10px' }}>[该作品无视觉附件]</div>
+                )}
+              </div>
+
+              {/* 🧑‍⚖️ AI 评审意见（仅管理后台可见；含内容风险提示、AIGC 标注等人工复核信息） */}
+              <div>
+                <h4 style={{ color: '#ebcb8b', margin: '0 0 10px 0', borderBottom: '1px dashed #444', paddingBottom: '5px' }}>🧑‍⚖️ AI 评审意见（三位专家）</h4>
+                {previewWork.ai_scores && typeof previewWork.ai_scores === 'object' && Object.keys(previewWork.ai_scores).length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+                    {Object.entries(previewWork.ai_scores).map(([dim, v]) => (
+                      <span key={dim} style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', padding: '4px 10px', fontSize: '13px' }}>
+                        <span style={{ color: '#888' }}>{dim}：</span><strong style={{ color: '#a3be8c' }}>{Number(v).toFixed(1)}</strong>
+                      </span>
+                    ))}
+                    <span style={{ color: '#666', fontSize: '12px', alignSelf: 'center' }}>（三位专家平均）</span>
+                  </div>
+                )}
+                {previewWork.ai_review ? (
+                  <div style={{ backgroundColor: '#111', padding: '20px', borderRadius: '8px', color: '#d8dee9', whiteSpace: 'pre-wrap', lineHeight: '1.8', fontSize: '14px', border: '1px solid #222', textAlign: 'left', wordBreak: 'break-word' }}>
+                    {previewWork.ai_review}
+                  </div>
+                ) : (
+                  <div style={{ color: '#4c566a', fontStyle: 'italic', padding: '10px' }}>[暂无评审意见]</div>
                 )}
               </div>
             </div>
