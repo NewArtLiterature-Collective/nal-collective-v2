@@ -1,10 +1,14 @@
 # services/contest_agent.py
+import re
 import sys
 import numpy as np
 import asyncio
 from services.user_service import supabase_admin
 from services import storage_service as storage     # 参赛配图在 Cloudflare R2 私有桶
 from services.contest_literary_service import ContestLiteraryService, VIOLATION_LABELS
+
+# 参赛正文字数（不计空格与换行），与投稿接口 routes/contest.py 的 MIN_CHARS / MAX_CHARS 一致
+MIN_CHARS, MAX_CHARS = 800, 1000
 import httpx
 from io import BytesIO
 from PIL import Image
@@ -42,7 +46,8 @@ def _build_block_message(content_safety: dict) -> str:
 
 async def contest_pipeline(submission_id: str):
     """
-    NAL 大赛 Agent 流水线：竞争夺锁 -> 门槛校验 -> 内容安全闸 -> 三专家会诊 -> 计算争议 -> 入库
+    NAL 大赛 Agent 流水线：竞争夺锁 -> 门槛校验 -> 内容安全闸 -> 全景视角评审 -> 入库
+    （2026-11-25 主编确认：只用全景视角一位专家评审；首席锐评、学术溯源停用，不再计算专家分歧度）
     """
     try:
         # 🚨 核心安全升级：原子夺锁机制
@@ -69,9 +74,11 @@ async def contest_pipeline(submission_id: str):
 
         print(f"🛠️ [DEBUG] 正在校验作品 {submission_id[:8]} ... 字数: {len(text)}, 图片数: {len(images)}")
 
-        # --- Agent A: Gatekeeper (门槛校验) ---
-        if len(text) < 500 or len(images) < 1:
-            error_detail = f"未达参赛门槛（系统检测到字数: {len(text)}, 图片数: {len(images)}）"
+        # --- Agent A: Gatekeeper (门槛校验，与投稿规则一致：正文 800–1000 字、1 幅配图) ---
+        n_chars = len(re.sub(r"\s", "", text or ""))
+        if not (MIN_CHARS <= n_chars <= MAX_CHARS) or len(images) < 1:
+            error_detail = (f"未达参赛门槛（正文须为 {MIN_CHARS}–{MAX_CHARS} 字、至少 1 幅配图；"
+                            f"系统检测到字数: {n_chars}, 图片数: {len(images)}）")
             await update_status(submission_id, "invalid", error_detail)
             return
 
@@ -105,44 +112,23 @@ async def contest_pipeline(submission_id: str):
             print(f"⏳ 作品 {submission_id[:8]} 内容审查未完成，已退回待审，下一批重试。")
             return
 
-        # --- Agent B: Evaluator (三专家会诊)；复用 screen，避免重复扫描；横幅由下方统一加一次 ---
-        print(f"🧠 正在调用 AI 专家组进行多维度并发会诊: {submission_id[:8]}")
+        # --- Agent B: Evaluator（全景视角评审）；复用 screen，避免重复扫描；横幅由下方统一加一次 ---
+        print(f"🧠 正在调用全景视角专家评审: {submission_id[:8]}")
+        p_res = await ContestLiteraryService.evaluate_contest_work(
+            text, valid_images, "panoramic", has_declared_ai=has_declared_ai, screen=screen, mark_ai=False)
 
-        tasks = [
-            ContestLiteraryService.evaluate_contest_work(text, valid_images, "panoramic",
-                                                         has_declared_ai=has_declared_ai, screen=screen, mark_ai=False),
-            ContestLiteraryService.evaluate_contest_work(text, valid_images, "nal_chief",
-                                                         has_declared_ai=has_declared_ai, screen=screen, mark_ai=False),
-            ContestLiteraryService.evaluate_contest_work(text, valid_images, "li_lifang",
-                                                         has_declared_ai=has_declared_ai, screen=screen, mark_ai=False),
-        ]
-        results = await asyncio.gather(*tasks)
-        p_res, c_res, l_res = results[0], results[1], results[2]
-
-        # ⏳ 任一专家评审失败（接口异常/JSON 受损）→ 不以 0 分入库，退回 pending，下一批重试
-        failed = [r for r in results if r.get("status") != "reviewed"]
-        if failed:
+        # ⏳ 评审失败（接口异常/JSON 受损）→ 不以 0 分入库，退回 pending，下一批重试
+        if p_res.get("status") != "reviewed":
             await update_status(submission_id, "pending",
-                                f"评审未完成，等待重试：{(failed[0].get('review') or '')[:200]}")
-            print(f"⏳ 作品 {submission_id[:8]} 有 {len(failed)} 位专家评审失败，已退回待审，下一批重试。")
+                                f"评审未完成，等待重试：{(p_res.get('review') or '')[:200]}")
+            print(f"⏳ 作品 {submission_id[:8]} 评审失败，已退回待审，下一批重试。")
             return
 
-        # 核心数学计算：汇总均分与离散度
-        all_score_points = []
-        combined_scores = {}
-        for dim in p_res["scores"].keys():
-            dim_vals = [p_res["scores"][dim], c_res["scores"][dim], l_res["scores"][dim]]
-            combined_scores[dim] = float(np.mean(dim_vals))
-            all_score_points.extend(dim_vals)
-
-        ai_variance = float(np.var(all_score_points))
-        ai_total_score = float(np.mean(all_score_points))
-
-        final_review = (
-            f"【全景视角】：{p_res['review']}\n\n"
-            f"【首席锐评】：{c_res['review']}\n\n"
-            f"【学术溯源】：{l_res['review']}"
-        )
+        # 各维度得分；总分取四个维度的平均（百分制）
+        combined_scores = {dim: float(v) for dim, v in (p_res.get("scores") or {}).items()}
+        ai_total_score = float(np.mean(list(combined_scores.values()))) if combined_scores else 0.0
+        ai_variance = None          # 只有一位专家，不再有"专家分歧度"
+        final_review = p_res.get("review") or ""
 
         # 🤖 未申明且有元数据硬证据 → 大赛口径：不拦、照评，在评语顶部统一标注一次
         #   （2026-11-09：只认元数据；文风/画面印象不构成证据）
@@ -174,7 +160,7 @@ async def contest_pipeline(submission_id: str):
         }
         supabase_admin.table("contest_submissions").update(update_payload).eq("id", submission_id).execute()
 
-        print(f"✅ 会诊完成: {submission_id[:8]} (争议度: {ai_variance:.2f})")
+        print(f"✅ 评审完成: {submission_id[:8]}（总分 {ai_total_score:.1f}）")
 
     except Exception as e:
         print(f"🚨 流水线崩溃: {e}")

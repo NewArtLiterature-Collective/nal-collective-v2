@@ -516,7 +516,7 @@ export default function AdminDashboard() {
             
             <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', backgroundColor: '#1a1a1a', padding: '15px', borderRadius: '8px', border: '1px solid #333' }}>
               <div><span style={{ color: '#888' }}>AI 综合分：</span> <strong style={{ color: '#a3be8c', fontSize: '16px' }}>{previewWork.ai_total_score?.toFixed(1)}</strong></div>
-              <div><span style={{ color: '#888' }}>AI 方差：</span> <strong style={{ color: previewWork.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{previewWork.ai_variance?.toFixed(2)}</strong></div>
+              <div><span style={{ color: '#888' }}>AI 方差：</span> <strong style={{ color: previewWork.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{previewWork.ai_variance != null ? previewWork.ai_variance.toFixed(2) : '—'}</strong></div>
               <div><span style={{ color: '#888' }}>作者字数：</span> <strong style={{ color: '#d8dee9' }}>{previewWork.word_count}</strong></div>
             </div>
 
@@ -832,7 +832,7 @@ export default function AdminDashboard() {
                     </td>
                     <td style={{ padding: '10px' }}>{work.word_count} 字</td>
                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#ebcb8b' }}>{work.ai_total_score?.toFixed(1)}分</td>
-                    <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance?.toFixed(2)}</td>
+                    <td style={{ padding: '10px', color: work.ai_variance > 20 ? '#bf616a' : '#d8dee9' }}>{work.ai_variance != null ? work.ai_variance.toFixed(2) : '—'}</td>
                     <td style={{ padding: '10px', textAlign: 'center' }}>
                       <button 
                         onClick={() => setPreviewWork(work)} 
