@@ -15,12 +15,30 @@ from datetime import datetime, timezone
 from PIL import Image
 
 
+REVIEW_MAX_DIM = 1536      # 评审用配图的长边上限（与视觉 Pro 终审一致）
+
+
+def _load_review_image(data: bytes):
+    """解码并缩小配图。JPEG 用缩尺解码（draft），峰值内存降一个量级；缩小后元数据（PNG 文字段、EXIF）仍保留，
+    供 AIGC 指纹检查。2026-11-25：此前把原尺寸位图交给 5–7 个并发模型调用，各自再编码一份，
+    大图会把 512MB 实例的内存撑爆 → 实例重启，评审中断、作品卡在"评审中"。"""
+    img = Image.open(BytesIO(data))
+    try:
+        img.draft("RGB", (REVIEW_MAX_DIM, REVIEW_MAX_DIM))
+    except Exception:
+        pass
+    img.load()
+    if max(img.size) > REVIEW_MAX_DIM:
+        img.thumbnail((REVIEW_MAX_DIM, REVIEW_MAX_DIM), Image.Resampling.LANCZOS)
+    return img
+
+
 async def download_image(url_or_path: str):
     """参赛配图下载器：从 Cloudflare R2 私有桶读取（2026-11 起取代 Supabase Storage）。
     数据库里可能是对象名，也可能是旧的 Supabase 完整网址，storage_service 会统一取出对象名。"""
     try:
         data = await asyncio.to_thread(storage.get_contest_image, url_or_path)
-        return Image.open(BytesIO(data))
+        return await asyncio.to_thread(_load_review_image, data)
     except Exception as e:
         print(f"🚨 参赛配图读取失败 [{url_or_path}]: {e}")
     return None

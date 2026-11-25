@@ -12,18 +12,28 @@ try:
 except ImportError:          # 直接在 services 目录下运行时
     import content_review as cr
 
-_client = None
+_clients = {}                 # 事件循环 id → 客户端
+CALL_TIMEOUT = int(os.getenv("NAL_CONTEST_CALL_TIMEOUT", "300"))   # 单次模型调用上限（秒）
 
 
 def _get_client():
     """懒加载（2026-11-23）：用到时才创建，避免模块导入时环境变量尚未加载而报错。
-    google-genai 3.x 默认走 v1 接口，预览版模型只在 v1beta 上有 → 固定 v1beta。"""
-    global _client
-    if _client is None:
+    google-genai 3.x 默认走 v1 接口，预览版模型只在 v1beta 上有 → 固定 v1beta。
+    2026-11-25：按事件循环分别建客户端。投稿接口在主事件循环里调用模型，批量评审在后台线程的
+    另一个事件循环里跑；两边共用一个异步客户端会跨循环等待、永远不返回，作品就卡在"评审中"。"""
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+    c = _clients.get(loop_id)
+    if c is None:
         key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         http = types.HttpOptions(api_version=os.getenv("GOOGLE_GENAI_API_VERSION_PIN", "v1beta"))
-        _client = genai.Client(api_key=key, http_options=http) if key else genai.Client(http_options=http)
-    return _client
+        c = genai.Client(api_key=key, http_options=http) if key else genai.Client(http_options=http)
+        if len(_clients) > 8:     # 旧循环（已结束的批次）留下的客户端不再使用，清掉
+            _clients.clear()
+        _clients[loop_id] = c
+    return c
 
 # ===== 2026-11-09 修订（主编确认）=====
 # · 文字：内容安全改为"整本内容研判"（services/content_review.py，与离线引擎 lit_engine cr1 同一套），
@@ -82,7 +92,10 @@ async def _generate(spec: str, contents, system_instruction: str = None, **cfg):
     config = types.GenerateContentConfig(**kw)
     for attempt in range(3):      # 瞬时错误短退避重试（1.5s、3s），其余错误直接抛出
         try:
-            return await _get_client().aio.models.generate_content(model=name, contents=contents, config=config)
+            # 单次调用设上限：卡住不返回时按失败处理（作品退回待审），不会无限期停在"评审中"
+            return await asyncio.wait_for(
+                _get_client().aio.models.generate_content(model=name, contents=contents, config=config),
+                timeout=CALL_TIMEOUT)
         except Exception as e:
             if attempt < 2 and _is_retryable(e):
                 await asyncio.sleep(1.5 * (attempt + 1))

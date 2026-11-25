@@ -1,5 +1,6 @@
 # routes/admin.py
 import asyncio
+import threading
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
 from pydantic import BaseModel
 from services.user_service import supabase_admin
@@ -52,9 +53,29 @@ async def update_gallery_time(settings_data: TimeSettings, authorization: str = 
 
 
 # 2. 评审引擎
+#    2026-11-25：同一时间只允许一轮评审；每轮开始前，把上一轮中断（部署 / 实例重启）留下的"评审中"作品退回待审。
+#    Render 上是单实例，本进程没有在跑的批次时，"评审中"的作品一定是中断遗留的。
+_review_lock = threading.Lock()
+
+
 def run_contest_agent():
-    print("⚡ 接收到中控台指令，正在启动 AI 评审...")
-    asyncio.run(run_batch_review())
+    if not _review_lock.acquire(blocking=False):
+        print("⏭️ 已有一轮评审在进行，本次启动忽略。")
+        return
+    try:
+        print("⚡ 接收到中控台指令，正在启动 AI 评审...")
+        try:
+            res = supabase_admin.table("contest_submissions") \
+                .update({"status": "pending", "error_msg": None}) \
+                .eq("status", "processing").execute()
+            n = len(res.data or [])
+            if n:
+                print(f"🔧 已把上次中断遗留的 {n} 篇「评审中」作品退回待审。")
+        except Exception as e:
+            print(f"⚠️ 重置中断遗留作品失败（继续评审）: {e}")
+        asyncio.run(run_batch_review())
+    finally:
+        _review_lock.release()
 
 
 @router.post("/engine/start-review")
@@ -80,6 +101,8 @@ async def start_review_engine(
         raise HTTPException(status_code=403, detail="当前主赛事尚未设置截稿日期，截稿后才能启动评审")
     if not deadline_passed(dl):
         raise HTTPException(status_code=403, detail=f"尚未截稿（截稿：{str(dl)[:10]}），截稿后才能启动评审")
+    if _review_lock.locked():
+        raise HTTPException(status_code=409, detail="已有一轮评审正在进行，请等它结束后再启动")
     background_tasks.add_task(run_contest_agent)
     return {"status": "success", "msg": "评审引擎已在后台启动"}
 
@@ -107,6 +130,8 @@ async def run_global_curation(
 @router.post("/engine/requeue-stuck")
 async def requeue_stuck_reviews(authorization: str = Header(None)):
     verify_admin(authorization)
+    if _review_lock.locked():
+        raise HTTPException(status_code=409, detail="评审正在进行，不能重置；请等本轮结束后再操作")
     try:
         res = supabase_admin.table("contest_submissions") \
             .update({"status": "pending", "error_msg": None}) \
